@@ -4,8 +4,8 @@ import { TeamSwitcher } from "@/components/TeamSwitcher";
 import { ChartSkeleton } from "@/components/Skeleton";
 import { EmptyState } from "@/components/EmptyState";
 import { formatBroncho } from "@/lib/utils";
-import { getBronchoTier, BRONCHO_TIERS, type Player, type TestResult, type TestSession } from "@/lib/types";
-import { fetchAllResults, fetchSessions, fetchPlayers } from "@/lib/queries";
+import { getBronchoTier, getMasTier, BRONCHO_TIERS, type Player, type TestResult, type TestSession, type SessionRPE, type TrainingSession, type SessionAttendance } from "@/lib/types";
+import { fetchAllResults, fetchSessions, fetchPlayers, fetchAllRPEWithSessions, fetchAllAttendanceStats } from "@/lib/queries";
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
   ResponsiveContainer, Cell, ReferenceLine,
@@ -111,16 +111,22 @@ interface EnrichedResult extends TestResult {
   test_sessions?: Pick<TestSession, "test_date" | "test_name" | "type">;
 }
 
-const TABS = ["overview", "compare", "bands", "benchmarks", "position", "age"] as const;
+const TABS = ["overview", "compare", "bands", "benchmarks", "position", "age", "speed", "load", "attendance"] as const;
 type TabId = typeof TABS[number];
 const TAB_LABELS: Record<TabId, string> = {
-  overview:   "Overview",
-  compare:    "Compare",
-  bands:      "Team Bands",
-  benchmarks: "Global Benchmarks",
-  position:   "By Position",
-  age:        "By Age Group",
+  overview:    "Overview",
+  compare:     "Compare",
+  bands:       "Team Bands",
+  benchmarks:  "Global Benchmarks",
+  position:    "By Position",
+  age:         "By Age Group",
+  speed:       "Speed",
+  load:        "Training Load",
+  attendance:  "Attendance",
 };
+
+type RPEWithSession = SessionRPE & { sessions: TrainingSession; players: Pick<Player, "id" | "name" | "team"> };
+type AttendanceWithPlayer = SessionAttendance & { players: Pick<Player, "id" | "name" | "primary_position" | "team"> };
 
 // ── Main component ────────────────────────────────────────────────────────
 export default function Analytics() {
