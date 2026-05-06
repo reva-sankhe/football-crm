@@ -1,45 +1,68 @@
-# [Project name]
+# Football CRM
 
-_Replace the heading above with the project's name, and this line with one sentence describing what this app does for users._
+A team management CRM for Bombay Gymkhana Women's Football — tracks players, sessions, attendance, fitness tests, and analytics, backed by Supabase.
 
 ## Run & Operate
 
+- `pnpm --filter @workspace/football-crm run dev` — run the CRM frontend (uses PORT env var)
 - `pnpm --filter @workspace/api-server run dev` — run the API server (port 5000)
 - `pnpm run typecheck` — full typecheck across all packages
 - `pnpm run build` — typecheck + build all packages
 - `pnpm --filter @workspace/api-spec run codegen` — regenerate API hooks and Zod schemas from the OpenAPI spec
 - `pnpm --filter @workspace/db run push` — push DB schema changes (dev only)
-- Required env: `DATABASE_URL` — Postgres connection string
+- Required env: `DATABASE_URL` — Postgres connection string (for api-server)
+- Required env: `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY` — Supabase credentials (for football-crm)
 
 ## Stack
 
 - pnpm workspaces, Node.js 24, TypeScript 5.9
-- API: Express 5
-- DB: PostgreSQL + Drizzle ORM
-- Validation: Zod (`zod/v4`), `drizzle-zod`
-- API codegen: Orval (from OpenAPI spec)
-- Build: esbuild (CJS bundle)
+- Frontend: React 19 + Vite 7 + Tailwind CSS v4 + Radix UI + shadcn/ui components
+- Data: Supabase (PostgreSQL) via `@supabase/supabase-js`
+- State/queries: TanStack Query v5
+- Routing: wouter
+- Charts: Recharts
+- API (workspace): Express 5 + Drizzle ORM (separate from Supabase — currently unused by CRM)
+- Build: esbuild (api-server), Vite (frontend)
 
 ## Where things live
 
-_Populate as you build — short repo map plus pointers to the source-of-truth file for DB schema, API contracts, theme files, etc._
+- `artifacts/football-crm/` — React + Vite CRM app (the main product)
+- `artifacts/football-crm/src/lib/supabase.ts` — Supabase client init
+- `artifacts/football-crm/src/lib/queries.ts` — all Supabase data-fetching functions
+- `artifacts/football-crm/src/pages/` — page components (Dashboard, Players, Sessions, Analytics, etc.)
+- `artifacts/api-server/` — Express API server (workspace boilerplate, not used by CRM yet)
+- `lib/db/src/schema/` — Drizzle schema (workspace boilerplate)
+- `lib/api-spec/openapi.yaml` — OpenAPI spec (workspace boilerplate)
 
 ## Architecture decisions
 
-_Populate as you build — non-obvious choices a reader couldn't infer from the code (3-5 bullets)._
+- CRM connects directly to Supabase (no intermediate API layer) — all queries go through the Supabase JS client using the anon key + RLS.
+- The monorepo api-server/db/api-spec packages exist as workspace boilerplate but are not wired to the CRM; future backend work can use them.
+- previewPath is `/` so the CRM is the root app in the preview pane.
+- Supabase project ID: `ljxsclpmidkyqaujesio`
 
 ## Product
 
-_Describe the high-level user-facing capabilities of this app once they exist._
+- **Dashboard** — squad overview: size, position breakdown, age groups, benchmark stats
+- **Players** — full roster management with profiles
+- **Sessions** — training session log
+- **Calendar** — session scheduling view
+- **Fitness Tests** — fitness tracking per player
+- **Analytics** — performance analytics across the squad
 
 ## User preferences
 
-_Populate as you build — explicit user instructions worth remembering across sessions._
+- Don't add features without being asked — set up first, then enhance on request.
+- User wants to push finished changes back to GitHub eventually (GITHUB_TOKEN is available).
 
 ## Gotchas
 
-_Populate as you build — sharp edges, "always run X before Y" rules._
+- `VITE_SUPABASE_ANON_KEY` and `VITE_SUPABASE_URL` must be set as Replit secrets or the app won't connect to data.
+- The CRM's `vite.config.ts` requires `PORT` and `BASE_PATH` env vars (injected by the Replit workflow system automatically).
+- Do not use `pnpm dev` at the workspace root — use the workflow or `pnpm --filter` instead.
+- `@types/papaparse` is in `dependencies` (not `devDependencies`) due to how the workspace resolves types for this package.
 
 ## Pointers
 
 - See the `pnpm-workspace` skill for workspace structure, TypeScript setup, and package details
+- See the `react-vite` skill for frontend build conventions
