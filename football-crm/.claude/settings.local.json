@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npx tsc:*)",
+      "Bash(pnpm typecheck:*)",
+      "Bash(cat node_modules/.pnpm/typescript*/node_modules/typescript/package.json)",
+      "Bash(ls /home/runner/workspace/tsconfig*.json)",
+      "Bash(echo \"EXIT: $?\")",
+      "Bash(grep -E \"\\\\.\\(ts|sql\\)$\")",
+      "Bash(grep -E \"\\\\.\\(ts|tsx\\)$\")",
+      "Bash(echo \"EXIT:$?\")",
+      "Bash(npm run:*)"
+    ]
+  }
+}
