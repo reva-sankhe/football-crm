@@ -308,14 +308,14 @@ export async function upsertAttendance(
 
 // ── Analytics: All RPE with session + player info ─────────────────────────────
 export async function fetchAllRPEWithSessions(): Promise<
-  (SessionRPE & { sessions: TrainingSession; players: Pick<Player, "id" | "name" | "team"> })[]
+  (SessionRPE & { sessions: TrainingSession; players: Pick<Player, "id" | "name" | "team" | "primary_position" | "age_range"> })[]
 > {
   const { data, error } = await supabase
     .from("session_rpe")
-    .select("*, sessions(*), players(id, name, team)")
+    .select("*, sessions(*), players(id, name, team, primary_position, age_range)")
     .order("created_at", { ascending: true });
   if (error) throw error;
-  return data as (SessionRPE & { sessions: TrainingSession; players: Pick<Player, "id" | "name" | "team"> })[];
+  return data as (SessionRPE & { sessions: TrainingSession; players: Pick<Player, "id" | "name" | "team" | "primary_position" | "age_range"> })[];
 }
 
 // ── Analytics: All attendance with player info ────────────────────────────────

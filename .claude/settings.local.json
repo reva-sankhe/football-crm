@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(grep -E \"\\\\.\\(sql|ts\\)$\")",
+      "Bash(npx tsc *)",
+      "Bash(npm run *)"
+    ]
+  }
+}

@@ -6,7 +6,10 @@ import { MasBadge } from "@/components/MasBadge";
 import { ChartSkeleton, TableSkeleton, Skeleton } from "@/components/Skeleton";
 import { EmptyState } from "@/components/EmptyState";
 import type { Player, TestResult, SessionRPE, TrainingSession, SessionType } from "@/lib/types";
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
+import {
+  ComposedChart, LineChart, Line, Bar,
+  XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell,
+} from "recharts";
 import { ArrowLeft, Edit, Save, X, Timer, Dumbbell, ChevronLeft, ChevronRight } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 
@@ -16,6 +19,13 @@ const SECONDARY_POSITIONS: Record<string, string[]> = {
   Defender:   ["Wing Back", "Center Back"],
   Midfielder: ["Right Wing", "Left Wing", "CDM", "CM"],
   Forward:    ["Striker", "CAM"],
+};
+
+const SESSION_TYPE_COLORS: Record<string, string> = {
+  Training: "#818cf8",
+  Match:    "#fbbf24",
+  Gym:      "#34d399",
+  Recovery: "#94a3b8",
 };
 
 export default function PlayerDetail() {
@@ -36,25 +46,29 @@ export default function PlayerDetail() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [p, rs, allRs, loadHistory] = await Promise.all([fetchPlayer(id!), fetchResultsByPlayer(id!), fetchAllResults(), fetchPlayerRecentSessions(id!, 5)]);
+      const [p, rs, allRs, loadHistory] = await Promise.all([
+        fetchPlayer(id!),
+        fetchResultsByPlayer(id!),
+        fetchAllResults(),
+        fetchPlayerRecentSessions(id!, 28),
+      ]);
       setPlayer(p);
       setResults(rs as (TestResult & { test_sessions?: { test_date: string; test_name: string; type: string | null } })[]);
       setRecentLoad(loadHistory as (SessionRPE & { sessions: TrainingSession })[]);
 
-      // Calculate team percentile
       const teamLatest = new Map<string, number>();
       for (const r of (allRs as (TestResult & { players?: { team: string } })[]).filter(r => r.players?.team === p?.team && r.bronco_mins !== null)) {
         if (!teamLatest.has(r.player_id)) teamLatest.set(r.player_id, r.bronco_mins!);
       }
-      const sorted = Array.from(teamLatest.values()).sort((a, b) => a - b);
+      const sortedBronco = Array.from(teamLatest.values()).sort((a, b) => a - b);
       const playerBronco = (rs as TestResult[])[0]?.bronco_mins;
-      if (playerBronco != null && sorted.length > 0) {
+      if (playerBronco != null && sortedBronco.length > 0) {
         const calcQ = (arr: number[], p: number) => {
           const idx = (p / 100) * (arr.length - 1);
           const lo = Math.floor(idx), hi = Math.ceil(idx);
           return arr[lo] + (idx - lo) * ((arr[hi] ?? arr[lo]) - arr[lo]);
         };
-        const q1 = calcQ(sorted, 25), q2 = calcQ(sorted, 50), q3 = calcQ(sorted, 75);
+        const q1 = calcQ(sortedBronco, 25), q2 = calcQ(sortedBronco, 50), q3 = calcQ(sortedBronco, 75);
         if (playerBronco <= q1)      setTeamBand({ label: "Top 25%",    color: "#34d399" });
         else if (playerBronco <= q2) setTeamBand({ label: "Upper Mid",  color: "#60a5fa" });
         else if (playerBronco <= q3) setTeamBand({ label: "Lower Mid",  color: "#fbbf24" });
@@ -67,14 +81,8 @@ export default function PlayerDetail() {
 
   useEffect(() => { load(); }, [load]);
 
-  const startEdit = () => {
-    if (!player) return;
-    setEditForm({ ...player });
-    setEditing(true);
-  };
-
+  const startEdit = () => { if (!player) return; setEditForm({ ...player }); setEditing(true); };
   const cancelEdit = () => setEditing(false);
-
   const saveEdit = async () => {
     if (!player) return;
     setSaving(true);
@@ -92,7 +100,7 @@ export default function PlayerDetail() {
 
   const latestResult = results[0];
 
-  const chartData = [...results]
+  const bronchoChartData = [...results]
     .sort((a, b) => (a.test_sessions?.test_date ?? "").localeCompare(b.test_sessions?.test_date ?? ""))
     .map((r) => ({
       date: r.test_sessions?.test_date ?? "",
@@ -100,6 +108,64 @@ export default function PlayerDetail() {
       mins: r.bronco_mins,
       display: formatBroncho(r.bronco_mins),
     }));
+
+  // ── Load analytics ────────────────────────────────────────────────────────
+  const sortedLoad = [...recentLoad].sort(
+    (a, b) => (a.sessions?.date ?? "").localeCompare(b.sessions?.date ?? "")
+  );
+
+  const loadChartData = sortedLoad.map((r) => ({
+    date: r.sessions?.date
+      ? new Date(r.sessions.date + "T00:00:00").toLocaleDateString("en-GB", { day: "numeric", month: "short" })
+      : "—",
+    load: Math.round(r.load_au),
+    rpe: r.rpe,
+    sessionType: r.sessions?.session_type ?? "Training",
+    color: SESSION_TYPE_COLORS[r.sessions?.session_type ?? "Training"] ?? "#818cf8",
+  }));
+
+  const loadWithAvg = loadChartData.map((d, i, arr) => {
+    const window = arr.slice(Math.max(0, i - 3), i + 1);
+    const avg = Math.round(window.reduce((s, x) => s + x.load, 0) / window.length);
+    return { ...d, rollingAvg: avg };
+  });
+
+  // ACWR — Acute:Chronic Workload Ratio
+  const now = new Date();
+  const days7Ago = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+  const days28Ago = new Date(now.getTime() - 28 * 24 * 60 * 60 * 1000);
+
+  const acuteLoad = recentLoad
+    .filter((r) => r.sessions?.date && new Date(r.sessions.date + "T00:00:00") >= days7Ago)
+    .reduce((s, r) => s + r.load_au, 0);
+
+  const chronicLoad28 = recentLoad
+    .filter((r) => r.sessions?.date && new Date(r.sessions.date + "T00:00:00") >= days28Ago)
+    .reduce((s, r) => s + r.load_au, 0);
+
+  const chronicWeeklyAvg = chronicLoad28 / 4;
+  const acwr = chronicWeeklyAvg > 0 ? acuteLoad / chronicWeeklyAvg : null;
+
+  const acwrStatus: "safe" | "caution" | "danger" | "low" | "unknown" =
+    acwr === null ? "unknown"
+    : acwr < 0.5  ? "low"
+    : acwr <= 1.3 ? "safe"
+    : acwr <= 1.5 ? "caution"
+    : "danger";
+
+  const ACWR_CONFIG = {
+    safe:    { label: "Safe Zone",   color: "#34d399", bg: "bg-emerald-400/10", border: "border-emerald-400/20", desc: "Optimal training load balance." },
+    caution: { label: "Caution",     color: "#fbbf24", bg: "bg-amber-400/10",   border: "border-amber-400/20",  desc: "High load — monitor recovery closely." },
+    danger:  { label: "High Risk",   color: "#f87171", bg: "bg-red-400/10",     border: "border-red-400/20",    desc: "Injury risk elevated. Consider reducing load." },
+    low:     { label: "Underloaded", color: "#818cf8", bg: "bg-indigo-400/10",  border: "border-indigo-400/20", desc: "Below baseline — may indicate detraining." },
+    unknown: { label: "Not enough data", color: "#9ca3af", bg: "bg-muted",      border: "border-border",        desc: "Need 28 days of session data to calculate." },
+  };
+  const acwrCfg = ACWR_CONFIG[acwrStatus];
+
+  const loadByType = Object.entries(SESSION_TYPE_COLORS).map(([type, color]) => {
+    const rows = recentLoad.filter((r) => r.sessions?.session_type === type);
+    return { type, total: Math.round(rows.reduce((s, r) => s + r.load_au, 0)), count: rows.length, color };
+  }).filter((d) => d.count > 0);
 
   if (loading) {
     return (
@@ -119,6 +185,13 @@ export default function PlayerDetail() {
   if (!player) {
     return <EmptyState icon={Dumbbell} title="Player not found" action={<button onClick={() => setLocation("/players")} className="text-primary text-sm">Back to Players</button>} />;
   }
+
+  const SESSION_TYPE_CFG: Record<SessionType, { text: string; bg: string }> = {
+    Training: { text: "text-indigo-400", bg: "bg-indigo-500/15" },
+    Match:    { text: "text-amber-400",  bg: "bg-amber-500/15"  },
+    Gym:      { text: "text-emerald-400",bg: "bg-emerald-500/15"},
+    Recovery: { text: "text-slate-400",  bg: "bg-slate-500/15"  },
+  };
 
   return (
     <div className="space-y-5">
@@ -238,11 +311,11 @@ export default function PlayerDetail() {
       {/* Broncho over time chart */}
       <div className="bg-card border border-border rounded-2xl p-5">
         <h2 className="text-sm font-semibold text-foreground mb-4">Broncho Over Time</h2>
-        {chartData.length === 0 ? (
+        {bronchoChartData.length === 0 ? (
           <EmptyState icon={Timer} title="No test history" description="This player hasn't been tested yet" />
         ) : (
           <ResponsiveContainer width="100%" height={220}>
-            <LineChart data={chartData} margin={{ top: 4, right: 8, bottom: 40, left: 0 }}>
+            <LineChart data={bronchoChartData} margin={{ top: 4, right: 8, bottom: 40, left: 0 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="#222" />
               <XAxis dataKey="session" tick={{ fill: "#9CA3AF", fontSize: 10 }} angle={-35} textAnchor="end" interval={0} />
               <YAxis tickFormatter={(v) => formatBroncho(v)} domain={["auto", "auto"]} tick={{ fill: "#9CA3AF", fontSize: 11 }} />
@@ -257,60 +330,152 @@ export default function PlayerDetail() {
         )}
       </div>
 
-      {/* Recent training load */}
-      {(() => {
-        const SESSION_TYPE_CFG: Record<SessionType, { text: string; bg: string }> = {
-          Training: { text: "text-indigo-400", bg: "bg-indigo-500/15" },
-          Match:    { text: "text-amber-400",  bg: "bg-amber-500/15"  },
-          Gym:      { text: "text-emerald-400",bg: "bg-emerald-500/15"},
-          Recovery: { text: "text-slate-400",  bg: "bg-slate-500/15"  },
-        };
-        return (
-          <div className="bg-card border border-border rounded-lg">
-            <div className="px-4 py-3 border-b border-border flex items-center justify-between">
-              <h2 className="text-sm font-semibold text-foreground">Recent Load</h2>
-              <span className="text-xs text-muted-foreground">Last 5 sessions</span>
+      {/* ACWR Card */}
+      {recentLoad.length > 0 && (
+        <div className={cn("border rounded-2xl p-5", acwrCfg.bg, acwrCfg.border)}>
+          <div className="flex items-start justify-between mb-3">
+            <div>
+              <div className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground mb-1">
+                Acute:Chronic Workload Ratio
+              </div>
+              <div className="text-3xl font-bold font-time" style={{ color: acwrCfg.color }}>
+                {acwr !== null ? acwr.toFixed(2) : "—"}
+              </div>
+              <div className="text-xs font-medium mt-0.5" style={{ color: acwrCfg.color }}>
+                {acwrCfg.label}
+              </div>
             </div>
-            {recentLoad.length === 0 ? (
-              <div className="py-8 text-center">
-                <p className="text-sm text-muted-foreground">No sessions logged yet</p>
-              </div>
-            ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="border-b border-border text-xs text-muted-foreground">
-                      <th className="px-4 py-2.5 text-left font-medium">Date</th>
-                      <th className="px-4 py-2.5 text-left font-medium">Type</th>
-                      <th className="px-4 py-2.5 text-right font-medium">RPE</th>
-                      <th className="px-4 py-2.5 text-right font-medium">Load (AU)</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {recentLoad.map((r) => {
-                      const st = r.sessions?.session_type as SessionType;
-                      const cfg = SESSION_TYPE_CFG[st] ?? SESSION_TYPE_CFG.Training;
-                      const dateStr = r.sessions?.date
-                        ? new Date(r.sessions.date + "T00:00:00").toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })
-                        : "—";
-                      return (
-                        <tr key={r.id} className="border-b border-border/50 hover:bg-muted/30">
-                          <td className="px-4 py-2.5 text-muted-foreground font-time text-xs">{dateStr}</td>
-                          <td className="px-4 py-2.5">
-                            <span className={cn("inline-flex items-center px-2 py-0.5 rounded text-xs font-medium", cfg.bg, cfg.text)}>{st}</span>
-                          </td>
-                          <td className="px-4 py-2.5 text-right font-time text-foreground">{r.rpe.toFixed(1)}</td>
-                          <td className="px-4 py-2.5 text-right font-bold font-time text-amber-400">{Math.round(r.load_au)}</td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            )}
+            <div className="text-right text-[11px] text-muted-foreground space-y-1">
+              <div>Acute (7d): <span className="text-foreground font-time font-bold">{Math.round(acuteLoad)} AU</span></div>
+              <div>Chronic avg/wk: <span className="text-foreground font-time font-bold">{Math.round(chronicWeeklyAvg)} AU</span></div>
+            </div>
           </div>
-        );
-      })()}
+          <p className="text-xs text-muted-foreground mb-3">{acwrCfg.desc}</p>
+          <div className="flex h-1.5 rounded-full overflow-hidden gap-px">
+            <div className="w-[10%] bg-indigo-400/50" title="< 0.5 Underloaded" />
+            <div className="w-[60%] bg-emerald-400/50" title="0.5–1.3 Safe" />
+            <div className="w-[15%] bg-amber-400/50" title="1.3–1.5 Caution" />
+            <div className="w-[15%] bg-red-400/50" title="> 1.5 Danger" />
+          </div>
+          <div className="flex justify-between text-[10px] text-muted-foreground mt-1">
+            <span>0.5</span><span>0.8</span><span>1.3</span><span>1.5</span><span>2.0+</span>
+          </div>
+        </div>
+      )}
+
+      {/* Load Trend Chart */}
+      {loadChartData.length > 0 && (
+        <div className="bg-card border border-border rounded-2xl p-5">
+          <div className="flex items-center justify-between mb-1">
+            <h2 className="text-sm font-semibold text-foreground">Training Load Trend</h2>
+            <span className="text-xs text-muted-foreground">Last {recentLoad.length} sessions</span>
+          </div>
+          <p className="text-xs text-muted-foreground mb-4">
+            Bars = load (AU) by session type. Line = 4-session rolling average.
+          </p>
+          <ResponsiveContainer width="100%" height={220}>
+            <ComposedChart data={loadWithAvg} margin={{ top: 4, right: 16, bottom: 34, left: 0 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#222" vertical={false} />
+              <XAxis dataKey="date" tick={{ fill: "#9CA3AF", fontSize: 9 }} angle={-35} textAnchor="end" interval={0} />
+              <YAxis tick={{ fill: "#9CA3AF", fontSize: 10 }} />
+              <Tooltip
+                contentStyle={{ background: "#111", border: "1px solid #222", borderRadius: 6 }}
+                labelStyle={{ color: "#fff", fontSize: 12 }}
+                formatter={(v: number, key: string) => [
+                  `${v} AU`,
+                  key === "rollingAvg" ? "Rolling Avg (4)" : "Load",
+                ]}
+              />
+              <Bar dataKey="load" maxBarSize={28} radius={[3, 3, 0, 0]}>
+                {loadWithAvg.map((entry, i) => (
+                  <Cell key={`cell-${i}`} fill={entry.color} />
+                ))}
+              </Bar>
+              <Line
+                type="monotone"
+                dataKey="rollingAvg"
+                stroke="rgba(255,255,255,0.5)"
+                strokeWidth={1.5}
+                strokeDasharray="4 2"
+                dot={false}
+              />
+            </ComposedChart>
+          </ResponsiveContainer>
+          <div className="flex flex-wrap gap-3 mt-2">
+            {Object.entries(SESSION_TYPE_COLORS).map(([type, color]) => (
+              <div key={type} className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+                <div className="w-2.5 h-2.5 rounded-sm" style={{ background: color }} />
+                {type}
+              </div>
+            ))}
+            <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+              <div className="w-4 border-t border-dashed border-white/40" />
+              Rolling Avg
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Session type breakdown */}
+      {loadByType.length > 0 && (
+        <div className="grid grid-cols-2 sm:grid-cols-4 border border-border rounded-2xl overflow-hidden divide-x divide-y sm:divide-y-0 divide-border bg-card">
+          {loadByType.map(({ type, total, count, color }) => (
+            <div key={type} className="px-4 py-3">
+              <div className="text-[10px] text-muted-foreground mb-0.5">{type}</div>
+              <div className="text-lg font-bold font-time" style={{ color }}>{total} AU</div>
+              <div className="text-[11px] text-muted-foreground">{count} session{count !== 1 ? "s" : ""}</div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Recent Load table (last 5) */}
+      <div className="bg-card border border-border rounded-lg">
+        <div className="px-4 py-3 border-b border-border flex items-center justify-between">
+          <h2 className="text-sm font-semibold text-foreground">Recent Load</h2>
+          <span className="text-xs text-muted-foreground">Last 5 sessions</span>
+        </div>
+        {recentLoad.length === 0 ? (
+          <div className="py-8 text-center">
+            <p className="text-sm text-muted-foreground">No sessions logged yet</p>
+          </div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-border text-xs text-muted-foreground">
+                  <th className="px-4 py-2.5 text-left font-medium">Date</th>
+                  <th className="px-4 py-2.5 text-left font-medium">Type</th>
+                  <th className="px-4 py-2.5 text-right font-medium">RPE</th>
+                  <th className="px-4 py-2.5 text-right font-medium">Load (AU)</th>
+                </tr>
+              </thead>
+              <tbody>
+                {[...recentLoad]
+                  .sort((a, b) => (b.sessions?.date ?? "").localeCompare(a.sessions?.date ?? ""))
+                  .slice(0, 5)
+                  .map((r) => {
+                    const st = r.sessions?.session_type as SessionType;
+                    const cfg = SESSION_TYPE_CFG[st] ?? SESSION_TYPE_CFG.Training;
+                    const dateStr = r.sessions?.date
+                      ? new Date(r.sessions.date + "T00:00:00").toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })
+                      : "—";
+                    return (
+                      <tr key={r.id} className="border-b border-border/50 hover:bg-muted/30">
+                        <td className="px-4 py-2.5 text-muted-foreground font-time text-xs">{dateStr}</td>
+                        <td className="px-4 py-2.5">
+                          <span className={cn("inline-flex items-center px-2 py-0.5 rounded text-xs font-medium", cfg.bg, cfg.text)}>{st}</span>
+                        </td>
+                        <td className="px-4 py-2.5 text-right font-time text-foreground">{r.rpe.toFixed(1)}</td>
+                        <td className="px-4 py-2.5 text-right font-bold font-time text-amber-400">{Math.round(r.load_au)}</td>
+                      </tr>
+                    );
+                  })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
 
       {/* Full test history with pagination */}
       <div className="bg-card border border-border rounded-lg">

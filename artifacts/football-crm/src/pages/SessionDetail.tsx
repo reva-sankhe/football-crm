@@ -6,15 +6,26 @@ import { fetchTrainingSession, fetchSessionRPEWithPlayers } from "@/lib/queries"
 import type { TrainingSession, SessionRPE, Player, SessionType } from "@/lib/types";
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
-  ResponsiveContainer, Cell, ReferenceLine,
+  ResponsiveContainer, Cell, ReferenceLine, LabelList,
 } from "recharts";
 
+// ── RPE color gradient (1=green → 10=red) ────────────────────────────────────
+const RPE_COLORS: Record<number, string> = {
+  1: "hsl(142,76%,45%)", 2: "hsl(116,60%,43%)", 3: "hsl(90,60%,40%)",
+  4: "hsl(60,80%,42%)",  5: "hsl(45,90%,48%)",  6: "hsl(30,90%,50%)",
+  7: "hsl(18,92%,50%)",  8: "hsl(8,92%,50%)",   9: "hsl(4,90%,45%)",
+ 10: "hsl(0,88%,38%)",
+};
+function rpeColor(rpe: number): string {
+  return RPE_COLORS[Math.max(1, Math.min(10, Math.floor(rpe)))];
+}
+
 // ── Position config ────────────────────────────────────────────────────────────
-const POS_CFG: Record<string, { label: string; tailwindText: string; tailwindBg: string }> = {
-  Forward:    { label: "FW", tailwindText: "text-red-400",    tailwindBg: "bg-red-400/15"    },
-  Midfielder: { label: "MF", tailwindText: "text-blue-400",   tailwindBg: "bg-blue-400/15"   },
-  Defender:   { label: "DF", tailwindText: "text-indigo-400", tailwindBg: "bg-indigo-400/15" },
-  Goalkeeper: { label: "GK", tailwindText: "text-amber-400",  tailwindBg: "bg-amber-400/15"  },
+const POS_CFG: Record<string, { label: string; tailwindText: string; tailwindBg: string; hexColor: string }> = {
+  Forward:    { label: "FW", tailwindText: "text-red-400",    tailwindBg: "bg-red-400/15",    hexColor: "#f87171" },
+  Midfielder: { label: "MF", tailwindText: "text-blue-400",   tailwindBg: "bg-blue-400/15",   hexColor: "#60a5fa" },
+  Defender:   { label: "DF", tailwindText: "text-indigo-400", tailwindBg: "bg-indigo-400/15", hexColor: "#818cf8" },
+  Goalkeeper: { label: "GK", tailwindText: "text-amber-400",  tailwindBg: "bg-amber-400/15",  hexColor: "#fbbf24" },
 };
 function PosBadge({ pos }: { pos: string | null }) {
   const cfg = POS_CFG[pos ?? ""] ?? { label: pos ?? "?", tailwindText: "text-slate-400", tailwindBg: "bg-slate-400/15" };
@@ -99,14 +110,50 @@ export default function SessionDetail() {
   const highest = sorted[0] ?? null;
   const lowest = sorted[sorted.length - 1] ?? null;
 
-  // Chart data — sorted ascending by load
+  const planLoad = Math.round(session.planned_load_au);
+
+  // Chart B data — sorted ascending by load, RPE-colored
   const chartData = [...rpeRows]
     .sort((a, b) => a.load_au - b.load_au)
     .map((r) => ({
       name: r.players?.name?.split(" ")[0] ?? "—",
       load: Math.round(r.load_au),
       rpe: r.rpe,
+      color: rpeColor(r.rpe),
     }));
+
+  // Chart A — RPE distribution histogram
+  const histogramData = Array.from({ length: 10 }, (_, i) => {
+    const rpeVal = i + 1;
+    return {
+      rpe: rpeVal,
+      count: rpeRows.filter((r) => Math.round(r.rpe) === rpeVal).length,
+      color: RPE_COLORS[rpeVal],
+    };
+  });
+
+  // Chart C — avg load by position
+  const positionLoadData = ["Forward", "Midfielder", "Defender", "Goalkeeper"]
+    .map((pos) => {
+      const inPos = rpeRows.filter((r) => r.players?.primary_position === pos);
+      if (inPos.length === 0) return null;
+      const avgL = Math.round(inPos.reduce((s, r) => s + r.load_au, 0) / inPos.length);
+      const avgR = inPos.reduce((s, r) => s + r.rpe, 0) / inPos.length;
+      const cfg = POS_CFG[pos];
+      return { pos, avgLoad: avgL, avgRpe: parseFloat(avgR.toFixed(1)), color: cfg.hexColor, count: inPos.length };
+    })
+    .filter(Boolean) as { pos: string; avgLoad: number; avgRpe: number; color: string; count: number }[];
+
+  // Effort vs plan insight blurb
+  const teamAvgLoad = avgLoad ?? 0;
+  const pctVsPlan = planLoad > 0 ? Math.round(((teamAvgLoad - planLoad) / planLoad) * 100) : 0;
+  const highestPosGroup = positionLoadData.length > 0
+    ? positionLoadData.reduce((a, b) => (b.avgLoad > a.avgLoad ? b : a))
+    : null;
+  const effortBlurb = count > 0 && planLoad > 0
+    ? `Team averaged ${Math.abs(pctVsPlan)}% ${pctVsPlan >= 0 ? "above" : "below"} plan` +
+      (highestPosGroup ? `, with ${highestPosGroup.pos}s carrying the highest load (avg ${highestPosGroup.avgLoad} AU).` : ".")
+    : null;
 
   return (
     <div className="space-y-5">
@@ -148,16 +195,15 @@ export default function SessionDetail() {
           </div>
           <div>
             <div className="text-xs text-muted-foreground mb-0.5">Planned Load</div>
-            <div className="text-lg font-bold font-time text-amber-400">{Math.round(session.planned_load_au)} <span className="text-xs font-normal text-amber-400/60">AU</span></div>
+            <div className="text-lg font-bold font-time text-amber-400">{planLoad} <span className="text-xs font-normal text-amber-400/60">AU</span></div>
           </div>
         </div>
-        {/* Prominent planned load banner */}
         <div className="flex items-center justify-between bg-amber-400/10 border border-amber-400/20 rounded-lg px-4 py-2.5">
           <div className="flex items-center gap-2">
             <Zap size={14} className="text-amber-400" />
             <span className="text-xs text-amber-400/80 font-medium">Planned Load (AU)</span>
           </div>
-          <span className="text-2xl font-bold text-amber-400 font-time">{Math.round(session.planned_load_au)}</span>
+          <span className="text-2xl font-bold text-amber-400 font-time">{planLoad}</span>
         </div>
         {session.notes && (
           <p className="text-xs text-muted-foreground mt-3 border-t border-border pt-3">{session.notes}</p>
@@ -189,6 +235,90 @@ export default function SessionDetail() {
             <div className="text-xs text-muted-foreground mb-0.5">Logged</div>
             <div className="text-xl font-bold font-time text-foreground">{count}</div>
           </div>
+        </div>
+      )}
+
+      {/* Chart A — RPE Distribution */}
+      {count > 0 && (
+        <div className="bg-card border border-border rounded-2xl p-5">
+          <h2 className="text-sm font-semibold text-foreground mb-1">RPE Distribution</h2>
+          <p className="text-xs text-muted-foreground mb-4">
+            How many players reported each RPE score this session.
+          </p>
+          <ResponsiveContainer width="100%" height={180}>
+            <BarChart data={histogramData} margin={{ top: 4, right: 8, bottom: 4, left: -20 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" vertical={false} />
+              <XAxis dataKey="rpe" tick={{ fill: "#9CA3AF", fontSize: 11 }} />
+              <YAxis allowDecimals={false} tick={{ fill: "#9CA3AF", fontSize: 10 }} />
+              <Tooltip
+                contentStyle={{ background: "#111", border: "1px solid #222", borderRadius: 6 }}
+                labelStyle={{ color: "#fff", fontSize: 12 }}
+                formatter={(v: number, _: string, entry: { payload?: { rpe?: number } }) => [
+                  `${v} player${v !== 1 ? "s" : ""}`,
+                  `RPE ${entry.payload?.rpe}`,
+                ]}
+              />
+              <Bar dataKey="count" radius={[4, 4, 0, 0]} maxBarSize={36}>
+                {histogramData.map((entry, i) => (
+                  <Cell key={`hist-${i}`} fill={entry.color} />
+                ))}
+              </Bar>
+            </BarChart>
+          </ResponsiveContainer>
+          <div className="flex items-center justify-between mt-2 text-[11px]">
+            <span style={{ color: RPE_COLORS[1] }}>1 — Easy</span>
+            <span style={{ color: RPE_COLORS[5] }}>5 — Moderate</span>
+            <span style={{ color: RPE_COLORS[10] }}>10 — Max</span>
+          </div>
+        </div>
+      )}
+
+      {/* Effort vs plan blurb */}
+      {effortBlurb && (
+        <div className="flex items-start gap-2 px-4 py-3 bg-indigo-500/10 border border-indigo-500/20 rounded-xl text-xs text-indigo-300">
+          <Zap size={13} className="text-indigo-400 mt-0.5 flex-shrink-0" />
+          <span>{effortBlurb}</span>
+        </div>
+      )}
+
+      {/* Chart C — Load by Position */}
+      {positionLoadData.length > 0 && (
+        <div className="bg-card border border-border rounded-2xl p-5">
+          <h2 className="text-sm font-semibold text-foreground mb-1">Avg Load by Position</h2>
+          <p className="text-xs text-muted-foreground mb-4">
+            Average load (AU) per position group. Dashed line = planned ({planLoad} AU).
+          </p>
+          <ResponsiveContainer width="100%" height={180}>
+            <BarChart data={positionLoadData} margin={{ top: 4, right: 40, bottom: 4, left: 0 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" vertical={false} />
+              <XAxis dataKey="pos" tick={{ fill: "#9CA3AF", fontSize: 11 }} />
+              <YAxis tick={{ fill: "#9CA3AF", fontSize: 10 }} />
+              <Tooltip
+                contentStyle={{ background: "#111", border: "1px solid #222", borderRadius: 6 }}
+                labelStyle={{ color: "#fff", fontSize: 12 }}
+                formatter={(v: number, _: string, entry: { payload?: { avgRpe?: number; count?: number } }) => [
+                  `${v} AU · avg RPE ${entry.payload?.avgRpe?.toFixed(1) ?? "?"} · ${entry.payload?.count} player${entry.payload?.count !== 1 ? "s" : ""}`,
+                  "Avg Load",
+                ]}
+              />
+              <ReferenceLine
+                y={planLoad}
+                stroke="#fbbf24"
+                strokeDasharray="5 3"
+                label={{ value: "Plan", position: "insideTopRight", fill: "#fbbf24", fontSize: 10 }}
+              />
+              <Bar dataKey="avgLoad" radius={[4, 4, 0, 0]} maxBarSize={52}>
+                <LabelList
+                  dataKey="avgLoad"
+                  position="top"
+                  style={{ fill: "#9CA3AF", fontSize: 10 }}
+                />
+                {positionLoadData.map((entry, i) => (
+                  <Cell key={`pos-${i}`} fill={entry.color} />
+                ))}
+              </Bar>
+            </BarChart>
+          </ResponsiveContainer>
         </div>
       )}
 
@@ -224,7 +354,7 @@ export default function SessionDetail() {
               </thead>
               <tbody>
                 {[...rpeRows].sort((a, b) => b.load_au - a.load_au).map((r) => {
-                  const variance = Math.round(r.load_au) - Math.round(session.planned_load_au);
+                  const variance = Math.round(r.load_au) - planLoad;
                   return (
                     <tr key={r.id} className="border-b border-border/50 hover:bg-muted/30">
                       <td className="px-4 py-2.5 font-medium text-foreground">{r.players?.name ?? "—"}</td>
@@ -253,21 +383,20 @@ export default function SessionDetail() {
         )}
       </div>
 
-      {/* Planned vs Actual chart */}
+      {/* Chart B — Planned vs Actual Load, RPE-colored */}
       {count > 0 && (
         <div className="bg-card border border-border rounded-2xl p-5">
           <h2 className="text-sm font-semibold text-foreground mb-1">Planned vs Actual Load (AU)</h2>
           <p className="text-xs text-muted-foreground mb-4">
-            Each bar is a player's actual load. Dashed line = planned load ({Math.round(session.planned_load_au)} AU).
+            Each bar colored by player RPE. Dashed line = planned ({planLoad} AU).
           </p>
           <ResponsiveContainer width="100%" height={Math.max(220, count * 28)}>
-            <BarChart data={chartData} layout="vertical" margin={{ top: 4, right: 40, bottom: 4, left: 60 }}>
+            <BarChart data={chartData} layout="vertical" margin={{ top: 4, right: 60, bottom: 4, left: 60 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" horizontal={false} />
               <XAxis
                 type="number"
                 domain={[0, "dataMax + 50"]}
                 tick={{ fill: "#9CA3AF", fontSize: 10 }}
-                tickFormatter={(v) => String(v)}
               />
               <YAxis
                 type="category"
@@ -279,30 +408,38 @@ export default function SessionDetail() {
                 contentStyle={{ background: "#111", border: "1px solid #222", borderRadius: 6 }}
                 labelStyle={{ color: "#fff", fontSize: 12 }}
                 formatter={(v: number, _: string, entry: { payload?: { rpe?: number } }) => [
-                  `${v} AU (RPE ${entry.payload?.rpe?.toFixed(1) ?? "?"})`,
-                  "Load"
+                  `${v} AU — RPE ${entry.payload?.rpe?.toFixed(1) ?? "?"}`,
+                  "Load",
                 ]}
               />
               <ReferenceLine
-                x={Math.round(session.planned_load_au)}
+                x={planLoad}
                 stroke="#fbbf24"
                 strokeDasharray="5 3"
-                label={{ value: "Planned", position: "right", fill: "#fbbf24", fontSize: 10 }}
+                label={{ value: "Plan", position: "right", fill: "#fbbf24", fontSize: 10 }}
               />
               <Bar dataKey="load" radius={[0, 4, 4, 0]} maxBarSize={20}>
+                <LabelList
+                  dataKey="rpe"
+                  position="insideRight"
+                  style={{ fill: "#fff", fontSize: 9, fontWeight: 700 }}
+                  formatter={(v: number) => (v >= 1 ? v.toFixed(1) : "")}
+                />
                 {chartData.map((entry, index) => (
-                  <Cell
-                    key={`cell-${index}`}
-                    fill={entry.load > Math.round(session.planned_load_au) ? "#f87171" : "#818cf8"}
-                  />
+                  <Cell key={`cell-${index}`} fill={entry.color} />
                 ))}
               </Bar>
             </BarChart>
           </ResponsiveContainer>
-          <div className="flex items-center gap-4 mt-2 text-[11px] text-muted-foreground">
-            <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm bg-indigo-400 inline-block" /> At or below planned</span>
-            <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm bg-red-400 inline-block" /> Above planned</span>
-            <span className="flex items-center gap-1.5"><span className="w-3 h-0.5 bg-amber-400 inline-block border-dashed border-t border-amber-400" /> Planned ({Math.round(session.planned_load_au)} AU)</span>
+          {/* RPE gradient legend */}
+          <div className="flex h-2 rounded-full overflow-hidden mt-3 gap-px">
+            {[1,2,3,4,5,6,7,8,9,10].map((n) => (
+              <div key={n} className="flex-1 h-full" style={{ background: RPE_COLORS[n] }} />
+            ))}
+          </div>
+          <div className="flex justify-between text-[10px] text-muted-foreground mt-1">
+            <span>RPE 1 (Easy)</span>
+            <span>RPE 10 (Max)</span>
           </div>
         </div>
       )}

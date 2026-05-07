@@ -4,13 +4,14 @@ import { TeamSwitcher } from "@/components/TeamSwitcher";
 import { ChartSkeleton } from "@/components/Skeleton";
 import { EmptyState } from "@/components/EmptyState";
 import { formatBroncho } from "@/lib/utils";
-import { getBronchoTier, getMasTier, BRONCHO_TIERS, type Player, type TestResult, type TestSession, type SessionRPE, type TrainingSession, type SessionAttendance } from "@/lib/types";
-import { fetchAllResults, fetchSessions, fetchPlayers, fetchAllRPEWithSessions, fetchAllAttendanceStats } from "@/lib/queries";
+import { getBronchoTier, BRONCHO_TIERS, type Player, type TestResult, type TestSession, type SessionRPE, type TrainingSession } from "@/lib/types";
+import { fetchAllResults, fetchSessions, fetchPlayers, fetchAllRPEWithSessions } from "@/lib/queries";
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
   ResponsiveContainer, Cell, ReferenceLine,
   ScatterChart, Scatter, ZAxis,
   AreaChart, Area,
+  LineChart, Line,
 } from "recharts";
 import { cn } from "@/lib/utils";
 import { useTheme } from "@/context/ThemeContext";
@@ -111,7 +112,7 @@ interface EnrichedResult extends TestResult {
   test_sessions?: Pick<TestSession, "test_date" | "test_name" | "type">;
 }
 
-const TABS = ["overview", "compare", "bands", "benchmarks", "position", "age", "speed", "load", "attendance"] as const;
+const TABS = ["overview", "compare", "bands", "benchmarks", "position", "age", "load"] as const;
 type TabId = typeof TABS[number];
 const TAB_LABELS: Record<TabId, string> = {
   overview:    "Overview",
@@ -120,13 +121,10 @@ const TAB_LABELS: Record<TabId, string> = {
   benchmarks:  "Global Benchmarks",
   position:    "By Position",
   age:         "By Age Group",
-  speed:       "Speed",
   load:        "Training Load",
-  attendance:  "Attendance",
 };
 
-type RPEWithSession = SessionRPE & { sessions: TrainingSession; players: Pick<Player, "id" | "name" | "team"> };
-type AttendanceWithPlayer = SessionAttendance & { players: Pick<Player, "id" | "name" | "primary_position" | "team"> };
+type RPEWithSession = SessionRPE & { sessions: TrainingSession; players: Pick<Player, "id" | "name" | "team" | "primary_position" | "age_range"> };
 
 // ── Main component ────────────────────────────────────────────────────────
 export default function Analytics() {
@@ -145,6 +143,10 @@ export default function Analytics() {
   const [rankGroup, setRankGroup] = useState<"all" | "position" | "age">("all");
   const [ovSessionIds, setOvSessionIds] = useState<string[] | null>(null); // null = all
   const [ovDropdownOpen, setOvDropdownOpen] = useState(false);
+  const [rpeData, setRpeData] = useState<RPEWithSession[]>([]);
+  const [loadLoading, setLoadLoading] = useState(false);
+  const [loadDateRangeWeeks, setLoadDateRangeWeeks] = useState<number | null>(16);
+  const [loadDistRankGroup, setLoadDistRankGroup] = useState<"all" | "position" | "age">("all");
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -157,6 +159,14 @@ export default function Analytics() {
   }, [team]);
 
   useEffect(() => { load(); }, [load]);
+
+  useEffect(() => {
+    if (tab !== "load" || rpeData.length > 0) return;
+    setLoadLoading(true);
+    fetchAllRPEWithSessions()
+      .then((rows) => setRpeData(rows as RPEWithSession[]))
+      .finally(() => setLoadLoading(false));
+  }, [tab, rpeData.length]);
 
   const teamResults = useMemo(() => results.filter((r) => r.players?.team === team), [results, team]);
 
@@ -266,6 +276,98 @@ export default function Analytics() {
   const chartAxis = isDark ? "#6b7280" : "#9ca3af";
   const chartTooltipBg = isDark ? "#0f172a" : "#ffffff";
   const chartTooltipBorder = isDark ? "#1e293b" : "#e2e8f0";
+
+  // ── Training Load tab data ───────────────────────────────────────────────
+  const teamRpeData = useMemo(
+    () => rpeData.filter((r) => r.players?.team === team),
+    [rpeData, team]
+  );
+
+  const filteredRpeData = useMemo(() => {
+    if (!loadDateRangeWeeks) return teamRpeData;
+    const cutoff = new Date();
+    cutoff.setDate(cutoff.getDate() - loadDateRangeWeeks * 7);
+    const cutoffStr = cutoff.toISOString().slice(0, 10);
+    return teamRpeData.filter((r) => (r.sessions?.date ?? "") >= cutoffStr);
+  }, [teamRpeData, loadDateRangeWeeks]);
+
+  const weeklyLoadData = useMemo(() => {
+    const byWeek = new Map<string, { weekLabel: string; totalLoad: number }>();
+    for (const r of filteredRpeData) {
+      if (!r.sessions?.date) continue;
+      const d = new Date(r.sessions.date + "T00:00:00");
+      const year = d.getFullYear();
+      const startOfYear = new Date(year, 0, 1);
+      const week = Math.ceil(((d.getTime() - startOfYear.getTime()) / 86400000 + startOfYear.getDay() + 1) / 7);
+      const key = `${year}-W${String(week).padStart(2, "0")}`;
+      const label = `W${week} '${String(year).slice(2)}`;
+      if (!byWeek.has(key)) byWeek.set(key, { weekLabel: label, totalLoad: 0 });
+      byWeek.get(key)!.totalLoad += r.load_au;
+    }
+    return Array.from(byWeek.entries())
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([, v]) => ({ ...v, totalLoad: Math.round(v.totalLoad) }));
+  }, [filteredRpeData]);
+
+  const weeklyRpeData = useMemo(() => {
+    const byWeek = new Map<string, { weekLabel: string; rpeSum: number; count: number }>();
+    for (const r of filteredRpeData) {
+      if (!r.sessions?.date) continue;
+      const d = new Date(r.sessions.date + "T00:00:00");
+      const year = d.getFullYear();
+      const startOfYear = new Date(year, 0, 1);
+      const week = Math.ceil(((d.getTime() - startOfYear.getTime()) / 86400000 + startOfYear.getDay() + 1) / 7);
+      const key = `${year}-W${String(week).padStart(2, "0")}`;
+      const label = `W${week} '${String(year).slice(2)}`;
+      if (!byWeek.has(key)) byWeek.set(key, { weekLabel: label, rpeSum: 0, count: 0 });
+      byWeek.get(key)!.rpeSum += r.rpe;
+      byWeek.get(key)!.count += 1;
+    }
+    return Array.from(byWeek.entries())
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([, v]) => ({ weekLabel: v.weekLabel, avgRpe: parseFloat((v.rpeSum / v.count).toFixed(1)) }));
+  }, [filteredRpeData]);
+
+  const topSessionsData = useMemo(() => {
+    const bySession = new Map<string, {
+      sessionId: string; date: string; sessionType: string;
+      totalLoad: number; playerCount: number; rpeSum: number;
+    }>();
+    for (const r of filteredRpeData) {
+      const sid = r.session_id;
+      if (!bySession.has(sid)) {
+        bySession.set(sid, { sessionId: sid, date: r.sessions?.date ?? "", sessionType: r.sessions?.session_type ?? "Training", totalLoad: 0, playerCount: 0, rpeSum: 0 });
+      }
+      const e = bySession.get(sid)!;
+      e.totalLoad += r.load_au;
+      e.playerCount += 1;
+      e.rpeSum += r.rpe;
+    }
+    return Array.from(bySession.values())
+      .sort((a, b) => b.totalLoad - a.totalLoad)
+      .slice(0, 10)
+      .map((d) => ({
+        ...d,
+        totalLoad: Math.round(d.totalLoad),
+        avgRpe: parseFloat((d.rpeSum / d.playerCount).toFixed(1)),
+      }));
+  }, [filteredRpeData]);
+
+  const loadDistributionData = useMemo(() => {
+    const byPlayer = new Map<string, { loads: number[]; player: RPEWithSession["players"] }>();
+    for (const r of filteredRpeData) {
+      if (!r.players?.id) continue;
+      if (!byPlayer.has(r.players.id)) byPlayer.set(r.players.id, { loads: [], player: r.players });
+      byPlayer.get(r.players.id)!.loads.push(r.load_au);
+    }
+    return Array.from(byPlayer.values())
+      .filter((d) => d.loads.length > 0)
+      .map((d) => ({
+        player: d.player,
+        avgLoad: Math.round(d.loads.reduce((a, b) => a + b, 0) / d.loads.length),
+        sessions: d.loads.length,
+      }));
+  }, [filteredRpeData]);
 
   return (
     <div className="space-y-0">
@@ -1419,6 +1521,322 @@ export default function Analytics() {
           </div>
         );
       })()}
+
+      {/* ── TRAINING LOAD ────────────────────────────────────────────── */}
+      {tab === "load" && (
+        <div className="space-y-4">
+
+          {/* Date range filter */}
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="text-xs text-muted-foreground">Date range:</span>
+            {([
+              { label: "Last 4w",  value: 4    },
+              { label: "Last 8w",  value: 8    },
+              { label: "Last 12w", value: 12   },
+              { label: "Last 16w", value: 16   },
+            ] as { label: string; value: number | null }[]).map(({ label, value }) => (
+              <button
+                key={label}
+                onClick={() => setLoadDateRangeWeeks(value)}
+                className={cn(
+                  "px-3 py-1 rounded-full text-xs font-medium border transition-colors",
+                  loadDateRangeWeeks === value
+                    ? "bg-indigo-500/15 text-indigo-400 border-indigo-500/30"
+                    : "text-muted-foreground border-border hover:text-foreground"
+                )}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+
+          {/* Load distribution scatter */}
+          <div className="bg-card border border-border rounded-2xl p-5">
+            <div className="flex items-center justify-between mb-1">
+              <div className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">Player Load Distribution</div>
+              <div className="flex gap-1">
+                {(["all", "position", "age"] as const).map((g) => (
+                  <button key={g} onClick={() => setLoadDistRankGroup(g)}
+                    className={cn("px-3 py-1 rounded-full text-xs font-medium border transition-colors",
+                      loadDistRankGroup === g
+                        ? "bg-indigo-500/15 text-indigo-400 border-indigo-500/30"
+                        : "text-muted-foreground border-transparent hover:border-border hover:text-foreground"
+                    )}>
+                    {g === "all" ? "All" : g === "position" ? "By Position" : "By Age"}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <p className="text-[11px] text-muted-foreground mb-4">Each circle = a player · avg load AU per session · hover for details</p>
+            {loadLoading ? (
+              <ChartSkeleton height={300} />
+            ) : loadDistributionData.length === 0 ? (
+              <EmptyState title="No load data" description="Log RPE for sessions first." />
+            ) : (() => {
+              const POS_ORDER = ["Forward", "Midfielder", "Defender", "Goalkeeper"];
+              const AGE_ORDER = ["U18", "18-24", "25+"];
+              const POS_COLORS: Record<string, string> = { Forward: "#f87171", Midfielder: "#60a5fa", Defender: "#818cf8", Goalkeeper: "#fbbf24" };
+              const AGE_COLORS: Record<string, string> = { "U18": "#f87171", "18-24": "#60a5fa", "25+": "#34d399" };
+              const groups = loadDistRankGroup === "position" ? POS_ORDER : loadDistRankGroup === "age" ? AGE_ORDER : ["All"];
+
+              const scatterData = loadDistRankGroup === "all"
+                ? loadDistributionData.map((d, idx, arr) => {
+                    const jitter = arr.length > 1 ? (idx / (arr.length - 1) - 0.5) * 0.45 : 0;
+                    return {
+                      x: jitter,
+                      y: d.avgLoad,
+                      name: d.player.name,
+                      initials: d.player.name.split(" ").map((w: string) => w[0]).join("").slice(0, 2).toUpperCase(),
+                      color: POS_COLORS[d.player.primary_position ?? ""] ?? "#9ca3af",
+                      position: d.player.primary_position ?? "—",
+                      ageRange: d.player.age_range ?? "—",
+                      sessions: d.sessions,
+                    };
+                  })
+                : groups.flatMap((g) => {
+                    const GROUP_COLORS = loadDistRankGroup === "position" ? POS_COLORS : AGE_COLORS;
+                    const inGroup = loadDistributionData.filter((d) =>
+                      loadDistRankGroup === "position" ? d.player.primary_position === g : d.player.age_range === g
+                    );
+                    return inGroup.map((d, idx) => {
+                      const jitter = inGroup.length > 1 ? (idx / (inGroup.length - 1) - 0.5) * 0.32 : 0;
+                      return {
+                        x: groups.indexOf(g) + jitter,
+                        y: d.avgLoad,
+                        name: d.player.name,
+                        initials: d.player.name.split(" ").map((w: string) => w[0]).join("").slice(0, 2).toUpperCase(),
+                        color: GROUP_COLORS[g] ?? "#818cf8",
+                        position: d.player.primary_position ?? "—",
+                        ageRange: d.player.age_range ?? "—",
+                        sessions: d.sessions,
+                      };
+                    });
+                  });
+
+              const yVals = scatterData.map((d) => d.y);
+              const yMin = Math.min(...yVals);
+              const yMax = Math.max(...yVals);
+              const yPad = Math.max((yMax - yMin) * 0.15, 20);
+              const yAvg = scatterData.length > 0 ? scatterData.reduce((a, b) => a + b.y, 0) / scatterData.length : null;
+
+              const LoadDot = (props: any) => {
+                const { cx, cy, payload } = props;
+                if (cx == null || cy == null) return null;
+                return (
+                  <g style={{ cursor: "default" }}>
+                    <circle cx={cx} cy={cy} r={14} fill={payload.color + "28"} stroke={payload.color} strokeWidth={1.5} />
+                    <text x={cx} y={cy} textAnchor="middle" dominantBaseline="central"
+                      fontSize={8} fontWeight="700" fill={payload.color}>
+                      {payload.initials}
+                    </text>
+                  </g>
+                );
+              };
+
+              const LoadTooltip = ({ active, payload }: any) => {
+                if (!active || !payload?.length) return null;
+                const d = payload[0].payload;
+                return (
+                  <div className="rounded-xl border px-3 py-2.5 text-xs shadow-lg"
+                    style={{ background: chartTooltipBg, borderColor: chartTooltipBorder }}>
+                    <div className="font-semibold text-foreground mb-1">{d.name}</div>
+                    <div className="text-muted-foreground">{d.position} · {d.ageRange}</div>
+                    <div className="font-time font-bold mt-1" style={{ color: d.color }}>{d.y} AU avg/session</div>
+                    <div className="text-muted-foreground mt-0.5">{d.sessions} session{d.sessions !== 1 ? "s" : ""} logged</div>
+                  </div>
+                );
+              };
+
+              return (
+                <>
+                  <ResponsiveContainer width="100%" height={300}>
+                    <ScatterChart margin={{ top: 16, right: 24, bottom: 8, left: 8 }}>
+                      <CartesianGrid strokeDasharray="3 3" stroke={chartGrid} />
+                      <XAxis
+                        type="number"
+                        dataKey="x"
+                        domain={loadDistRankGroup === "all" ? [-0.6, 0.6] : [-0.5, groups.length - 0.5]}
+                        ticks={loadDistRankGroup === "all" ? [] : groups.map((_, i) => i)}
+                        tickFormatter={(v) => groups[Math.round(v)] ?? ""}
+                        tick={{ fill: chartAxis, fontSize: 12, fontWeight: 600 }}
+                        tickLine={false}
+                        axisLine={false}
+                      />
+                      <YAxis
+                        type="number"
+                        dataKey="y"
+                        domain={[Math.max(0, yMin - yPad), yMax + yPad]}
+                        tickFormatter={(v) => `${Math.round(v)}`}
+                        tick={{ fill: chartAxis, fontSize: 10 }}
+                        width={46}
+                        tickCount={8}
+                      />
+                      <ZAxis range={[1, 1]} />
+                      <Tooltip content={<LoadTooltip />} cursor={false} />
+                      {yAvg !== null && (
+                        <ReferenceLine
+                          y={yAvg}
+                          stroke="#fbbf24"
+                          strokeDasharray="5 3"
+                          strokeWidth={1.5}
+                          label={{ value: `Avg ${Math.round(yAvg)} AU`, position: "insideTopRight", fill: "#fbbf24", fontSize: 9, fontWeight: 600 }}
+                        />
+                      )}
+                      <Scatter data={scatterData} shape={<LoadDot />} isAnimationActive={false} />
+                    </ScatterChart>
+                  </ResponsiveContainer>
+                  <div className="flex flex-wrap gap-3 mt-3 px-1">
+                    {(loadDistRankGroup === "all" ? POS_ORDER : groups)
+                      .filter((g) => scatterData.some((d) => loadDistRankGroup === "all" ? d.position === g : loadDistRankGroup === "position" ? d.position === g : d.ageRange === g))
+                      .map((g) => {
+                        const color = loadDistRankGroup === "age"
+                          ? ({ "U18": "#f87171", "18-24": "#60a5fa", "25+": "#34d399" } as Record<string, string>)[g]
+                          : ({ Forward: "#f87171", Midfielder: "#60a5fa", Defender: "#818cf8", Goalkeeper: "#fbbf24" } as Record<string, string>)[g];
+                        return (
+                          <div key={g} className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                            <div className="w-2.5 h-2.5 rounded-full" style={{ background: color ?? "#9ca3af" }} />
+                            {g}
+                          </div>
+                        );
+                      })}
+                    {yAvg !== null && (
+                      <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                        <div className="w-4 h-[2px] rounded-full bg-amber-400" />
+                        Avg {Math.round(yAvg)} AU
+                      </div>
+                    )}
+                  </div>
+                </>
+              );
+            })()}
+          </div>
+
+          {/* Weekly team load */}
+          <div className="bg-card border border-border rounded-2xl p-5">
+            <div className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground mb-1">Weekly Team Load</div>
+            <p className="text-[11px] text-muted-foreground mb-4">Total load_au across all logged players, grouped by calendar week.</p>
+            {loadLoading ? (
+              <div className="h-[220px] bg-muted rounded-xl animate-pulse" />
+            ) : weeklyLoadData.length === 0 ? (
+              <EmptyState title="No load data" description="Log RPE for sessions to see team load trends." />
+            ) : (
+              <ResponsiveContainer width="100%" height={220}>
+                <AreaChart data={weeklyLoadData} margin={{ top: 4, right: 8, bottom: 4, left: 0 }}>
+                  <defs>
+                    <linearGradient id="loadGrad" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor="#818cf8" stopOpacity={0.25} />
+                      <stop offset="95%" stopColor="#818cf8" stopOpacity={0} />
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid strokeDasharray="3 3" stroke={chartGrid} />
+                  <XAxis dataKey="weekLabel" tick={{ fill: chartAxis, fontSize: 10 }} />
+                  <YAxis tick={{ fill: chartAxis, fontSize: 10 }} />
+                  <Tooltip
+                    contentStyle={{ background: chartTooltipBg, border: `1px solid ${chartTooltipBorder}`, borderRadius: 8 }}
+                    formatter={(v: number) => [`${v} AU`, "Team Load"]}
+                  />
+                  <Area type="monotone" dataKey="totalLoad" stroke="#818cf8" strokeWidth={2} fill="url(#loadGrad)" dot={{ fill: "#818cf8", r: 3 }} />
+                </AreaChart>
+              </ResponsiveContainer>
+            )}
+          </div>
+
+          {/* Weekly avg RPE */}
+          <div className="bg-card border border-border rounded-2xl p-5">
+            <div className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground mb-1">Avg RPE per Week</div>
+            <p className="text-[11px] text-muted-foreground mb-4">Mean session RPE across all players, by calendar week.</p>
+            {loadLoading ? (
+              <div className="h-[200px] bg-muted rounded-xl animate-pulse" />
+            ) : weeklyRpeData.length === 0 ? (
+              <EmptyState title="No data" description="No RPE logged yet." />
+            ) : (
+              <>
+                <ResponsiveContainer width="100%" height={200}>
+                  <LineChart data={weeklyRpeData} margin={{ top: 8, right: 16, bottom: 4, left: 0 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke={chartGrid} vertical={false} />
+                    <XAxis dataKey="weekLabel" tick={{ fill: chartAxis, fontSize: 10 }} />
+                    <YAxis domain={[0, 10]} ticks={[0, 2, 4, 6, 8, 10]} tick={{ fill: chartAxis, fontSize: 10 }} />
+                    <Tooltip
+                      contentStyle={{ background: chartTooltipBg, border: `1px solid ${chartTooltipBorder}`, borderRadius: 8 }}
+                      formatter={(v: number) => [v.toFixed(1), "Avg RPE"]}
+                    />
+                    <ReferenceLine y={5} stroke="#60a5fa" strokeDasharray="4 3" strokeWidth={1}
+                      label={{ value: "Moderate (5)", position: "insideTopLeft", fill: "#60a5fa", fontSize: 9 }} />
+                    <ReferenceLine y={7} stroke="#fbbf24" strokeDasharray="4 3" strokeWidth={1}
+                      label={{ value: "Hard (7)", position: "insideTopLeft", fill: "#fbbf24", fontSize: 9 }} />
+                    <ReferenceLine y={9} stroke="#f87171" strokeDasharray="4 3" strokeWidth={1}
+                      label={{ value: "Max (9)", position: "insideTopLeft", fill: "#f87171", fontSize: 9 }} />
+                    <Line type="monotone" dataKey="avgRpe" stroke="#34d399" strokeWidth={2} dot={{ fill: "#34d399", r: 3 }} />
+                  </LineChart>
+                </ResponsiveContainer>
+                <div className="flex flex-wrap gap-4 mt-2">
+                  {([["Moderate","#60a5fa"], ["Hard","#fbbf24"], ["Max","#f87171"]] as [string, string][]).map(([l, c]) => (
+                    <div key={l} className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+                      <div className="w-4 h-[1.5px] rounded-full" style={{ background: c }} />
+                      {l}
+                    </div>
+                  ))}
+                </div>
+              </>
+            )}
+          </div>
+
+          {/* Top sessions table */}
+          <div className="bg-card border border-border rounded-2xl overflow-hidden">
+            <div className="px-5 pt-5 pb-3 border-b border-border">
+              <div className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground mb-0.5">Highest Load Sessions</div>
+              <p className="text-[11px] text-muted-foreground">Top 10 sessions by total team load.</p>
+            </div>
+            {loadLoading ? (
+              <div className="p-5"><div className="h-[180px] bg-muted rounded-xl animate-pulse" /></div>
+            ) : topSessionsData.length === 0 ? (
+              <div className="p-5"><EmptyState title="No data" description="Log RPE to see high-load sessions." /></div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-border text-xs text-muted-foreground">
+                      <th className="px-4 py-2.5 text-left font-medium">Date</th>
+                      <th className="px-4 py-2.5 text-left font-medium">Type</th>
+                      <th className="px-4 py-2.5 text-right font-medium">Players</th>
+                      <th className="px-4 py-2.5 text-right font-medium">Avg RPE</th>
+                      <th className="px-4 py-2.5 text-right font-medium">Total Load (AU)</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {topSessionsData.map((s) => {
+                      const cfgMap: Record<string, { text: string; bg: string }> = {
+                        Training: { text: "text-indigo-400", bg: "bg-indigo-500/15" },
+                        Match:    { text: "text-amber-400",  bg: "bg-amber-500/15"  },
+                        Gym:      { text: "text-emerald-400",bg: "bg-emerald-500/15"},
+                        Recovery: { text: "text-slate-400",  bg: "bg-slate-500/15"  },
+                      };
+                      const cfg = cfgMap[s.sessionType] ?? cfgMap.Training;
+                      const dateStr = s.date
+                        ? new Date(s.date + "T00:00:00").toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })
+                        : "—";
+                      return (
+                        <tr key={s.sessionId} className="border-b border-border/50 hover:bg-muted/20">
+                          <td className="px-4 py-2.5 text-xs text-muted-foreground font-time">{dateStr}</td>
+                          <td className="px-4 py-2.5">
+                            <span className={cn("inline-flex items-center px-2 py-0.5 rounded text-xs font-medium", cfg.bg, cfg.text)}>
+                              {s.sessionType}
+                            </span>
+                          </td>
+                          <td className="px-4 py-2.5 text-right font-time text-foreground">{s.playerCount}</td>
+                          <td className="px-4 py-2.5 text-right font-time text-foreground">{s.avgRpe}</td>
+                          <td className="px-4 py-2.5 text-right font-bold font-time text-indigo-400">{s.totalLoad}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+
+        </div>
+      )}
     </div>
   );
 }
