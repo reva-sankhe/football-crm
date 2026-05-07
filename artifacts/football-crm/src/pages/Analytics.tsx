@@ -369,6 +369,65 @@ export default function Analytics() {
       }));
   }, [filteredRpeData]);
 
+  const rpeByDayData = useMemo(() => {
+    const DAY_ORDER = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
+    const byDay = new Map<string, { rpeSum: number; count: number }>();
+    for (const r of filteredRpeData) {
+      const day = r.sessions?.day;
+      if (!day) continue;
+      if (!byDay.has(day)) byDay.set(day, { rpeSum: 0, count: 0 });
+      byDay.get(day)!.rpeSum += r.rpe;
+      byDay.get(day)!.count += 1;
+    }
+    return DAY_ORDER
+      .filter((d) => byDay.has(d))
+      .map((d) => {
+        const avgRpe = parseFloat((byDay.get(d)!.rpeSum / byDay.get(d)!.count).toFixed(1));
+        const color = avgRpe >= 8 ? "#f87171" : avgRpe >= 6 ? "#fbbf24" : avgRpe >= 4 ? "#34d399" : "#60a5fa";
+        return { day: d.slice(0, 3), fullDay: d, avgRpe, sessions: byDay.get(d)!.count, color };
+      });
+  }, [filteredRpeData]);
+
+  const coachVsPlayerData = useMemo(() => {
+    const bySession = new Map<string, {
+      date: string; day: string; sessionType: string;
+      plannedRpe: number; rpeSum: number; count: number;
+    }>();
+    for (const r of filteredRpeData) {
+      const sid = r.session_id;
+      if (!bySession.has(sid)) {
+        bySession.set(sid, {
+          date: r.sessions?.date ?? "",
+          day: r.sessions?.day ?? "",
+          sessionType: r.sessions?.session_type ?? "Training",
+          plannedRpe: r.sessions?.planned_rpe ?? 0,
+          rpeSum: 0,
+          count: 0,
+        });
+      }
+      const e = bySession.get(sid)!;
+      e.rpeSum += r.rpe;
+      e.count += 1;
+    }
+    return Array.from(bySession.values())
+      .filter((d) => d.plannedRpe > 0 && d.count > 0)
+      .sort((a, b) => a.date.localeCompare(b.date))
+      .slice(-20)
+      .map((d) => {
+        const actualRpe = parseFloat((d.rpeSum / d.count).toFixed(1));
+        const diff = parseFloat((actualRpe - d.plannedRpe).toFixed(1));
+        return {
+          label: new Date(d.date + "T00:00:00").toLocaleDateString("en-GB", { day: "numeric", month: "short" }),
+          day: d.day.slice(0, 3),
+          sessionType: d.sessionType,
+          plannedRpe: d.plannedRpe,
+          actualRpe,
+          diff,
+          playerCount: d.count,
+        };
+      });
+  }, [filteredRpeData]);
+
   return (
     <div className="space-y-0">
       {/* Header */}
@@ -1780,6 +1839,141 @@ export default function Analytics() {
               </>
             )}
           </div>
+
+          {/* RPE by Day of Week */}
+          <div className="bg-card border border-border rounded-2xl p-5">
+            <div className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground mb-1">Avg RPE by Day of Week</div>
+            <p className="text-[11px] text-muted-foreground mb-4">Which days tend to be hardest — averaged across all sessions in the selected range.</p>
+            {loadLoading ? (
+              <div className="h-[200px] bg-muted rounded-xl animate-pulse" />
+            ) : rpeByDayData.length === 0 ? (
+              <EmptyState title="No data" description="No RPE logged yet." />
+            ) : (
+              <ResponsiveContainer width="100%" height={200}>
+                <BarChart data={rpeByDayData} margin={{ top: 8, right: 16, bottom: 4, left: 0 }} barCategoryGap="30%">
+                  <CartesianGrid strokeDasharray="3 3" stroke={chartGrid} vertical={false} />
+                  <XAxis dataKey="day" tick={{ fill: chartAxis, fontSize: 12, fontWeight: 600 }} axisLine={false} tickLine={false} />
+                  <YAxis domain={[0, 10]} ticks={[0, 2, 4, 6, 8, 10]} tick={{ fill: chartAxis, fontSize: 10 }} axisLine={false} tickLine={false} />
+                  <Tooltip
+                    contentStyle={{ background: chartTooltipBg, border: `1px solid ${chartTooltipBorder}`, borderRadius: 8 }}
+                    formatter={(v: number, _: string, p: any) => [
+                      `${v} avg RPE · ${p.payload.sessions} session${p.payload.sessions !== 1 ? "s" : ""}`,
+                      p.payload.fullDay,
+                    ]}
+                    cursor={{ fill: isDark ? "rgba(255,255,255,0.04)" : "rgba(0,0,0,0.04)" }}
+                  />
+                  <ReferenceLine y={5} stroke="#60a5fa" strokeDasharray="4 3" strokeWidth={1}
+                    label={{ value: "Moderate (5)", position: "insideTopLeft", fill: "#60a5fa", fontSize: 9 }} />
+                  <ReferenceLine y={7} stroke="#fbbf24" strokeDasharray="4 3" strokeWidth={1}
+                    label={{ value: "Hard (7)", position: "insideTopLeft", fill: "#fbbf24", fontSize: 9 }} />
+                  <Bar dataKey="avgRpe" radius={[4, 4, 0, 0]} maxBarSize={56}>
+                    {rpeByDayData.map((d, i) => (
+                      <Cell key={i} fill={d.color} fillOpacity={0.85} />
+                    ))}
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            )}
+          </div>
+
+          {/* Coach vs Player RPE */}
+          {coachVsPlayerData.length > 0 && (() => {
+            const totalSessions = coachVsPlayerData.length;
+            const avgGap = parseFloat((coachVsPlayerData.reduce((a, d) => a + d.diff, 0) / totalSessions).toFixed(1));
+            const over = coachVsPlayerData.filter((d) => d.diff > 0.5).length;
+            const under = coachVsPlayerData.filter((d) => d.diff < -0.5).length;
+            const onTarget = totalSessions - over - under;
+            return (
+              <div className="bg-card border border-border rounded-2xl overflow-hidden">
+                <div className="px-5 pt-5 pb-3">
+                  <div className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground mb-0.5">Coach Planned vs Player Actual RPE</div>
+                  <p className="text-[11px] text-muted-foreground">How closely players matched the intensity the coach set · last {totalSessions} sessions with planned RPE.</p>
+                </div>
+                {/* Summary strip */}
+                <div className="grid grid-cols-4 divide-x divide-border border-y border-border">
+                  <div className="px-4 py-3">
+                    <div className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground mb-1">Avg Gap</div>
+                    <div className={cn("text-xl font-bold font-time", avgGap > 0.5 ? "text-amber-400" : avgGap < -0.5 ? "text-indigo-400" : "text-emerald-400")}>
+                      {avgGap > 0 ? "+" : ""}{avgGap}
+                    </div>
+                    <div className="text-[10px] text-muted-foreground mt-0.5">
+                      {avgGap > 0.5 ? "players push harder" : avgGap < -0.5 ? "players under-exert" : "on target overall"}
+                    </div>
+                  </div>
+                  <div className="px-4 py-3">
+                    <div className="text-[10px] font-semibold uppercase tracking-widest text-amber-400/70 mb-1">Over Planned</div>
+                    <div className="text-xl font-bold font-time text-amber-400">{over}</div>
+                    <div className="text-[10px] text-muted-foreground mt-0.5">{Math.round((over / totalSessions) * 100)}% of sessions</div>
+                  </div>
+                  <div className="px-4 py-3">
+                    <div className="text-[10px] font-semibold uppercase tracking-widest text-emerald-400/70 mb-1">On Target</div>
+                    <div className="text-xl font-bold font-time text-emerald-400">{onTarget}</div>
+                    <div className="text-[10px] text-muted-foreground mt-0.5">{Math.round((onTarget / totalSessions) * 100)}% of sessions</div>
+                  </div>
+                  <div className="px-4 py-3">
+                    <div className="text-[10px] font-semibold uppercase tracking-widest text-indigo-400/70 mb-1">Under Planned</div>
+                    <div className="text-xl font-bold font-time text-indigo-400">{under}</div>
+                    <div className="text-[10px] text-muted-foreground mt-0.5">{Math.round((under / totalSessions) * 100)}% of sessions</div>
+                  </div>
+                </div>
+                {/* Chart */}
+                <div className="p-5 pb-4">
+                  <ResponsiveContainer width="100%" height={240}>
+                    <BarChart data={coachVsPlayerData} margin={{ top: 8, right: 8, bottom: 28, left: 0 }} barCategoryGap="25%" barGap={2}>
+                      <CartesianGrid strokeDasharray="3 3" stroke={chartGrid} vertical={false} />
+                      <XAxis dataKey="label" tick={{ fill: chartAxis, fontSize: 9 }} angle={-35} textAnchor="end" interval={0} tickLine={false} />
+                      <YAxis domain={[0, 10]} ticks={[0, 2, 4, 6, 8, 10]} tick={{ fill: chartAxis, fontSize: 10 }} axisLine={false} tickLine={false} />
+                      <Tooltip
+                        cursor={{ fill: isDark ? "rgba(255,255,255,0.04)" : "rgba(0,0,0,0.04)" }}
+                        content={({ active, payload, label }: any) => {
+                          if (!active || !payload?.length) return null;
+                          const d = payload[0]?.payload;
+                          const diff = d?.diff ?? 0;
+                          return (
+                            <div className="rounded-xl border px-3 py-2.5 text-xs shadow-lg"
+                              style={{ background: chartTooltipBg, borderColor: chartTooltipBorder }}>
+                              <div className="font-semibold text-foreground mb-1.5">{label} · {d?.day}</div>
+                              <div className="space-y-0.5">
+                                <div className="flex items-center justify-between gap-6">
+                                  <span className="text-indigo-400">Planned</span>
+                                  <span className="font-time font-bold text-indigo-400">{d?.plannedRpe}</span>
+                                </div>
+                                <div className="flex items-center justify-between gap-6">
+                                  <span className="text-emerald-400">Actual</span>
+                                  <span className="font-time font-bold text-emerald-400">{d?.actualRpe}</span>
+                                </div>
+                                <div className="flex items-center justify-between gap-6 border-t border-border/50 pt-1 mt-0.5">
+                                  <span className="text-muted-foreground">Gap</span>
+                                  <span className={cn("font-time font-bold", diff > 0.5 ? "text-amber-400" : diff < -0.5 ? "text-blue-400" : "text-emerald-400")}>
+                                    {diff > 0 ? "+" : ""}{diff}
+                                  </span>
+                                </div>
+                                <div className="text-muted-foreground pt-0.5">{d?.playerCount} player{d?.playerCount !== 1 ? "s" : ""} logged</div>
+                              </div>
+                            </div>
+                          );
+                        }}
+                      />
+                      <Bar dataKey="plannedRpe" name="Planned" fill="#818cf8" fillOpacity={0.55} radius={[3, 3, 0, 0]} maxBarSize={22} />
+                      <Bar dataKey="actualRpe" name="Actual" radius={[3, 3, 0, 0]} maxBarSize={22}>
+                        {coachVsPlayerData.map((d, i) => (
+                          <Cell key={i} fill={d.diff > 0.5 ? "#fbbf24" : d.diff < -0.5 ? "#60a5fa" : "#34d399"} fillOpacity={0.85} />
+                        ))}
+                      </Bar>
+                    </BarChart>
+                  </ResponsiveContainer>
+                  <div className="flex flex-wrap gap-4 mt-1">
+                    {([["Planned RPE", "#818cf8", 0.55], ["Over planned", "#fbbf24", 0.85], ["On target", "#34d399", 0.85], ["Under planned", "#60a5fa", 0.85]] as [string, string, number][]).map(([l, c, o]) => (
+                      <div key={l} className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+                        <div className="w-3 h-3 rounded-sm" style={{ background: c, opacity: o }} />
+                        {l}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            );
+          })()}
 
           {/* Top sessions table */}
           <div className="bg-card border border-border rounded-2xl overflow-hidden">
