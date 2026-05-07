@@ -3,7 +3,10 @@
     "allow": [
       "Bash(grep -E \"\\\\.\\(sql|ts\\)$\")",
       "Bash(npx tsc *)",
-      "Bash(npm run *)"
+      "Bash(npm run *)",
+      "Bash(git merge *)",
+      "Bash(git stash *)",
+      "Bash(git push *)"
     ]
   }
 }
