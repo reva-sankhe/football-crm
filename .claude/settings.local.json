@@ -20,7 +20,10 @@
       "Bash(git -C /home/runner/workspace commit -m \"fix\\(api-server\\): serve frontend static files and add SPA fallback\")",
       "Bash(git -C /home/runner/workspace commit -m \"fix\\(api-server\\): use named wildcard for SPA fallback route \\(Express 5\\)\")",
       "Bash(xargs ls -la)",
-      "Bash(xargs cat)"
+      "Bash(xargs cat)",
+      "mcp__claude_ai_Supabase__list_projects",
+      "mcp__claude_ai_Supabase__list_tables",
+      "mcp__claude_ai_Supabase__execute_sql"
     ]
   }
 }

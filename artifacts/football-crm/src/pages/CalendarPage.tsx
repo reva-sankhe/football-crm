@@ -460,7 +460,8 @@ export default function CalendarPage() {
         });
       }
     } catch (err) {
-      toast({ title: "Import failed", description: String(err), variant: "destructive" });
+      const msg = err instanceof Error ? err.message : (err as { message?: string })?.message ?? String(err);
+      toast({ title: "Import failed", description: msg, variant: "destructive" });
     } finally {
       setImporting(false);
     }

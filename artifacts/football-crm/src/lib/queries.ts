@@ -211,9 +211,10 @@ export async function fetchTrainingSession(id: string): Promise<TrainingSession>
 export async function createTrainingSession(
   session: Omit<TrainingSession, "id" | "day" | "planned_load_au" | "created_at">
 ): Promise<TrainingSession> {
+  const day = new Date(session.date + "T00:00:00").toLocaleDateString("en-US", { weekday: "long" });
   const { data, error } = await supabase
     .from("sessions")
-    .insert(session)
+    .insert({ ...session, day })
     .select()
     .single();
   if (error) throw error;
@@ -334,7 +335,13 @@ export async function bulkUpsertAttendance(
   sessionId: string,
   records: { player_id: string; status: AttendanceStatus; notes?: string | null }[]
 ): Promise<void> {
-  const rows = records.map((r) => ({
+  // Deduplicate by player_id — last entry wins, preventing the Postgres
+  // "ON CONFLICT DO UPDATE command cannot affect row a second time" error
+  // which fires when the same player appears more than once in the batch.
+  const deduped = new Map<string, { player_id: string; status: AttendanceStatus; notes?: string | null }>();
+  for (const r of records) deduped.set(r.player_id, r);
+
+  const rows = Array.from(deduped.values()).map((r) => ({
     session_id: sessionId,
     player_id: r.player_id,
     status: r.status,
