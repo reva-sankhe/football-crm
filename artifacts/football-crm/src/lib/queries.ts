@@ -278,6 +278,17 @@ export async function fetchPlayerRecentSessions(
 }
 
 // ── Session Attendance ────────────────────────────────────────────────────────
+export async function fetchAttendanceByPlayer(
+  playerId: string
+): Promise<(SessionAttendance & { sessions: { id: string; date: string; session_type: string } })[]> {
+  const { data, error } = await supabase
+    .from("session_attendance")
+    .select("*, sessions(id, date, session_type)")
+    .eq("player_id", playerId);
+  if (error) throw error;
+  return data as (SessionAttendance & { sessions: { id: string; date: string; session_type: string } })[];
+}
+
 export async function fetchAttendanceBySession(
   sessionId: string
 ): Promise<(SessionAttendance & { players: Player })[]> {
