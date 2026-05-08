@@ -6,7 +6,21 @@
       "Bash(npm run *)",
       "Bash(git merge *)",
       "Bash(git stash *)",
-      "Bash(git push *)"
+      "Bash(git push *)",
+      "Bash(git add *)",
+      "Bash(git commit *)",
+      "Bash(pnpm install *)",
+      "Bash(pnpm --version)",
+      "Bash(git -C /home/runner/workspace add artifacts/football-crm/vite.config.ts)",
+      "Bash(git -C /home/runner/workspace commit -m \"fix\\(vite\\): skip PORT and BASE_PATH validation during build\")",
+      "Bash(git -C /home/runner/workspace push origin main)",
+      "Bash(git -C /home/runner/workspace add artifacts/mockup-sandbox/vite.config.ts)",
+      "Bash(git -C /home/runner/workspace commit -m \"fix\\(vite\\): skip PORT and BASE_PATH validation during build in mockup-sandbox\")",
+      "Bash(git -C /home/runner/workspace add artifacts/api-server/src/app.ts)",
+      "Bash(git -C /home/runner/workspace commit -m \"fix\\(api-server\\): serve frontend static files and add SPA fallback\")",
+      "Bash(git -C /home/runner/workspace commit -m \"fix\\(api-server\\): use named wildcard for SPA fallback route \\(Express 5\\)\")",
+      "Bash(xargs ls -la)",
+      "Bash(xargs cat)"
     ]
   }
 }

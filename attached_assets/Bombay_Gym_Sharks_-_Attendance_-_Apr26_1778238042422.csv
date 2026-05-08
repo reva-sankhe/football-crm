@@ -1,0 +1,48 @@
+,,,,"
+  Enter P for Present, A for Absent. Use the 'Attendance key' tab to customize. 
+",,,,,,,,,,,,,,,
+,id,code,NAME,4/1,4/3,4/5,4/8,4/10,4/12,4/15,4/17,4/19,4/20,4/27,4/29,Present,Absent,Injured/Unavailable,Percentage
+,,,,Wed,Fri,Sun,Wed,Fri,Sun,Wed,Fri,Sun,Mon,Mon,Wed,P,A,I,
+,3880e4d8-7531-40b2-86dc-b9de5c739508,,Kyra,P,P,P,P,P,P,P,P,P,P,P,P,12,0,0,100.00
+,ea4db887-3ac0-4799-9249-0b7184e83fa5,,Ibreez,P,P,P,P,P,P,P,P,P,P,P,P,12,0,0,100.00
+,d596ea38-6ca5-4f12-891b-6753744a5029,,Ayesha,P,P,P,P,P,P,P,P,P,P,P,P,12,0,0,100.00
+,469faab2-bf23-468a-a0b9-2cd31615aa67,,Danny,P,P,P,P,P,A,P,P,P,A,P,P,10,2,0,83.33
+,f8c9bc66-e186-447a-985b-2a404eddbaa7,,Zarastyn,P,P,P,P,A,P,P,A,P,A,P,P,9,3,0,75.00
+,dbeded4b-b056-430b-93cf-6a4c649df241,,Gabby,P,A,P,P,P,P,P,A,P,I,P,P,9,2,1,75.00
+,f92436c6-0287-4463-90ab-7b0f010c80c8,,Atiriya,P,A,A,P,P,P,P,P,P,A,P,P,9,3,0,75.00
+,46da6e79-64bf-45f9-a0d6-efb84cab415e,,Anokhi,P,P,P,P,P,A,A,P,P,A,P,P,9,3,0,75.00
+,51759bac-aa6e-480b-8d2b-d75df61d4c00,,Anaya S,A,A,A,P,P,P,P,P,P,P,P,P,9,3,0,75.00
+,d330ac1b-4417-4008-9b34-6c97cb22bd54,,Pooja,P,P,P,P,P,P,A,P,A,A,A,P,8,4,0,66.67
+,8d3f8b16-5605-4a42-af6e-169d655124bd,,Anoushka,A,P,P,P,P,P,P,A,A,A,P,P,8,4,0,66.67
+,fdf74997-d68a-4e9a-8dbc-260a19c9978e,,Ritu,P,A,P,P,A,P,P,P,A,A,P,P,8,4,0,66.67
+,dcc81ea7-664f-4d99-9239-2b8a8905fad5,,Shvena,A,A,A,P,P,P,P,P,P,P,A,A,7,5,0,58.33
+,8d7c4237-3c3a-46e4-b70e-cfb0f5850c66,,Aanya V,A,P,P,P,P,P,A,A,P,A,P,A,7,5,0,58.33
+,d409f9f9-75ab-40c6-96e7-e8037498a241,,Sanaya,A,P,P,A,P,A,A,P,P,P,P,A,7,5,0,58.33
+,e2f5c0e3-d04b-4c75-935e-23be956dfc7f,,Hansika,A,P,I,P,P,P,A,P,P,I,A,P,7,3,2,58.33
+,fce8020f-c20c-46cd-b4c9-88e48dd8677d,,Reva,A,A,I,P,P,P,P,A,P,A,P,P,7,4,1,58.33
+,ab4545e2-0a24-4f76-b714-4e8b8e1a9612,,Isabelle,A,P,I,P,P,P,P,A,A,A,P,P,7,4,1,58.33
+,e9cea982-2f38-4eda-9b91-5e5016450d44,,Sarah,A,A,P,A,P,P,A,P,A,P,P,P,7,5,0,58.33
+,11d42ff7-be37-435e-b578-3ddea97c9a14,,Navya,A,A,A,A,P,A,P,P,P,P,P,P,7,5,0,58.33
+,97e4792e-4940-4ca8-adce-70083d0abc9b,,Anam,P,A,P,P,P,P,A,A,P,A,A,A,6,6,0,50.00
+,efd45d7a-77e4-45b8-97c7-cd658d950314,,Advika,A,P,P,P,A,A,P,P,A,A,P,A,6,6,0,50.00
+,bb679014-ab51-4cfe-b25c-4dfdfc7a0f83,,Deniese,P,A,A,P,P,P,A,A,A,A,P,P,6,6,0,50.00
+,82d04cd6-53e5-44ed-851c-d5c09357ebb8,,Hiba,P,A,A,A,A,A,P,P,P,A,P,P,6,6,0,50.00
+,To Add,,Zoya,P,A,A,P,P,A,P,A,A,A,A,A,4,8,0,33.33
+,To Add,,Aavika,A,A,A,A,P,A,P,A,A,A,P,P,4,8,0,33.33
+,1ca75f46-c5a4-4e09-a124-9e86ecc5970f,,Shenaya,A,A,P,A,A,P,P,A,A,A,A,A,3,9,0,25.00
+,e9cea982-2f38-4eda-9b91-5e5016450d44,,Sanaa,A,P,A,A,P,A,A,P,A,A,A,A,3,9,0,25.00
+,5eed5478-7fc8-4de1-ba2f-d29b6a2aea9f,,Renee,A,A,A,A,A,A,P,P,A,A,P,A,3,9,0,25.00
+,To Add,,Sharmin,A,A,A,A,A,A,A,A,P,A,P,P,3,9,0,25.00
+,To Add,,Samara,P,A,P,A,A,A,A,A,A,A,A,A,2,10,0,16.67
+,To Add,,Yaquta,P,A,A,P,A,A,A,A,A,A,A,A,2,10,0,16.67
+,74dc1976-0f2f-4f03-8f31-30091b2c89e1,,Kashish,A,A,A,A,P,A,A,A,P,A,A,A,2,10,0,16.67
+,b05970e3-08d8-45de-9b76-10e798b633a6,,Maera,A,A,A,P,A,A,A,A,A,A,P,A,2,10,0,16.67
+,To Add,,Mouli,P,A,A,A,A,A,A,A,A,A,A,A,1,11,0,8.33
+,To Add,,Rabhya,P,A,A,A,A,A,A,A,A,A,A,A,1,11,0,8.33
+,f80a013e-251c-43e4-bb43-00dddeb26812,,Zahra,A,A,A,A,P,A,A,A,A,A,A,A,1,11,0,8.33
+,7e10e4d3-f6e6-4280-a4ba-51b46a0d3fc7,,Zenaida,A,A,A,A,A,A,A,A,A,A,P,A,1,11,0,8.33
+,773877f8-81a0-4bd6-a8c9-edfa1c8977c2,,Saanvi,A,A,A,A,A,A,A,A,A,A,A,P,1,11,0,8.33
+,7f2d7524-e6dc-4fc5-b3ab-d97f3dcb81b8,,Fatima,A,A,I,A,A,A,A,A,A,A,A,A,0,11,1,0.00
+,d9db6a87-3754-4e18-9987-765e2f339855,,Kirti,A,A,A,A,A,A,A,A,A,A,A,A,0,12,0,0.00
+,#N/A,,Aishee,A,A,A,A,A,A,A,A,A,A,A,A,0,12,0,0.00
+,#N/A,,Mihika,A,A,A,A,A,A,A,A,A,A,A,A,0,12,0,0.00
