@@ -1,0 +1,10 @@
+{
+  "$schema": "https://railway.com/railway.schema.json",
+  "build": {
+    "builder": "NIXPACKS",
+    "buildCommand": "pnpm install && pnpm -r --if-present run build"
+  },
+  "deploy": {
+    "startCommand": "node --enable-source-maps ./artifacts/api-server/dist/index.mjs"
+  }
+}
