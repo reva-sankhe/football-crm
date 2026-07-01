@@ -1,0 +1,19 @@
+# Don't copy local node_modules — pnpm installs fresh inside the container
+node_modules
+**/node_modules
+
+# Don't copy local build outputs
+dist
+**/dist
+
+# Don't copy local env files
+.env
+*.local
+
+# Don't copy git internals
+.git
+.gitignore
+
+# Don't copy editor/OS files
+.DS_Store
+*.log
