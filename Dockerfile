@@ -25,6 +25,12 @@ RUN pnpm install --frozen-lockfile
 # Copy the rest of the source code
 COPY . .
 
+# Declare build-time env vars for Vite (Railway passes service vars as Docker build args)
+ARG VITE_SUPABASE_URL
+ARG VITE_SUPABASE_ANON_KEY
+ENV VITE_SUPABASE_URL=$VITE_SUPABASE_URL
+ENV VITE_SUPABASE_ANON_KEY=$VITE_SUPABASE_ANON_KEY
+
 # Build only the two artifacts we need for production
 RUN pnpm --filter @workspace/football-crm run build
 RUN pnpm --filter @workspace/api-server run build
