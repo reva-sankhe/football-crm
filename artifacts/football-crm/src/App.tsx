@@ -14,6 +14,8 @@ import Sessions from "@/pages/Sessions";
 import SessionRPE from "@/pages/SessionRPE";
 import SessionDetail from "@/pages/SessionDetail";
 import Attendance from "@/pages/Attendance";
+import TournamentDetail from "@/pages/TournamentDetail";
+import MatchDetail from "@/pages/MatchDetail";
 import NotFound from "@/pages/not-found";
 
 const queryClient = new QueryClient();
@@ -28,6 +30,8 @@ function Router() {
         <Route path="/sessions" component={Sessions} />
         <Route path="/sessions/:id/rpe" component={SessionRPE} />
         <Route path="/sessions/:id" component={SessionDetail} />
+        <Route path="/tournaments/:id" component={TournamentDetail} />
+        <Route path="/matches/:id" component={MatchDetail} />
         <Route path="/attendance" component={Attendance} />
         {/* Legacy link — the calendar was replaced by the Attendance page */}
         <Route path="/calendar"><Redirect to="/attendance" /></Route>

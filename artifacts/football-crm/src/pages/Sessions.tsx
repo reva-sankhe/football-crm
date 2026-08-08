@@ -6,6 +6,8 @@ import { useToast } from "@/hooks/use-toast";
 import { fetchTrainingSessions, createTrainingSession } from "@/lib/queries";
 import { SESSION_TYPE_CFG, SESSION_TYPES, dayFromISO, todayISO } from "@/lib/attendance";
 import { supabase } from "@/lib/supabase";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { TournamentsTab } from "@/components/tournaments/TournamentsTab";
 import type { TrainingSession, SessionType } from "@/lib/types";
 
 function SessionTypeBadge({ type }: { type: SessionType }) {
@@ -191,6 +193,35 @@ function NewSessionModal({ onClose, onSaved }: NewSessionModalProps) {
 
 // ── Sessions Page ─────────────────────────────────────────────────────────────
 export default function Sessions() {
+  const [tab, setTab] = useState<"tournaments" | "training">("tournaments");
+
+  return (
+    <div className="space-y-5">
+      <div>
+        <h1 className="text-2xl font-semibold tracking-tight text-foreground">Sessions</h1>
+        <p className="text-sm text-muted-foreground mt-0.5">Tournaments, matches & training load</p>
+      </div>
+
+      <Tabs value={tab} onValueChange={(v) => setTab(v as typeof tab)} className="space-y-4">
+        <TabsList>
+          <TabsTrigger value="tournaments" data-testid="tab-tournaments">Tournaments</TabsTrigger>
+          <TabsTrigger value="training" data-testid="tab-training">Training</TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="tournaments" className="mt-0">
+          <TournamentsTab />
+        </TabsContent>
+
+        <TabsContent value="training" className="mt-0">
+          <TrainingTab />
+        </TabsContent>
+      </Tabs>
+    </div>
+  );
+}
+
+// ── Training tab — the original session archive ───────────────────────────────
+function TrainingTab() {
   const [, setLocation] = useLocation();
   const [sessions, setSessions] = useState<TrainingSession[]>([]);
   const [loggedCounts, setLoggedCounts] = useState<Record<string, number>>({});
@@ -233,16 +264,14 @@ export default function Sessions() {
   useEffect(() => { load(); }, [load]);
 
   return (
-    <div className="space-y-5">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight text-foreground">Sessions</h1>
-          <p className="text-sm text-muted-foreground mt-0.5">Training load tracking</p>
-        </div>
+    <div className="space-y-4">
+      <div className="flex items-center justify-between gap-3">
+        <p className="text-sm text-muted-foreground">
+          Every logged session, matches included
+        </p>
         <button
           onClick={() => setShowNew(true)}
-          className="flex items-center gap-1.5 px-3 py-2 text-sm btn-primary text-white rounded-xl font-semibold"
+          className="flex items-center gap-1.5 px-3 py-2 text-sm btn-primary text-white rounded-xl font-semibold shrink-0"
           data-testid="button-new-session"
         >
           <Plus size={15} />

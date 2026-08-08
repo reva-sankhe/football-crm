@@ -1,5 +1,8 @@
 import { supabase } from "./supabase";
-import type { Player, TestSession, TestResult, TrainingSession, SessionRPE, SessionAttendance, AttendanceStatus } from "./types";
+import type {
+  Player, TestSession, TestResult, TrainingSession, SessionRPE, SessionAttendance, AttendanceStatus,
+  Tournament, Squad, SquadWithPlayers, Match, MatchWithSession, MatchPlayerStat, MatchStatInput, MatchStage,
+} from "./types";
 
 // Players
 export async function fetchPlayers(team?: string): Promise<Player[]> {
@@ -409,4 +412,272 @@ export async function fetchAttendanceSummaryForSessions(
     }
   }
   return summary;
+}
+
+// ── Tournaments ───────────────────────────────────────────────────────────────
+export async function fetchTournaments(): Promise<Tournament[]> {
+  const { data, error } = await supabase
+    .from("tournaments")
+    .select("*")
+    .order("start_date", { ascending: false, nullsFirst: false });
+  if (error) throw error;
+  return (data ?? []) as Tournament[];
+}
+
+export async function fetchTournament(id: string): Promise<Tournament> {
+  const { data, error } = await supabase.from("tournaments").select("*").eq("id", id).single();
+  if (error) throw error;
+  return data as Tournament;
+}
+
+export async function createTournament(
+  t: Omit<Tournament, "id" | "created_at">
+): Promise<Tournament> {
+  const { data, error } = await supabase.from("tournaments").insert(t).select().single();
+  if (error) throw error;
+  return data as Tournament;
+}
+
+export async function updateTournament(id: string, updates: Partial<Tournament>): Promise<Tournament> {
+  const { data, error } = await supabase.from("tournaments").update(updates).eq("id", id).select().single();
+  if (error) throw error;
+  return data as Tournament;
+}
+
+export async function deleteTournament(id: string): Promise<void> {
+  // squads, matches and stats cascade; the underlying sessions rows survive
+  const { error } = await supabase.from("tournaments").delete().eq("id", id);
+  if (error) throw error;
+}
+
+// ── Squads ────────────────────────────────────────────────────────────────────
+export async function fetchSquadsForTournament(tournamentId: string): Promise<SquadWithPlayers[]> {
+  const { data, error } = await supabase
+    .from("squads")
+    .select("*, squad_players(*, players(*))")
+    .eq("tournament_id", tournamentId)
+    .order("created_at");
+  if (error) throw error;
+  return (data ?? []) as SquadWithPlayers[];
+}
+
+export async function createSquad(squad: Omit<Squad, "id" | "created_at">): Promise<Squad> {
+  const { data, error } = await supabase.from("squads").insert(squad).select().single();
+  if (error) throw error;
+  return data as Squad;
+}
+
+export async function updateSquad(id: string, updates: Partial<Squad>): Promise<Squad> {
+  const { data, error } = await supabase.from("squads").update(updates).eq("id", id).select().single();
+  if (error) throw error;
+  return data as Squad;
+}
+
+export async function deleteSquad(id: string): Promise<void> {
+  const { error } = await supabase.from("squads").delete().eq("id", id);
+  if (error) throw error;
+}
+
+/** Replaces a squad's roster wholesale — delete-then-insert in one pass. */
+export async function setSquadPlayers(squadId: string, playerIds: string[]): Promise<void> {
+  const { error: delError } = await supabase.from("squad_players").delete().eq("squad_id", squadId);
+  if (delError) throw delError;
+  if (playerIds.length === 0) return;
+
+  // Dedupe so a repeated id can't trip the (squad_id, player_id) unique index
+  const rows = Array.from(new Set(playerIds)).map((player_id) => ({ squad_id: squadId, player_id }));
+  const { error } = await supabase.from("squad_players").insert(rows);
+  if (error) throw error;
+}
+
+// ── Matches ───────────────────────────────────────────────────────────────────
+const MATCH_SELECT = "*, sessions(*), squads(id, name)";
+
+export async function fetchMatchesForTournament(tournamentId: string): Promise<MatchWithSession[]> {
+  const { data, error } = await supabase
+    .from("matches")
+    .select(MATCH_SELECT)
+    .eq("tournament_id", tournamentId);
+  if (error) throw error;
+  // Date lives on the joined session, so ordering happens here rather than in SQL
+  return ((data ?? []) as MatchWithSession[]).sort((a, b) =>
+    (a.sessions?.date ?? "").localeCompare(b.sessions?.date ?? ""),
+  );
+}
+
+export async function fetchMatch(id: string): Promise<MatchWithSession> {
+  const { data, error } = await supabase.from("matches").select(MATCH_SELECT).eq("id", id).single();
+  if (error) throw error;
+  return data as MatchWithSession;
+}
+
+export interface CreateMatchInput {
+  tournament_id: string;
+  squad_id: string | null;
+  stage: MatchStage;
+  opponent: string | null;
+  date: string;
+  duration_mins: number;
+  planned_rpe: number;
+  notes?: string | null;
+}
+
+/**
+ * Creates the backing `sessions` row first, then the `matches` row that extends
+ * it. This is the only place the 1:1 session↔match invariant is established.
+ */
+export async function createMatch(input: CreateMatchInput): Promise<Match> {
+  const session = await createTrainingSession({
+    date: input.date,
+    session_type: "Match",
+    duration_mins: input.duration_mins,
+    planned_rpe: input.planned_rpe,
+    notes: null,
+  });
+
+  const { data, error } = await supabase
+    .from("matches")
+    .insert({
+      tournament_id: input.tournament_id,
+      session_id: session.id,
+      squad_id: input.squad_id,
+      stage: input.stage,
+      opponent: input.opponent,
+      notes: input.notes ?? null,
+    })
+    .select()
+    .single();
+
+  if (error) {
+    // Don't strand an orphan session if the matches insert fails
+    await supabase.from("sessions").delete().eq("id", session.id);
+    throw error;
+  }
+  return data as Match;
+}
+
+/** Match-type sessions that aren't yet linked to a match row. */
+export async function fetchAdoptableSessions(): Promise<TrainingSession[]> {
+  const [{ data: sessions, error: sErr }, { data: linked, error: mErr }] = await Promise.all([
+    supabase.from("sessions").select("*").eq("session_type", "Match").order("date", { ascending: false }),
+    supabase.from("matches").select("session_id"),
+  ]);
+  if (sErr) throw sErr;
+  if (mErr) throw mErr;
+
+  const taken = new Set((linked ?? []).map((r: { session_id: string }) => r.session_id));
+  return ((sessions ?? []) as TrainingSession[]).filter((s) => !taken.has(s.id));
+}
+
+/** Pulls an existing Match session into a tournament, keeping its attendance/RPE. */
+export async function adoptSessionAsMatch(
+  sessionId: string,
+  input: Omit<CreateMatchInput, "date" | "duration_mins" | "planned_rpe">
+): Promise<Match> {
+  const { data, error } = await supabase
+    .from("matches")
+    .insert({
+      tournament_id: input.tournament_id,
+      session_id: sessionId,
+      squad_id: input.squad_id,
+      stage: input.stage,
+      opponent: input.opponent,
+      notes: input.notes ?? null,
+    })
+    .select()
+    .single();
+  if (error) throw error;
+  return data as Match;
+}
+
+export async function updateMatch(id: string, updates: Partial<Match>): Promise<Match> {
+  const { data, error } = await supabase.from("matches").update(updates).eq("id", id).select().single();
+  if (error) throw error;
+  return data as Match;
+}
+
+/** Deletes the match and its backing session (cascade only runs session → match). */
+export async function deleteMatch(id: string, sessionId: string): Promise<void> {
+  const { error } = await supabase.from("matches").delete().eq("id", id);
+  if (error) throw error;
+  const { error: sErr } = await supabase.from("sessions").delete().eq("id", sessionId);
+  if (sErr) throw sErr;
+}
+
+// ── Match player stats ────────────────────────────────────────────────────────
+export async function fetchMatchPlayerStats(
+  matchId: string
+): Promise<(MatchPlayerStat & { players: Player | null })[]> {
+  const { data, error } = await supabase
+    .from("match_player_stats")
+    .select("*, players(*)")
+    .eq("match_id", matchId);
+  if (error) throw error;
+  return (data ?? []) as (MatchPlayerStat & { players: Player | null })[];
+}
+
+export async function bulkUpsertMatchStats(matchId: string, rows: MatchStatInput[]): Promise<void> {
+  // Dedupe by player_id — last entry wins. Without this, a repeated player would
+  // trigger "ON CONFLICT DO UPDATE command cannot affect row a second time".
+  const deduped = new Map<string, MatchStatInput>();
+  for (const r of rows) deduped.set(r.player_id, r);
+
+  const payload = Array.from(deduped.values()).map((r) => ({ match_id: matchId, ...r }));
+  if (payload.length === 0) return;
+
+  const { error } = await supabase
+    .from("match_player_stats")
+    .upsert(payload, { onConflict: "match_id,player_id" });
+  if (error) throw error;
+}
+
+export interface TournamentLeader {
+  player: Pick<Player, "id" | "name" | "primary_position">;
+  minutes: number;
+  goals: number;
+  assists: number;
+  appearances: number;
+}
+
+/** Per-player totals across every match in a tournament, best scorers first. */
+export async function fetchTournamentLeaders(tournamentId: string): Promise<TournamentLeader[]> {
+  const { data, error } = await supabase
+    .from("match_player_stats")
+    .select("*, players(id, name, primary_position), matches!inner(tournament_id)")
+    .eq("matches.tournament_id", tournamentId);
+  if (error) throw error;
+
+  const byPlayer = new Map<string, TournamentLeader>();
+  for (const row of (data ?? []) as (MatchPlayerStat & {
+    players: Pick<Player, "id" | "name" | "primary_position"> | null;
+  })[]) {
+    if (!row.players) continue;
+    const entry = byPlayer.get(row.player_id) ?? {
+      player: row.players,
+      minutes: 0,
+      goals: 0,
+      assists: 0,
+      appearances: 0,
+    };
+    entry.minutes += row.minutes_played;
+    entry.goals += row.goals;
+    entry.assists += row.assists;
+    if (row.minutes_played > 0) entry.appearances += 1;
+    byPlayer.set(row.player_id, entry);
+  }
+
+  return Array.from(byPlayer.values()).sort(
+    (a, b) => b.goals - a.goals || b.assists - a.assists || b.minutes - a.minutes,
+  );
+}
+
+/** Match counts per tournament, for the tournament cards. */
+export async function fetchMatchCountsByTournament(): Promise<Record<string, number>> {
+  const { data, error } = await supabase.from("matches").select("tournament_id");
+  if (error) throw error;
+  const counts: Record<string, number> = {};
+  for (const row of (data ?? []) as { tournament_id: string }[]) {
+    counts[row.tournament_id] = (counts[row.tournament_id] ?? 0) + 1;
+  }
+  return counts;
 }

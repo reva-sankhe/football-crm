@@ -131,3 +131,90 @@ export interface SessionRPE {
   notes: string | null;
   created_at: string;
 }
+
+// ── Tournaments, squads & matches ─────────────────────────────────────────────
+// A match is a `sessions` row (session_type = "Match") extended 1:1 by a
+// `matches` row, so attendance, RPE and training load work for matches too.
+export type MatchStage =
+  | "Group Stage"
+  | "Round of 16"
+  | "Quarter Final"
+  | "Semi Final"
+  | "Third Place"
+  | "Final"
+  | "Friendly";
+
+export interface Tournament {
+  id: string;
+  name: string;
+  team: string;
+  start_date: string | null;
+  end_date: string | null;
+  location: string | null;
+  default_match_mins: number;
+  default_planned_rpe: number;
+  notes: string | null;
+  created_at: string;
+}
+
+export interface Squad {
+  id: string;
+  tournament_id: string;
+  name: string;
+  size_limit: number | null;
+  notes: string | null;
+  created_at: string;
+}
+
+export interface SquadPlayer {
+  id: string;
+  squad_id: string;
+  player_id: string;
+  shirt_number: number | null;
+  created_at: string;
+}
+
+/** A squad with its players joined in — what `fetchSquadsForTournament` returns. */
+export interface SquadWithPlayers extends Squad {
+  squad_players: (SquadPlayer & { players: Player | null })[];
+}
+
+export interface Match {
+  id: string;
+  tournament_id: string;
+  session_id: string;
+  squad_id: string | null;
+  stage: MatchStage;
+  opponent: string | null;
+  goals_for: number | null;
+  goals_against: number | null;
+  notes: string | null;
+  created_at: string;
+}
+
+/** A match with its backing session (date/duration live there) and squad name. */
+export interface MatchWithSession extends Match {
+  sessions: TrainingSession | null;
+  squads: Pick<Squad, "id" | "name"> | null;
+}
+
+export interface MatchPlayerStat {
+  id: string;
+  match_id: string;
+  player_id: string;
+  minutes_played: number;
+  goals: number;
+  assists: number;
+  yellow_cards: number;
+  red_cards: number;
+  injured: boolean;
+  injury_note: string | null;
+  notes: string | null;
+  created_at: string;
+}
+
+/** The editable subset of a stat row — what the match grid drafts and saves. */
+export type MatchStatInput = Pick<
+  MatchPlayerStat,
+  "player_id" | "minutes_played" | "goals" | "assists" | "yellow_cards" | "red_cards" | "injured" | "injury_note"
+>;

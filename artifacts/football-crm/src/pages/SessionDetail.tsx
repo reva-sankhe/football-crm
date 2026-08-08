@@ -2,6 +2,7 @@ import { useEffect, useState, useCallback } from "react";
 import { useParams, useLocation } from "wouter";
 import { ArrowLeft, Zap, ClipboardList } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { POS_CFG, PosBadge } from "@/components/PosBadge";
 import { fetchTrainingSession, fetchSessionRPEWithPlayers } from "@/lib/queries";
 import type { TrainingSession, SessionRPE, Player, SessionType } from "@/lib/types";
 import {
@@ -18,22 +19,6 @@ const RPE_COLORS: Record<number, string> = {
 };
 function rpeColor(rpe: number): string {
   return RPE_COLORS[Math.max(1, Math.min(10, Math.floor(rpe)))];
-}
-
-// ── Position config ────────────────────────────────────────────────────────────
-const POS_CFG: Record<string, { label: string; tailwindText: string; tailwindBg: string; hexColor: string }> = {
-  Forward:    { label: "FW", tailwindText: "text-red-400",    tailwindBg: "bg-red-400/15",    hexColor: "#f87171" },
-  Midfielder: { label: "MF", tailwindText: "text-blue-400",   tailwindBg: "bg-blue-400/15",   hexColor: "#60a5fa" },
-  Defender:   { label: "DF", tailwindText: "text-indigo-400", tailwindBg: "bg-indigo-400/15", hexColor: "#818cf8" },
-  Goalkeeper: { label: "GK", tailwindText: "text-amber-400",  tailwindBg: "bg-amber-400/15",  hexColor: "#fbbf24" },
-};
-function PosBadge({ pos }: { pos: string | null }) {
-  const cfg = POS_CFG[pos ?? ""] ?? { label: pos ?? "?", tailwindText: "text-slate-400", tailwindBg: "bg-slate-400/15" };
-  return (
-    <span className={cn("inline-flex items-center justify-center w-7 h-7 rounded-md text-[10px] font-bold", cfg.tailwindText, cfg.tailwindBg)}>
-      {cfg.label}
-    </span>
-  );
 }
 
 // ── Session type config ────────────────────────────────────────────────────────
@@ -140,7 +125,7 @@ export default function SessionDetail() {
       const avgL = Math.round(inPos.reduce((s, r) => s + r.load_au, 0) / inPos.length);
       const avgR = inPos.reduce((s, r) => s + r.rpe, 0) / inPos.length;
       const cfg = POS_CFG[pos];
-      return { pos, avgLoad: avgL, avgRpe: parseFloat(avgR.toFixed(1)), color: cfg.hexColor, count: inPos.length };
+      return { pos, avgLoad: avgL, avgRpe: parseFloat(avgR.toFixed(1)), color: cfg.color, count: inPos.length };
     })
     .filter(Boolean) as { pos: string; avgLoad: number; avgRpe: number; color: string; count: number }[];
 

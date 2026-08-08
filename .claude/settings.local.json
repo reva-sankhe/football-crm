@@ -23,7 +23,11 @@
       "Bash(xargs cat)",
       "mcp__claude_ai_Supabase__list_projects",
       "mcp__claude_ai_Supabase__list_tables",
-      "mcp__claude_ai_Supabase__execute_sql"
+      "mcp__claude_ai_Supabase__execute_sql",
+      "mcp__claude_ai_Supabase__apply_migration",
+      "Bash(pnpm --filter @workspace/football-crm run typecheck)",
+      "Bash(pnpm run *)",
+      "Bash(PORT=5173 BASE_PATH=/ pnpm run build)"
     ]
   }
 }
