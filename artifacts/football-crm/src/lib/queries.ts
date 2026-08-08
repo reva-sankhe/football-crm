@@ -373,6 +373,23 @@ export async function deleteAttendance(sessionId: string, playerId: string): Pro
   if (error) throw error;
 }
 
+/**
+ * Raw attendance rows for a specific set of sessions — backs the attendance
+ * matrix. Scoped by session so we don't pull the whole table like
+ * fetchAllAttendanceStats does.
+ */
+export async function fetchAttendanceForSessions(
+  sessionIds: string[]
+): Promise<{ session_id: string; player_id: string; status: AttendanceStatus }[]> {
+  if (sessionIds.length === 0) return [];
+  const { data, error } = await supabase
+    .from("session_attendance")
+    .select("session_id, player_id, status")
+    .in("session_id", sessionIds);
+  if (error) throw error;
+  return (data ?? []) as { session_id: string; player_id: string; status: AttendanceStatus }[];
+}
+
 export async function fetchAttendanceSummaryForSessions(
   sessionIds: string[]
 ): Promise<Record<string, { total: number; present: number }>> {

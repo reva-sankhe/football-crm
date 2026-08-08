@@ -4,16 +4,9 @@ import { Plus, CalendarDays, Clock, Zap } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
 import { fetchTrainingSessions, createTrainingSession } from "@/lib/queries";
+import { SESSION_TYPE_CFG, SESSION_TYPES, dayFromISO, todayISO } from "@/lib/attendance";
 import { supabase } from "@/lib/supabase";
 import type { TrainingSession, SessionType } from "@/lib/types";
-
-// ── Session type config ────────────────────────────────────────────────────────
-const SESSION_TYPE_CFG: Record<SessionType, { text: string; bg: string }> = {
-  Training: { text: "text-indigo-400", bg: "bg-indigo-500/15" },
-  Match:    { text: "text-amber-400",  bg: "bg-amber-500/15"  },
-  Gym:      { text: "text-emerald-400",bg: "bg-emerald-500/15"},
-  Recovery: { text: "text-slate-400",  bg: "bg-slate-500/15"  },
-};
 
 function SessionTypeBadge({ type }: { type: SessionType }) {
   const cfg = SESSION_TYPE_CFG[type] ?? SESSION_TYPE_CFG.Training;
@@ -32,18 +25,6 @@ function formatDate(iso: string) {
 interface NewSessionModalProps {
   onClose: () => void;
   onSaved: (id: string) => void;
-}
-
-const SESSION_TYPES: SessionType[] = ["Training", "Match", "Gym", "Recovery"];
-
-function todayISO() {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-}
-
-function dayFromISO(iso: string) {
-  if (!iso) return "";
-  return new Date(iso + "T00:00:00").toLocaleDateString("en-US", { weekday: "long" });
 }
 
 function NewSessionModal({ onClose, onSaved }: NewSessionModalProps) {

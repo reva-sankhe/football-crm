@@ -1,4 +1,4 @@
-import { Switch, Route, Router as WouterRouter } from "wouter";
+import { Switch, Route, Redirect, Router as WouterRouter } from "wouter";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -13,7 +13,7 @@ import Analytics from "@/pages/Analytics";
 import Sessions from "@/pages/Sessions";
 import SessionRPE from "@/pages/SessionRPE";
 import SessionDetail from "@/pages/SessionDetail";
-import CalendarPage from "@/pages/CalendarPage";
+import Attendance from "@/pages/Attendance";
 import NotFound from "@/pages/not-found";
 
 const queryClient = new QueryClient();
@@ -28,7 +28,9 @@ function Router() {
         <Route path="/sessions" component={Sessions} />
         <Route path="/sessions/:id/rpe" component={SessionRPE} />
         <Route path="/sessions/:id" component={SessionDetail} />
-        <Route path="/calendar" component={CalendarPage} />
+        <Route path="/attendance" component={Attendance} />
+        {/* Legacy link — the calendar was replaced by the Attendance page */}
+        <Route path="/calendar"><Redirect to="/attendance" /></Route>
         <Route path="/fitness" component={FitnessTests} />
         <Route path="/analytics" component={Analytics} />
         <Route component={NotFound} />

@@ -2,6 +2,7 @@ import { useEffect, useState, useCallback, useMemo } from "react";
 import { useParams, useLocation } from "wouter";
 import { fetchPlayer, fetchResultsByPlayer, updatePlayer, fetchAllResults, fetchPlayerRecentSessions, fetchAttendanceByPlayer, fetchTrainingSessions } from "@/lib/queries";
 import { formatBroncho, positionColor, ageRangeColor, cn } from "@/lib/utils";
+import { SESSION_TYPE_CFG, countsAsAttended } from "@/lib/attendance";
 import { MasBadge } from "@/components/MasBadge";
 import { ChartSkeleton, TableSkeleton, Skeleton } from "@/components/Skeleton";
 import { EmptyState } from "@/components/EmptyState";
@@ -187,9 +188,7 @@ export default function PlayerDetail() {
     }
 
     const attendedIds = new Set(
-      playerAttendance
-        .filter((a) => a.status === "Present" || a.status === "Late")
-        .map((a) => a.session_id)
+      playerAttendance.filter((a) => countsAsAttended(a.status)).map((a) => a.session_id)
     );
 
     return Object.entries(sessionsByMonth)
@@ -229,13 +228,6 @@ export default function PlayerDetail() {
   if (!player) {
     return <EmptyState icon={Dumbbell} title="Player not found" action={<button onClick={() => setLocation("/players")} className="text-primary text-sm">Back to Players</button>} />;
   }
-
-  const SESSION_TYPE_CFG: Record<SessionType, { text: string; bg: string }> = {
-    Training: { text: "text-indigo-400", bg: "bg-indigo-500/15" },
-    Match:    { text: "text-amber-400",  bg: "bg-amber-500/15"  },
-    Gym:      { text: "text-emerald-400",bg: "bg-emerald-500/15"},
-    Recovery: { text: "text-slate-400",  bg: "bg-slate-500/15"  },
-  };
 
   return (
     <div className="space-y-5">
