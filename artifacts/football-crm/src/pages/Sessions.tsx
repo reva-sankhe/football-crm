@@ -197,11 +197,6 @@ export default function Sessions() {
 
   return (
     <div className="space-y-5">
-      <div>
-        <h1 className="text-2xl font-semibold tracking-tight text-foreground">Sessions</h1>
-        <p className="text-sm text-muted-foreground mt-0.5">Tournaments, matches & training load</p>
-      </div>
-
       <Tabs value={tab} onValueChange={(v) => setTab(v as typeof tab)} className="space-y-4">
         <TabsList>
           <TabsTrigger value="tournaments" data-testid="tab-tournaments">Tournaments</TabsTrigger>

@@ -107,12 +107,9 @@ export default function Attendance() {
     <div className="space-y-5">
       {/* Header */}
       <div className="flex items-start justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight text-foreground">Attendance</h1>
-          <p className="text-sm text-muted-foreground mt-0.5">
-            Take attendance for a session, or review the whole squad
-          </p>
-        </div>
+        <p className="text-sm text-muted-foreground">
+          Take attendance for a session, or review the whole squad
+        </p>
         <button
           onClick={() => setImportOpen(true)}
           className={cn(

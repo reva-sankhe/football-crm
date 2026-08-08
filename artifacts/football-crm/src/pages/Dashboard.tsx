@@ -332,12 +332,7 @@ export default function Dashboard() {
 
       {/* Header */}
       <div className="flex items-center justify-between flex-wrap gap-3">
-        <div>
-          <h1 className="text-3xl font-semibold tracking-tight text-foreground">
-            {team} <span className="text-indigo-500 dark:text-indigo-400">— Squad</span>
-          </h1>
-          <p className="text-sm text-muted-foreground mt-0.5">{active.length} active · {inactive.length} inactive · {monthName}</p>
-        </div>
+        <p className="text-sm text-muted-foreground">{active.length} active · {inactive.length} inactive · {monthName}</p>
         <TeamSwitcher />
       </div>
 

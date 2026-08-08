@@ -1123,10 +1123,7 @@ export default function FitnessTests() {
   return (
     <div className="space-y-5">
       <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-3xl font-semibold tracking-tight text-foreground">Fitness <span className="text-indigo-500 dark:text-indigo-400">Tests</span></h1>
-          <p className="text-sm text-muted-foreground mt-1">{sessions.length} session{sessions.length !== 1 ? "s" : ""}</p>
-        </div>
+        <p className="text-sm text-muted-foreground">{sessions.length} session{sessions.length !== 1 ? "s" : ""}</p>
         <button
           onClick={() => setStep("create-session")}
           className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg border border-indigo-500/50 text-indigo-400 text-sm font-medium hover:bg-indigo-500/10 transition-colors"

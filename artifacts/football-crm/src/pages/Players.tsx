@@ -225,10 +225,7 @@ export default function Players() {
   return (
     <div className="space-y-5">
       <div className="flex items-center justify-between flex-wrap gap-3">
-        <div>
-          <h1 className="text-3xl font-semibold tracking-tight text-foreground">{team} <span className="text-indigo-500 dark:text-indigo-400">— Players</span></h1>
-          <p className="text-sm text-muted-foreground mt-1">{players.filter((p) => p.is_active).length} active players</p>
-        </div>
+        <p className="text-sm text-muted-foreground">{players.filter((p) => p.is_active).length} active players</p>
         <div className="flex items-center gap-2">
           <TeamSwitcher />
           <button
