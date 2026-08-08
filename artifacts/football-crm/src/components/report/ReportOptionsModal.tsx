@@ -56,7 +56,7 @@ export function ReportOptionsModal({
             <span className="text-sm text-foreground">
               {playerIds && playerIds.length > 0
                 ? `${playerCount} selected player${playerCount !== 1 ? "s" : ""}`
-                : "All players"}
+                : "All active players"}
             </span>
             <span className="ml-auto text-[11px] text-muted-foreground">one page each</span>
           </div>

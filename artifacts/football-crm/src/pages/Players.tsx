@@ -265,7 +265,7 @@ export default function Players() {
             data-testid="button-download-report"
           >
             <FileText size={13} />
-            {selected.size > 0 ? `Report (${selected.size})` : "Report all"}
+            {selected.size > 0 ? `Report (${selected.size})` : "Report active"}
           </button>
           <button
             onClick={() => setShowAdd(true)}

@@ -65,7 +65,11 @@ export default function PlayerReports() {
   const reports = useMemo(() => {
     if (!data) return [];
     const wanted = idsParam === "all" ? null : new Set(idsParam.split(",").filter(Boolean));
-    const selected = wanted ? players.filter((p) => wanted.has(p.id)) : players;
+    // "Report all" means the active squad. An explicit selection is honoured
+    // as-is, so an inactive player can still be reported on deliberately.
+    const selected = wanted
+      ? players.filter((p) => wanted.has(p.id))
+      : players.filter((p) => p.is_active);
     return [...selected]
       .sort((a, b) => a.name.localeCompare(b.name))
       .map((p) => buildPlayerReport(p, data, range));
