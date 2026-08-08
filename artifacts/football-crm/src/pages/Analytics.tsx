@@ -11,7 +11,6 @@ import {
   ResponsiveContainer, Cell, ReferenceLine,
   ScatterChart, Scatter, ZAxis,
   AreaChart, Area,
-  LineChart, Line,
 } from "recharts";
 import { cn } from "@/lib/utils";
 import { useTheme } from "@/context/ThemeContext";
@@ -40,13 +39,6 @@ function ChangeBadge({ diffSecs }: { diffSecs: number | null }) {
   if (Math.abs(diffSecs) <= 3) return <span className="inline-block px-2 py-0.5 rounded-full text-[11px] font-time bg-amber-400/15 text-amber-400">—</span>;
   if (diffSecs > 0) return <span className="inline-block px-2 py-0.5 rounded-full text-[11px] font-time bg-emerald-400/15 text-emerald-400">− {diffSecs}s</span>;
   return <span className="inline-block px-2 py-0.5 rounded-full text-[11px] font-time bg-red-400/15 text-red-400">+ {Math.abs(diffSecs)}s</span>;
-}
-
-// ── Tier badge (broncho-based) ─────────────────────────────────────────────
-function TierBadge({ bronco }: { bronco: number | null }) {
-  if (bronco === null) return <span className="text-xs text-muted-foreground">—</span>;
-  const t = getBronchoTier(bronco);
-  return <span className="text-xs font-medium" style={{ color: t.color }}>{t.label}</span>;
 }
 
 // ── Bar row (CSS-based, no Recharts) ──────────────────────────────────────
@@ -91,10 +83,28 @@ function TierStrip({ players: ps }: { players: { player: Player; bronco: number 
             {inTier.length > 0 && (
               <div className="flex flex-wrap gap-1.5 px-3 pb-2">
                 {inTier.map(({ player, bronco }) => (
-                  <div key={player.id} title={`${player.name} · ${formatBroncho(bronco)}`}
-                    className="w-6 h-6 rounded-full flex items-center justify-center text-[8px] font-bold font-time cursor-default"
-                    style={{ backgroundColor: t.color + "22", color: t.color, border: `1px solid ${t.color}44` }}>
-                    {player.name.slice(0, 2).toUpperCase()}
+                  <div key={player.id} className="relative group">
+                    {/* button (not div) so a tap focuses it — group-focus-within
+                        gives touch devices the same detail as hover */}
+                    <button
+                      type="button"
+                      className="w-6 h-6 rounded-full flex items-center justify-center text-[8px] font-bold font-time focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-1 focus-visible:ring-offset-background"
+                      style={{ backgroundColor: t.color + "22", color: t.color, border: `1px solid ${t.color}44` }}
+                    >
+                      {player.name.slice(0, 2).toUpperCase()}
+                    </button>
+                    <div
+                      className={cn(
+                        "pointer-events-none absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 z-20",
+                        "hidden group-hover:block group-focus-within:block",
+                        "whitespace-nowrap rounded-lg border border-border bg-popover px-2.5 py-1.5 shadow-lg",
+                      )}
+                    >
+                      <div className="text-xs font-medium text-foreground">{player.name}</div>
+                      <div className="text-[11px] font-time" style={{ color: t.color }}>
+                        {formatBroncho(bronco)}
+                      </div>
+                    </div>
                   </div>
                 ))}
               </div>
@@ -136,8 +146,6 @@ export default function Analytics() {
   const [sessions, setSessions] = useState<TestSession[]>([]);
   const [players, setPlayers] = useState<Player[]>([]);
   const [loading, setLoading] = useState(true);
-  const [posFilter, setPosFilter] = useState("all");
-  const [ageFilter, setAgeFilter] = useState("all");
   const [typeFilter, setTypeFilter] = useState<string>("all");
   const [compareIds, setCompareIds] = useState<string[]>([]);
   const [rankGroup, setRankGroup] = useState<"all" | "position" | "age">("all");
@@ -218,25 +226,6 @@ export default function Analytics() {
       .sort((a, b) => a.bronco! - b.bronco!); // ascending: best (fastest) first
   }, [playerComparisons]);
 
-  // Team band lookup from quartiles
-  const getTeamBand = useMemo(() => {
-    const vals = benchmarkData.map((d) => d.bronco!);
-    const calcQ = (arr: number[], p: number) => {
-      if (arr.length === 0) return null;
-      const idx = (p / 100) * (arr.length - 1);
-      const lo = Math.floor(idx), hi = Math.ceil(idx);
-      return arr[lo] + (idx - lo) * ((arr[hi] ?? arr[lo]) - arr[lo]);
-    };
-    const q1 = calcQ(vals, 25), q2 = calcQ(vals, 50), q3 = calcQ(vals, 75);
-    return (bronco: number | null): { label: string; color: string } | null => {
-      if (bronco === null || q1 === null || q2 === null || q3 === null) return null;
-      if (bronco <= q1) return { label: "Top 25%",    color: "#34d399" };
-      if (bronco <= q2) return { label: "Upper Mid",  color: "#60a5fa" };
-      if (bronco <= q3) return { label: "Lower Mid",  color: "#fbbf24" };
-      return                    { label: "Bottom 25%", color: "#f87171" };
-    };
-  }, [benchmarkData]);
-
   // Overview: per-player change sorted best → worst
   const changeData = useMemo(() => {
     return playerComparisons
@@ -309,50 +298,6 @@ export default function Analytics() {
       .map(([, v]) => ({ ...v, totalLoad: Math.round(v.totalLoad) }));
   }, [filteredRpeData]);
 
-  const weeklyRpeData = useMemo(() => {
-    const byWeek = new Map<string, { weekLabel: string; rpeSum: number; count: number }>();
-    for (const r of filteredRpeData) {
-      if (!r.sessions?.date) continue;
-      const d = new Date(r.sessions.date + "T00:00:00");
-      const year = d.getFullYear();
-      const startOfYear = new Date(year, 0, 1);
-      const week = Math.ceil(((d.getTime() - startOfYear.getTime()) / 86400000 + startOfYear.getDay() + 1) / 7);
-      const key = `${year}-W${String(week).padStart(2, "0")}`;
-      const label = `W${week} '${String(year).slice(2)}`;
-      if (!byWeek.has(key)) byWeek.set(key, { weekLabel: label, rpeSum: 0, count: 0 });
-      byWeek.get(key)!.rpeSum += r.rpe;
-      byWeek.get(key)!.count += 1;
-    }
-    return Array.from(byWeek.entries())
-      .sort(([a], [b]) => a.localeCompare(b))
-      .map(([, v]) => ({ weekLabel: v.weekLabel, avgRpe: parseFloat((v.rpeSum / v.count).toFixed(1)) }));
-  }, [filteredRpeData]);
-
-  const topSessionsData = useMemo(() => {
-    const bySession = new Map<string, {
-      sessionId: string; date: string; sessionType: string;
-      totalLoad: number; playerCount: number; rpeSum: number;
-    }>();
-    for (const r of filteredRpeData) {
-      const sid = r.session_id;
-      if (!bySession.has(sid)) {
-        bySession.set(sid, { sessionId: sid, date: r.sessions?.date ?? "", sessionType: r.sessions?.session_type ?? "Training", totalLoad: 0, playerCount: 0, rpeSum: 0 });
-      }
-      const e = bySession.get(sid)!;
-      e.totalLoad += r.load_au;
-      e.playerCount += 1;
-      e.rpeSum += r.rpe;
-    }
-    return Array.from(bySession.values())
-      .sort((a, b) => b.totalLoad - a.totalLoad)
-      .slice(0, 10)
-      .map((d) => ({
-        ...d,
-        totalLoad: Math.round(d.totalLoad),
-        avgRpe: parseFloat((d.rpeSum / d.playerCount).toFixed(1)),
-      }));
-  }, [filteredRpeData]);
-
   const loadDistributionData = useMemo(() => {
     const byPlayer = new Map<string, { loads: number[]; player: RPEWithSession["players"] }>();
     for (const r of filteredRpeData) {
@@ -367,65 +312,6 @@ export default function Analytics() {
         avgLoad: Math.round(d.loads.reduce((a, b) => a + b, 0) / d.loads.length),
         sessions: d.loads.length,
       }));
-  }, [filteredRpeData]);
-
-  const rpeByDayData = useMemo(() => {
-    const DAY_ORDER = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
-    const byDay = new Map<string, { rpeSum: number; count: number }>();
-    for (const r of filteredRpeData) {
-      const day = r.sessions?.day;
-      if (!day) continue;
-      if (!byDay.has(day)) byDay.set(day, { rpeSum: 0, count: 0 });
-      byDay.get(day)!.rpeSum += r.rpe;
-      byDay.get(day)!.count += 1;
-    }
-    return DAY_ORDER
-      .filter((d) => byDay.has(d))
-      .map((d) => {
-        const avgRpe = parseFloat((byDay.get(d)!.rpeSum / byDay.get(d)!.count).toFixed(1));
-        const color = avgRpe >= 8 ? "#f87171" : avgRpe >= 6 ? "#fbbf24" : avgRpe >= 4 ? "#34d399" : "#60a5fa";
-        return { day: d.slice(0, 3), fullDay: d, avgRpe, sessions: byDay.get(d)!.count, color };
-      });
-  }, [filteredRpeData]);
-
-  const coachVsPlayerData = useMemo(() => {
-    const bySession = new Map<string, {
-      date: string; day: string; sessionType: string;
-      plannedRpe: number; rpeSum: number; count: number;
-    }>();
-    for (const r of filteredRpeData) {
-      const sid = r.session_id;
-      if (!bySession.has(sid)) {
-        bySession.set(sid, {
-          date: r.sessions?.date ?? "",
-          day: r.sessions?.day ?? "",
-          sessionType: r.sessions?.session_type ?? "Training",
-          plannedRpe: r.sessions?.planned_rpe ?? 0,
-          rpeSum: 0,
-          count: 0,
-        });
-      }
-      const e = bySession.get(sid)!;
-      e.rpeSum += r.rpe;
-      e.count += 1;
-    }
-    return Array.from(bySession.values())
-      .filter((d) => d.plannedRpe > 0 && d.count > 0)
-      .sort((a, b) => a.date.localeCompare(b.date))
-      .slice(-20)
-      .map((d) => {
-        const actualRpe = parseFloat((d.rpeSum / d.count).toFixed(1));
-        const diff = parseFloat((actualRpe - d.plannedRpe).toFixed(1));
-        return {
-          label: new Date(d.date + "T00:00:00").toLocaleDateString("en-GB", { day: "numeric", month: "short" }),
-          day: d.day.slice(0, 3),
-          sessionType: d.sessionType,
-          plannedRpe: d.plannedRpe,
-          actualRpe,
-          diff,
-          playerCount: d.count,
-        };
-      });
   }, [filteredRpeData]);
 
   return (
@@ -708,61 +594,6 @@ export default function Analytics() {
               </div>
             </div>
 
-            {/* ── Players table ── */}
-            <div className="bg-card border border-border rounded-2xl overflow-hidden">
-              <div className="flex items-center gap-3 flex-wrap px-5 pt-5 pb-4 border-b border-border">
-                <div className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground flex-1">All players</div>
-                <div className="flex items-center gap-3 flex-wrap">
-                  <select value={posFilter} onChange={(e) => setPosFilter(e.target.value)}
-                    className="bg-transparent border border-border rounded-lg text-xs px-2.5 py-1.5 text-foreground cursor-pointer focus:outline-none focus:ring-1 focus:ring-indigo-500/50">
-                    <option value="all">All positions</option>
-                    {positions.map((p) => <option key={p} value={p}>{p}</option>)}
-                  </select>
-                  <select value={ageFilter} onChange={(e) => setAgeFilter(e.target.value)}
-                    className="bg-transparent border border-border rounded-lg text-xs px-2.5 py-1.5 text-foreground cursor-pointer focus:outline-none focus:ring-1 focus:ring-indigo-500/50">
-                    <option value="all">All ages</option>
-                    {ageRanges.map((r) => <option key={r} value={r}>{r}</option>)}
-                  </select>
-                </div>
-              </div>
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm" data-testid="players-analytics-table">
-                  <thead>
-                    <tr className="border-b border-border">
-                      <th className="px-4 py-3 text-left text-[10px] font-semibold uppercase tracking-widest text-muted-foreground w-8"></th>
-                      <th className="px-4 py-3 text-left text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">Player</th>
-                      <th className="px-4 py-3 text-left text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">Group</th>
-                      <th className="px-4 py-3 text-right text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">First</th>
-                      <th className="px-4 py-3 text-right text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">Latest</th>
-                      <th className="px-4 py-3 text-right text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">Band</th>
-                      <th className="px-4 py-3 text-right text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">Change</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {loading ? (
-                      <tr><td colSpan={7} className="px-4 py-8 text-center text-sm text-muted-foreground">Loading…</td></tr>
-                    ) : playerComparisons
-                      .filter((x) => (posFilter === "all" || x.player.primary_position === posFilter) && (ageFilter === "all" || x.player.age_range === ageFilter))
-                      .map(({ player, first, latest, diffSecs }) => (
-                        <tr key={player.id} className="border-b border-border/50 last:border-0 hover:bg-muted/20 transition-colors">
-                          <td className="px-4 py-2.5"><PosBadge pos={player.primary_position} /></td>
-                          <td className="px-4 py-2.5 font-medium text-foreground">{player.name}</td>
-                          <td className="px-4 py-2.5">
-                            {player.age_range
-                              ? <span className="text-[11px] px-2 py-0.5 rounded-full bg-muted text-muted-foreground font-time">{player.age_range}</span>
-                              : <span className="text-muted-foreground">—</span>}
-                          </td>
-                          <td className="px-4 py-2.5 text-right font-time text-muted-foreground">{first ? formatBroncho(first.bronco_mins) : <span className="text-muted-foreground/50">—</span>}</td>
-                          <td className="px-4 py-2.5 text-right font-time text-foreground">{latest ? formatBroncho(latest.bronco_mins) : <span className="text-muted-foreground/50">—</span>}</td>
-                          <td className="px-4 py-2.5 text-right">{(() => { const b = getTeamBand(latest?.bronco_mins ?? null); return b ? <span className="inline-block px-2 py-0.5 rounded-full text-[11px] font-semibold" style={{ backgroundColor: b.color + "20", color: b.color }}>{b.label}</span> : <span className="text-muted-foreground/50">—</span>; })()}</td>
-                          <td className="px-4 py-2.5 text-right"><ChangeBadge diffSecs={diffSecs} /></td>
-                        </tr>
-                      ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-
           </div>
         );
       })()}
@@ -781,49 +612,6 @@ export default function Analytics() {
             )}
           </div>
 
-          {/* Player vs benchmark bar chart */}
-          <div className="bg-card border border-border rounded-2xl p-5">
-            <div className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground mb-1">Player broncho time vs benchmarks</div>
-            <p className="text-[11px] text-muted-foreground mb-4">Latest session · reference lines mark tier boundaries · lower = faster</p>
-            {loading ? <ChartSkeleton height={320} /> : benchmarkData.length === 0 ? (
-              <EmptyState title="No broncho data" description="Broncho times will appear after fitness tests are recorded" />
-            ) : (
-              <ResponsiveContainer width="100%" height={Math.max(200, benchmarkData.length * 26 + 80)}>
-                <BarChart
-                  data={benchmarkData.map((d) => ({ name: d.player.name, bronco: d.bronco, tier: getBronchoTier(d.bronco!).label }))}
-                  layout="vertical"
-                  margin={{ top: 4, right: 60, bottom: 4, left: 10 }}
-                >
-                  <CartesianGrid strokeDasharray="3 3" stroke={chartGrid} horizontal={false} />
-                  <XAxis
-                    type="number"
-                    domain={[4.0, 6.0]}
-                    tick={{ fill: chartAxis, fontSize: 10 }}
-                    tickCount={9}
-                    tickFormatter={(v: number) => {
-                      const m = Math.floor(v);
-                      const s = Math.round((v - m) * 60);
-                      return `${m}:${s.toString().padStart(2, "0")}`;
-                    }}
-                  />
-                  <YAxis type="category" dataKey="name" tick={{ fill: chartAxis, fontSize: 11 }} width={95} />
-                  {BRONCHO_TIERS.filter((t) => t.minMins > 4.0 && t.minMins < 6.0).map((t) => (
-                    <ReferenceLine key={t.minMins} x={t.minMins} stroke={t.color + "66"} strokeDasharray="4 3" label={{ value: t.label, position: "insideTopRight", fill: t.color, fontSize: 9 }} />
-                  ))}
-                  <Tooltip
-                    contentStyle={{ background: chartTooltipBg, border: `1px solid ${chartTooltipBorder}`, borderRadius: 8 }}
-                    labelStyle={{ color: isDark ? "#f1f5f9" : "#0f172a", fontSize: 12, fontWeight: 600 }}
-                    formatter={(v: number, _: string, props) => [`${formatBroncho(v)} — ${props.payload.tier}`, ""]}
-                  />
-                  <Bar dataKey="bronco" radius={[0, 3, 3, 0]} minPointSize={2}>
-                    {benchmarkData.map((entry, i) => (
-                      <Cell key={i} fill={getBronchoTier(entry.bronco!).color} />
-                    ))}
-                  </Bar>
-                </BarChart>
-              </ResponsiveContainer>
-            )}
-          </div>
         </div>
       )}
 
@@ -1352,43 +1140,6 @@ export default function Analytics() {
                   </div>
                 )}
 
-                {/* Session-by-session breakdown table */}
-                <div className="bg-card border border-border rounded-2xl p-5">
-                  <div className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground mb-4">Session breakdown</div>
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-sm">
-                      <thead>
-                        <tr className="border-b border-border">
-                          <th className="pb-2 text-left text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">Session</th>
-                          {selected.map((pc, i) => (
-                            <th key={pc.player.id} className="pb-2 text-left text-[10px] font-semibold uppercase tracking-widest" style={{ color: COMPARE_COLORS[i] }}>
-                              {pc.player.name}
-                            </th>
-                          ))}
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {chronoSessions.map((s) => {
-                          const cells = selected.map((pc) => {
-                            const r = teamResults.find((x) => x.session_id === s.id && x.player_id === pc.player.id && x.bronco_mins !== null);
-                            return r?.bronco_mins ?? null;
-                          });
-                          if (cells.every((c) => c === null)) return null;
-                          return (
-                            <tr key={s.id} className="border-b border-border/50 last:border-0 hover:bg-muted/30 transition-colors">
-                              <td className="py-2.5 text-xs text-muted-foreground">{s.test_name}<span className="ml-1.5 text-[10px] opacity-60">{s.test_date}</span></td>
-                              {cells.map((bronco, i) => (
-                                <td key={i} className="py-2.5 font-time text-xs" style={{ color: bronco !== null ? COMPARE_COLORS[i] : undefined }}>
-                                  {bronco !== null ? formatBroncho(bronco) : <span className="text-muted-foreground/40">—</span>}
-                                </td>
-                              ))}
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
               </div>
             )}
 
@@ -1419,27 +1170,6 @@ export default function Analytics() {
           { key: "lower",  label: "Lower Mid",  description: "25–50th percentile",     color: "#fbbf24", targetLabel: "Upper Mid" },
           { key: "bottom", label: "Bottom 25%", description: "Slowest quartile",       color: "#f87171", targetLabel: "Lower Mid" },
         ] as const;
-
-        const getPlayerBand = (bronco: number) => {
-          if (q1 !== null && bronco <= q1) return BANDS[0];
-          if (q2 !== null && bronco <= q2) return BANDS[1];
-          if (q3 !== null && bronco <= q3) return BANDS[2];
-          return BANDS[3];
-        };
-
-        const getTarget = (bronco: number): { boundary: number; gapSecs: number; nextBand: string; isGlobal?: boolean } | null => {
-          if (q1 === null || q2 === null || q3 === null) return null;
-          if (bronco <= q1) {
-            // Top of squad — aim for next global tier
-            const tierIdx = BRONCHO_TIERS.findIndex((t) => bronco >= t.minMins && bronco < t.maxMins);
-            if (tierIdx <= 0) return null; // already World Record
-            const nextTier = BRONCHO_TIERS[tierIdx - 1];
-            return { boundary: nextTier.maxMins, gapSecs: Math.round((bronco - nextTier.maxMins) * 60), nextBand: nextTier.label, isGlobal: true };
-          }
-          if (bronco <= q2) return { boundary: q1, gapSecs: Math.round((bronco - q1) * 60), nextBand: "Top 25%" };
-          if (bronco <= q3) return { boundary: q2, gapSecs: Math.round((bronco - q2) * 60), nextBand: "Upper Mid" };
-          return { boundary: q3, gapSecs: Math.round((bronco - q3) * 60), nextBand: "Lower Mid" };
-        };
 
         return (
           <div className="space-y-4">
@@ -1514,69 +1244,6 @@ export default function Analytics() {
               </div>
             )}
 
-            {/* Next test targets table */}
-            {!loading && q1 !== null && (
-              <div className="bg-card border border-border rounded-2xl p-5">
-                <div className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground mb-1">Next test targets</div>
-                <p className="text-[11px] text-muted-foreground mb-4">How many seconds each player needs to improve to reach the next band</p>
-                <div className="overflow-x-auto">
-                  <table className="w-full text-sm">
-                    <thead>
-                      <tr className="border-b border-border">
-                        <th className="pb-2 text-left text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">Player</th>
-                        <th className="pb-2 text-left text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">Latest</th>
-                        <th className="pb-2 text-left text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">Avg / round</th>
-                        <th className="pb-2 text-left text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">Current band</th>
-                        <th className="pb-2 text-left text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">Target</th>
-                        <th className="pb-2 text-left text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">Goal avg / round</th>
-                        <th className="pb-2 text-left text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">Gap</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {benchmarkData.map(({ player, bronco }) => {
-                        const band = getPlayerBand(bronco!);
-                        const target = getTarget(bronco!);
-                        return (
-                          <tr key={player.id} className="border-b border-border/50 last:border-0 hover:bg-muted/30 transition-colors">
-                            <td className="py-2.5">
-                              <div className="flex items-center gap-2">
-                                <PosBadge pos={player.primary_position} />
-                                <span className="text-xs font-medium text-foreground">{player.name}</span>
-                              </div>
-                            </td>
-                            <td className="py-2.5 font-time text-xs text-foreground">{formatBroncho(bronco)}</td>
-                            <td className="py-2.5 font-time text-xs text-muted-foreground">{formatBroncho(bronco! / 5)}</td>
-                            <td className="py-2.5">
-                              <span className="inline-block px-2 py-0.5 rounded-full text-[11px] font-semibold"
-                                style={{ backgroundColor: band.color + "20", color: band.color }}>
-                                {band.label}
-                              </span>
-                            </td>
-                            <td className="py-2.5 font-time text-xs">
-                              {target
-                                ? <span style={{ color: target.isGlobal ? "#a78bfa" : "#60a5fa" }}>{formatBroncho(target.boundary)}</span>
-                                : <span className="text-amber-400 font-semibold">World Record ✓</span>
-                              }
-                            </td>
-                            <td className="py-2.5 font-time text-xs text-muted-foreground">
-                              {target ? formatBroncho(target.boundary / 5) : "—"}
-                            </td>
-                            <td className="py-2.5">
-                              {target
-                                ? <span className={cn("inline-block px-2 py-0.5 rounded-full text-[11px] font-time", target.isGlobal ? "bg-violet-400/10 text-violet-400" : "bg-blue-400/10 text-blue-400")}>
-                                    −{target.gapSecs}s → {target.isGlobal ? `Global ${target.nextBand}` : target.nextBand}
-                                  </span>
-                                : <span className="text-[11px] text-muted-foreground">—</span>
-                              }
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            )}
           </div>
         );
       })()}
@@ -1797,235 +1464,6 @@ export default function Analytics() {
                   <Area type="monotone" dataKey="totalLoad" stroke="#818cf8" strokeWidth={2} fill="url(#loadGrad)" dot={{ fill: "#818cf8", r: 3 }} />
                 </AreaChart>
               </ResponsiveContainer>
-            )}
-          </div>
-
-          {/* Weekly avg RPE */}
-          <div className="bg-card border border-border rounded-2xl p-5">
-            <div className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground mb-1">Avg RPE per Week</div>
-            <p className="text-[11px] text-muted-foreground mb-4">Mean session RPE across all players, by calendar week.</p>
-            {loadLoading ? (
-              <div className="h-[200px] bg-muted rounded-xl animate-pulse" />
-            ) : weeklyRpeData.length === 0 ? (
-              <EmptyState title="No data" description="No RPE logged yet." />
-            ) : (
-              <>
-                <ResponsiveContainer width="100%" height={200}>
-                  <LineChart data={weeklyRpeData} margin={{ top: 8, right: 16, bottom: 4, left: 0 }}>
-                    <CartesianGrid strokeDasharray="3 3" stroke={chartGrid} vertical={false} />
-                    <XAxis dataKey="weekLabel" tick={{ fill: chartAxis, fontSize: 10 }} />
-                    <YAxis domain={[0, 10]} ticks={[0, 2, 4, 6, 8, 10]} tick={{ fill: chartAxis, fontSize: 10 }} />
-                    <Tooltip
-                      contentStyle={{ background: chartTooltipBg, border: `1px solid ${chartTooltipBorder}`, borderRadius: 8 }}
-                      formatter={(v: number) => [v.toFixed(1), "Avg RPE"]}
-                    />
-                    <ReferenceLine y={5} stroke="#60a5fa" strokeDasharray="4 3" strokeWidth={1}
-                      label={{ value: "Moderate (5)", position: "insideTopLeft", fill: "#60a5fa", fontSize: 9 }} />
-                    <ReferenceLine y={7} stroke="#fbbf24" strokeDasharray="4 3" strokeWidth={1}
-                      label={{ value: "Hard (7)", position: "insideTopLeft", fill: "#fbbf24", fontSize: 9 }} />
-                    <ReferenceLine y={9} stroke="#f87171" strokeDasharray="4 3" strokeWidth={1}
-                      label={{ value: "Max (9)", position: "insideTopLeft", fill: "#f87171", fontSize: 9 }} />
-                    <Line type="monotone" dataKey="avgRpe" stroke="#34d399" strokeWidth={2} dot={{ fill: "#34d399", r: 3 }} />
-                  </LineChart>
-                </ResponsiveContainer>
-                <div className="flex flex-wrap gap-4 mt-2">
-                  {([["Moderate","#60a5fa"], ["Hard","#fbbf24"], ["Max","#f87171"]] as [string, string][]).map(([l, c]) => (
-                    <div key={l} className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
-                      <div className="w-4 h-[1.5px] rounded-full" style={{ background: c }} />
-                      {l}
-                    </div>
-                  ))}
-                </div>
-              </>
-            )}
-          </div>
-
-          {/* RPE by Day of Week */}
-          <div className="bg-card border border-border rounded-2xl p-5">
-            <div className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground mb-1">Avg RPE by Day of Week</div>
-            <p className="text-[11px] text-muted-foreground mb-4">Which days tend to be hardest — averaged across all sessions in the selected range.</p>
-            {loadLoading ? (
-              <div className="h-[200px] bg-muted rounded-xl animate-pulse" />
-            ) : rpeByDayData.length === 0 ? (
-              <EmptyState title="No data" description="No RPE logged yet." />
-            ) : (
-              <ResponsiveContainer width="100%" height={200}>
-                <BarChart data={rpeByDayData} margin={{ top: 8, right: 16, bottom: 4, left: 0 }} barCategoryGap="30%">
-                  <CartesianGrid strokeDasharray="3 3" stroke={chartGrid} vertical={false} />
-                  <XAxis dataKey="day" tick={{ fill: chartAxis, fontSize: 12, fontWeight: 600 }} axisLine={false} tickLine={false} />
-                  <YAxis domain={[0, 10]} ticks={[0, 2, 4, 6, 8, 10]} tick={{ fill: chartAxis, fontSize: 10 }} axisLine={false} tickLine={false} />
-                  <Tooltip
-                    contentStyle={{ background: chartTooltipBg, border: `1px solid ${chartTooltipBorder}`, borderRadius: 8 }}
-                    formatter={(v: number, _: string, p: any) => [
-                      `${v} avg RPE · ${p.payload.sessions} session${p.payload.sessions !== 1 ? "s" : ""}`,
-                      p.payload.fullDay,
-                    ]}
-                    cursor={{ fill: isDark ? "rgba(255,255,255,0.04)" : "rgba(0,0,0,0.04)" }}
-                  />
-                  <ReferenceLine y={5} stroke="#60a5fa" strokeDasharray="4 3" strokeWidth={1}
-                    label={{ value: "Moderate (5)", position: "insideTopLeft", fill: "#60a5fa", fontSize: 9 }} />
-                  <ReferenceLine y={7} stroke="#fbbf24" strokeDasharray="4 3" strokeWidth={1}
-                    label={{ value: "Hard (7)", position: "insideTopLeft", fill: "#fbbf24", fontSize: 9 }} />
-                  <Bar dataKey="avgRpe" radius={[4, 4, 0, 0]} maxBarSize={56}>
-                    {rpeByDayData.map((d, i) => (
-                      <Cell key={i} fill={d.color} fillOpacity={0.85} />
-                    ))}
-                  </Bar>
-                </BarChart>
-              </ResponsiveContainer>
-            )}
-          </div>
-
-          {/* Coach vs Player RPE */}
-          {coachVsPlayerData.length > 0 && (() => {
-            const totalSessions = coachVsPlayerData.length;
-            const avgGap = parseFloat((coachVsPlayerData.reduce((a, d) => a + d.diff, 0) / totalSessions).toFixed(1));
-            const over = coachVsPlayerData.filter((d) => d.diff > 0.5).length;
-            const under = coachVsPlayerData.filter((d) => d.diff < -0.5).length;
-            const onTarget = totalSessions - over - under;
-            return (
-              <div className="bg-card border border-border rounded-2xl overflow-hidden">
-                <div className="px-5 pt-5 pb-3">
-                  <div className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground mb-0.5">Coach Planned vs Player Actual RPE</div>
-                  <p className="text-[11px] text-muted-foreground">How closely players matched the intensity the coach set · last {totalSessions} sessions with planned RPE.</p>
-                </div>
-                {/* Summary strip */}
-                <div className="grid grid-cols-4 divide-x divide-border border-y border-border">
-                  <div className="px-4 py-3">
-                    <div className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground mb-1">Avg Gap</div>
-                    <div className={cn("text-xl font-bold font-time", avgGap > 0.5 ? "text-amber-400" : avgGap < -0.5 ? "text-indigo-400" : "text-emerald-400")}>
-                      {avgGap > 0 ? "+" : ""}{avgGap}
-                    </div>
-                    <div className="text-[10px] text-muted-foreground mt-0.5">
-                      {avgGap > 0.5 ? "players push harder" : avgGap < -0.5 ? "players under-exert" : "on target overall"}
-                    </div>
-                  </div>
-                  <div className="px-4 py-3">
-                    <div className="text-[10px] font-semibold uppercase tracking-widest text-amber-400/70 mb-1">Over Planned</div>
-                    <div className="text-xl font-bold font-time text-amber-400">{over}</div>
-                    <div className="text-[10px] text-muted-foreground mt-0.5">{Math.round((over / totalSessions) * 100)}% of sessions</div>
-                  </div>
-                  <div className="px-4 py-3">
-                    <div className="text-[10px] font-semibold uppercase tracking-widest text-emerald-400/70 mb-1">On Target</div>
-                    <div className="text-xl font-bold font-time text-emerald-400">{onTarget}</div>
-                    <div className="text-[10px] text-muted-foreground mt-0.5">{Math.round((onTarget / totalSessions) * 100)}% of sessions</div>
-                  </div>
-                  <div className="px-4 py-3">
-                    <div className="text-[10px] font-semibold uppercase tracking-widest text-indigo-400/70 mb-1">Under Planned</div>
-                    <div className="text-xl font-bold font-time text-indigo-400">{under}</div>
-                    <div className="text-[10px] text-muted-foreground mt-0.5">{Math.round((under / totalSessions) * 100)}% of sessions</div>
-                  </div>
-                </div>
-                {/* Chart */}
-                <div className="p-5 pb-4">
-                  <ResponsiveContainer width="100%" height={240}>
-                    <BarChart data={coachVsPlayerData} margin={{ top: 8, right: 8, bottom: 28, left: 0 }} barCategoryGap="25%" barGap={2}>
-                      <CartesianGrid strokeDasharray="3 3" stroke={chartGrid} vertical={false} />
-                      <XAxis dataKey="label" tick={{ fill: chartAxis, fontSize: 9 }} angle={-35} textAnchor="end" interval={0} tickLine={false} />
-                      <YAxis domain={[0, 10]} ticks={[0, 2, 4, 6, 8, 10]} tick={{ fill: chartAxis, fontSize: 10 }} axisLine={false} tickLine={false} />
-                      <Tooltip
-                        cursor={{ fill: isDark ? "rgba(255,255,255,0.04)" : "rgba(0,0,0,0.04)" }}
-                        content={({ active, payload, label }: any) => {
-                          if (!active || !payload?.length) return null;
-                          const d = payload[0]?.payload;
-                          const diff = d?.diff ?? 0;
-                          return (
-                            <div className="rounded-xl border px-3 py-2.5 text-xs shadow-lg"
-                              style={{ background: chartTooltipBg, borderColor: chartTooltipBorder }}>
-                              <div className="font-semibold text-foreground mb-1.5">{label} · {d?.day}</div>
-                              <div className="space-y-0.5">
-                                <div className="flex items-center justify-between gap-6">
-                                  <span className="text-indigo-400">Planned</span>
-                                  <span className="font-time font-bold text-indigo-400">{d?.plannedRpe}</span>
-                                </div>
-                                <div className="flex items-center justify-between gap-6">
-                                  <span className="text-emerald-400">Actual</span>
-                                  <span className="font-time font-bold text-emerald-400">{d?.actualRpe}</span>
-                                </div>
-                                <div className="flex items-center justify-between gap-6 border-t border-border/50 pt-1 mt-0.5">
-                                  <span className="text-muted-foreground">Gap</span>
-                                  <span className={cn("font-time font-bold", diff > 0.5 ? "text-amber-400" : diff < -0.5 ? "text-blue-400" : "text-emerald-400")}>
-                                    {diff > 0 ? "+" : ""}{diff}
-                                  </span>
-                                </div>
-                                <div className="text-muted-foreground pt-0.5">{d?.playerCount} player{d?.playerCount !== 1 ? "s" : ""} logged</div>
-                              </div>
-                            </div>
-                          );
-                        }}
-                      />
-                      <Bar dataKey="plannedRpe" name="Planned" fill="#818cf8" fillOpacity={0.55} radius={[3, 3, 0, 0]} maxBarSize={22} />
-                      <Bar dataKey="actualRpe" name="Actual" radius={[3, 3, 0, 0]} maxBarSize={22}>
-                        {coachVsPlayerData.map((d, i) => (
-                          <Cell key={i} fill={d.diff > 0.5 ? "#fbbf24" : d.diff < -0.5 ? "#60a5fa" : "#34d399"} fillOpacity={0.85} />
-                        ))}
-                      </Bar>
-                    </BarChart>
-                  </ResponsiveContainer>
-                  <div className="flex flex-wrap gap-4 mt-1">
-                    {([["Planned RPE", "#818cf8", 0.55], ["Over planned", "#fbbf24", 0.85], ["On target", "#34d399", 0.85], ["Under planned", "#60a5fa", 0.85]] as [string, string, number][]).map(([l, c, o]) => (
-                      <div key={l} className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
-                        <div className="w-3 h-3 rounded-sm" style={{ background: c, opacity: o }} />
-                        {l}
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              </div>
-            );
-          })()}
-
-          {/* Top sessions table */}
-          <div className="bg-card border border-border rounded-2xl overflow-hidden">
-            <div className="px-5 pt-5 pb-3 border-b border-border">
-              <div className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground mb-0.5">Highest Load Sessions</div>
-              <p className="text-[11px] text-muted-foreground">Top 10 sessions by total team load.</p>
-            </div>
-            {loadLoading ? (
-              <div className="p-5"><div className="h-[180px] bg-muted rounded-xl animate-pulse" /></div>
-            ) : topSessionsData.length === 0 ? (
-              <div className="p-5"><EmptyState title="No data" description="Log RPE to see high-load sessions." /></div>
-            ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="border-b border-border text-xs text-muted-foreground">
-                      <th className="px-4 py-2.5 text-left font-medium">Date</th>
-                      <th className="px-4 py-2.5 text-left font-medium">Type</th>
-                      <th className="px-4 py-2.5 text-right font-medium">Players</th>
-                      <th className="px-4 py-2.5 text-right font-medium">Avg RPE</th>
-                      <th className="px-4 py-2.5 text-right font-medium">Total Load (AU)</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {topSessionsData.map((s) => {
-                      const cfgMap: Record<string, { text: string; bg: string }> = {
-                        Training: { text: "text-indigo-400", bg: "bg-indigo-500/15" },
-                        Match:    { text: "text-amber-400",  bg: "bg-amber-500/15"  },
-                        Gym:      { text: "text-emerald-400",bg: "bg-emerald-500/15"},
-                        Recovery: { text: "text-slate-400",  bg: "bg-slate-500/15"  },
-                      };
-                      const cfg = cfgMap[s.sessionType] ?? cfgMap.Training;
-                      const dateStr = s.date
-                        ? new Date(s.date + "T00:00:00").toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })
-                        : "—";
-                      return (
-                        <tr key={s.sessionId} className="border-b border-border/50 hover:bg-muted/20">
-                          <td className="px-4 py-2.5 text-xs text-muted-foreground font-time">{dateStr}</td>
-                          <td className="px-4 py-2.5">
-                            <span className={cn("inline-flex items-center px-2 py-0.5 rounded text-xs font-medium", cfg.bg, cfg.text)}>
-                              {s.sessionType}
-                            </span>
-                          </td>
-                          <td className="px-4 py-2.5 text-right font-time text-foreground">{s.playerCount}</td>
-                          <td className="px-4 py-2.5 text-right font-time text-foreground">{s.avgRpe}</td>
-                          <td className="px-4 py-2.5 text-right font-bold font-time text-indigo-400">{s.totalLoad}</td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
             )}
           </div>
 
