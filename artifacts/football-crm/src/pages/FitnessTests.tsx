@@ -3,7 +3,7 @@ import Papa from "papaparse";
 import { fetchSessions, createSession, fetchPlayers, bulkInsertResults, fetchResultsBySessionWithPlayers, updateResult, deleteResult, insertResult, createPlayer } from "@/lib/queries";
 import { TableSkeleton } from "@/components/Skeleton";
 import { EmptyState } from "@/components/EmptyState";
-import { formatBroncho } from "@/lib/utils";
+import { formatBronco } from "@/lib/utils";
 import { cn } from "@/lib/utils";
 import type { TestSession, Player, TestResult } from "@/lib/types";
 import { Dumbbell, Plus, CheckCircle2, AlertCircle, ChevronRight, Pencil, Trash2 } from "lucide-react";
@@ -147,7 +147,7 @@ function InlineEditForm({
   return (
     <div className="mt-2.5 pt-2.5 border-t border-border/50 space-y-2">
       <div className="grid grid-cols-2 gap-2">
-        {inp("Broncho (mins)", "bronco_mins", "e.g. 6.25")}
+        {inp("Bronco (mins)", "bronco_mins", "e.g. 6.25")}
         {inp("MAS (m/s)", "mas_ms", "e.g. 14.5")}
       </div>
       <div className="grid grid-cols-3 gap-2">
@@ -650,9 +650,9 @@ function SessionDetail({
         {[
           { label: "Tested",   value: testedParticipants.length,  sub: "with bronco score" },
           { label: "Absent",   value: absentees.length,            sub: "no result recorded" },
-          { label: "Best",     value: formatBroncho(best?.bronco_mins ?? null),  sub: best?.players.name ?? "—" },
-          { label: "Slowest",  value: formatBroncho(worst?.bronco_mins ?? null), sub: worst?.players.name ?? "—" },
-          { label: "Avg",      value: formatBroncho(avg),          sub: "team average" },
+          { label: "Best",     value: formatBronco(best?.bronco_mins ?? null),  sub: best?.players.name ?? "—" },
+          { label: "Slowest",  value: formatBronco(worst?.bronco_mins ?? null), sub: worst?.players.name ?? "—" },
+          { label: "Avg",      value: formatBronco(avg),          sub: "team average" },
         ].map(({ label, value, sub }) => (
           <div key={label} className="py-4 px-5">
             <div className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground mb-1.5">{label}</div>
@@ -745,7 +745,7 @@ function SessionDetail({
                         "text-2xl font-bold font-time leading-none mb-1.5",
                         isFirst ? "text-emerald-400" : isLast ? "text-red-400" : "text-foreground"
                       )}>
-                        {formatBroncho(r.bronco_mins)}
+                        {formatBronco(r.bronco_mins)}
                       </div>
                       <div className="h-1 rounded-full bg-muted overflow-hidden">
                         <div
@@ -757,7 +757,7 @@ function SessionDetail({
                       </div>
                     </div>
                   ) : (
-                    <div className="text-xs text-muted-foreground italic">No broncho time</div>
+                    <div className="text-xs text-muted-foreground italic">No bronco time</div>
                   )}
 
                   {/* Sprint times */}
@@ -999,7 +999,7 @@ export default function FitnessTests() {
             </div>
             <div>
               <label className="block text-xs text-muted-foreground mb-1">Test Type <span className="text-muted-foreground/50">(optional)</span></label>
-              <input value={newType} onChange={(e) => setNewType(e.target.value)} placeholder="e.g. Broncho, Sprint, Agility"
+              <input value={newType} onChange={(e) => setNewType(e.target.value)} placeholder="e.g. Bronco, Sprint, Agility"
                 className="w-full bg-muted border border-border rounded px-3 py-1.5 text-sm text-foreground" data-testid="input-session-type" />
               <p className="text-[11px] text-muted-foreground mt-1">Sessions of the same type will be compared together in Analytics.</p>
             </div>
@@ -1054,7 +1054,7 @@ export default function FitnessTests() {
                 <div key={i} className="grid grid-cols-3 gap-2">
                   <input value={row.code} onChange={(e) => { const rs = [...manualRows]; rs[i] = { ...rs[i], code: e.target.value }; setManualRows(rs); }} placeholder="Code" className="bg-muted border border-border rounded px-2 py-1.5 text-sm text-foreground" />
                   <input value={row.name} onChange={(e) => { const rs = [...manualRows]; rs[i] = { ...rs[i], name: e.target.value }; setManualRows(rs); }} placeholder="Name" className="bg-muted border border-border rounded px-2 py-1.5 text-sm text-foreground" />
-                  <input value={row.bronco_mins ?? ""} onChange={(e) => { const rs = [...manualRows]; rs[i] = { ...rs[i], bronco_mins: parseFloat(e.target.value) || undefined }; setManualRows(rs); }} placeholder="Broncho (mins)" type="number" step="0.01" className="bg-muted border border-border rounded px-2 py-1.5 text-sm text-foreground" />
+                  <input value={row.bronco_mins ?? ""} onChange={(e) => { const rs = [...manualRows]; rs[i] = { ...rs[i], bronco_mins: parseFloat(e.target.value) || undefined }; setManualRows(rs); }} placeholder="Bronco (mins)" type="number" step="0.01" className="bg-muted border border-border rounded px-2 py-1.5 text-sm text-foreground" />
                 </div>
               ))}
               <button onClick={() => setManualRows([...manualRows, { code: "", name: "" }])} className="text-xs text-primary hover:underline" data-testid="button-add-row">+ Add row</button>
@@ -1092,7 +1092,7 @@ export default function FitnessTests() {
                   <th className="px-3 py-2 text-left font-medium">Code</th>
                   <th className="px-3 py-2 text-left font-medium">Name</th>
                   <th className="px-3 py-2 text-left font-medium">Matched Player</th>
-                  <th className="px-3 py-2 text-right font-medium">Broncho</th>
+                  <th className="px-3 py-2 text-right font-medium">Bronco</th>
                 </tr>
               </thead>
               <tbody>
@@ -1102,7 +1102,7 @@ export default function FitnessTests() {
                     <td className="px-3 py-2 font-time text-xs text-muted-foreground">{m.row.code}</td>
                     <td className="px-3 py-2 text-foreground">{m.row.name}</td>
                     <td className="px-3 py-2 text-foreground">{m.player?.name ?? <span className="text-red-400 text-xs">No match found</span>}</td>
-                    <td className="px-3 py-2 text-right font-time">{formatBroncho(m.row.bronco_mins ?? null)}</td>
+                    <td className="px-3 py-2 text-right font-time">{formatBronco(m.row.bronco_mins ?? null)}</td>
                   </tr>
                 ))}
               </tbody>

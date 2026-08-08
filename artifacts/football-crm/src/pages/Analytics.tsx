@@ -3,8 +3,8 @@ import { useTeam } from "@/context/TeamContext";
 import { TeamSwitcher } from "@/components/TeamSwitcher";
 import { ChartSkeleton } from "@/components/Skeleton";
 import { EmptyState } from "@/components/EmptyState";
-import { formatBroncho } from "@/lib/utils";
-import { getBronchoTier, BRONCHO_TIERS, type Player, type TestResult, type TestSession, type SessionRPE, type TrainingSession } from "@/lib/types";
+import { formatBronco } from "@/lib/utils";
+import { getBroncoTier, BRONCO_TIERS, type Player, type TestResult, type TestSession, type SessionRPE, type TrainingSession } from "@/lib/types";
 import { fetchAllResults, fetchSessions, fetchPlayers, fetchAllRPEWithSessions } from "@/lib/queries";
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
@@ -33,7 +33,7 @@ function BarRow({ name, bronco, maxBronco, color, prefix }: { name: string; bron
       <div className="flex-1 h-1.5 rounded-full bg-muted overflow-hidden">
         <div className="h-full rounded-full transition-all duration-500" style={{ width: `${pct}%`, backgroundColor: color }} />
       </div>
-      <div className="min-w-[38px] text-right text-[11px] font-time text-muted-foreground">{formatBroncho(bronco)}</div>
+      <div className="min-w-[38px] text-right text-[11px] font-time text-muted-foreground">{formatBronco(bronco)}</div>
     </div>
   );
 }
@@ -49,11 +49,11 @@ function MetricCard({ label, value, sub, valueColor }: { label: string; value: s
   );
 }
 
-// ── Benchmark tier strip (broncho-based) ──────────────────────────────────
+// ── Benchmark tier strip (bronco-based) ──────────────────────────────────
 function TierStrip({ players: ps }: { players: { player: Player; bronco: number | null }[] }) {
   return (
     <div className="space-y-1">
-      {BRONCHO_TIERS.map((t) => {
+      {BRONCO_TIERS.map((t) => {
         const inTier = ps.filter((x) => x.bronco !== null && x.bronco >= t.minMins && x.bronco < t.maxMins);
         return (
           <div key={t.label}>
@@ -85,7 +85,7 @@ function TierStrip({ players: ps }: { players: { player: Player; bronco: number 
                     >
                       <div className="text-xs font-medium text-foreground">{player.name}</div>
                       <div className="text-[11px] font-time" style={{ color: t.color }}>
-                        {formatBroncho(bronco)}
+                        {formatBronco(bronco)}
                       </div>
                     </div>
                   </div>
@@ -201,7 +201,7 @@ export default function Analytics() {
     });
   }, [players, teamResults, effectiveSessions]);
 
-  // Benchmark data — broncho-based (lower = better/faster)
+  // Benchmark data — bronco-based (lower = better/faster)
   const benchmarkData = useMemo(() => {
     return playerComparisons
       .map(({ player, latest }) => ({ player, bronco: latest?.bronco_mins ?? null }))
@@ -385,7 +385,7 @@ export default function Analytics() {
       <div className="grid grid-cols-3 sm:grid-cols-6 border border-border rounded-2xl overflow-hidden divide-x divide-border mb-5 bg-card">
         <MetricCard label="Squad" value={players.length} sub="registered" />
         <MetricCard label="Latest test" value={latestResults.length} sub={latestSession?.test_name ?? "—"} />
-        <MetricCard label="Avg broncho" value={formatBroncho(latestAvg)} sub="latest session" />
+        <MetricCard label="Avg bronco" value={formatBronco(latestAvg)} sub="latest session" />
         <MetricCard label="Comparable" value={comparable.length} sub="2+ sessions" />
         <MetricCard label="Improved" value={improved} sub={`of ${comparable.length}`} valueColor="text-emerald-400" />
         <MetricCard label="Declined" value={declined} sub={`of ${comparable.length}`} valueColor="text-red-400" />
@@ -462,7 +462,7 @@ export default function Analytics() {
               {!loading && players.length > 0 && (
                 <>
                   <div className="flex h-3 rounded-full overflow-hidden mb-3">
-                    {BRONCHO_TIERS.map((t) => {
+                    {BRONCO_TIERS.map((t) => {
                       const count = tested.filter((d) => d.bronco! >= t.minMins && d.bronco! < t.maxMins).length;
                       const pct = (count / players.length) * 100;
                       return pct > 0 ? (
@@ -475,7 +475,7 @@ export default function Analytics() {
                     )}
                   </div>
                   <div className="flex flex-wrap gap-x-4 gap-y-1.5">
-                    {BRONCHO_TIERS.map((t) => {
+                    {BRONCO_TIERS.map((t) => {
                       const count = tested.filter((d) => d.bronco! >= t.minMins && d.bronco! < t.maxMins).length;
                       if (!count) return null;
                       return (
@@ -505,7 +505,7 @@ export default function Analytics() {
               {/* Fitness trend */}
               <div className="bg-card border border-border rounded-2xl p-5">
                 <div className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground mb-1">Team fitness trend</div>
-                <p className="text-[11px] text-muted-foreground mb-4">Avg broncho across sessions · lower = faster</p>
+                <p className="text-[11px] text-muted-foreground mb-4">Avg bronco across sessions · lower = faster</p>
                 {loading ? <ChartSkeleton height={200} /> : avgOverTime.length < 2 ? (
                   <div className="h-[200px] flex items-center justify-center text-sm text-muted-foreground">Need 2+ sessions to show trend</div>
                 ) : (
@@ -519,10 +519,10 @@ export default function Analytics() {
                       </defs>
                       <CartesianGrid strokeDasharray="3 3" stroke={chartGrid} />
                       <XAxis dataKey="name" tick={{ fill: chartAxis, fontSize: 10 }} />
-                      <YAxis tickFormatter={(v) => formatBroncho(v)} domain={["auto", "auto"]} tick={{ fill: chartAxis, fontSize: 10 }} width={46} />
+                      <YAxis tickFormatter={(v) => formatBronco(v)} domain={["auto", "auto"]} tick={{ fill: chartAxis, fontSize: 10 }} width={46} />
                       <Tooltip
                         contentStyle={{ background: chartTooltipBg, border: `1px solid ${chartTooltipBorder}`, borderRadius: 8 }}
-                        formatter={(v: number) => [formatBroncho(v), "Team avg"]}
+                        formatter={(v: number) => [formatBronco(v), "Team avg"]}
                       />
                       <Area type="monotone" dataKey="avg" stroke="#6366f1" strokeWidth={2} fill="url(#trendGrad)" dot={{ fill: "#6366f1", r: 3 }} activeDot={{ r: 5 }} />
                     </AreaChart>
@@ -543,7 +543,7 @@ export default function Analytics() {
                         <div key={player.id} className="flex items-center gap-2.5">
                           <PosBadge pos={player.primary_position} />
                           <span className="text-sm text-foreground flex-1 truncate">{player.name}</span>
-                          <span className="text-[11px] font-time text-muted-foreground">{formatBroncho(first!.bronco_mins)} → {formatBroncho(latest!.bronco_mins)}</span>
+                          <span className="text-[11px] font-time text-muted-foreground">{formatBronco(first!.bronco_mins)} → {formatBronco(latest!.bronco_mins)}</span>
                           <ChangeBadge diffSecs={diffSecs} />
                         </div>
                       ))}
@@ -564,7 +564,7 @@ export default function Analytics() {
                         <div key={player.id} className="flex items-center gap-2.5">
                           <PosBadge pos={player.primary_position} />
                           <span className="text-sm text-foreground flex-1 truncate">{player.name}</span>
-                          <span className="text-[11px] font-time text-muted-foreground">{formatBroncho(first!.bronco_mins)} → {formatBroncho(latest!.bronco_mins)}</span>
+                          <span className="text-[11px] font-time text-muted-foreground">{formatBronco(first!.bronco_mins)} → {formatBronco(latest!.bronco_mins)}</span>
                           <ChangeBadge diffSecs={diffSecs} />
                         </div>
                       ))}
@@ -586,7 +586,7 @@ export default function Analytics() {
             <div className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground mb-1">Tier distribution — {team} squad</div>
             <p className="text-[11px] text-muted-foreground mb-4">Female athlete benchmarks · lower time = better</p>
             {loading ? <ChartSkeleton /> : benchmarkData.length === 0 ? (
-              <EmptyState title="No broncho data yet" description="Record fitness test sessions to see tier distribution" />
+              <EmptyState title="No bronco data yet" description="Record fitness test sessions to see tier distribution" />
             ) : (
               <TierStrip players={benchmarkData} />
             )}
@@ -600,7 +600,7 @@ export default function Analytics() {
         <div className="space-y-4">
           {/* Position avg chart */}
           <div className="bg-card border border-border rounded-2xl p-5">
-            <div className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground mb-4">Avg broncho by position (latest session)</div>
+            <div className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground mb-4">Avg bronco by position (latest session)</div>
             {loading ? <ChartSkeleton height={200} /> : (() => {
               const data = positions.map((pos) => {
                 const prs = latestResults.filter((r) => r.players?.primary_position === pos && r.bronco_mins !== null);
@@ -613,8 +613,8 @@ export default function Analytics() {
                   <BarChart data={data} margin={{ top: 4, right: 8, bottom: 4, left: 0 }}>
                     <CartesianGrid strokeDasharray="3 3" stroke={chartGrid} />
                     <XAxis dataKey="pos" tick={{ fill: chartAxis, fontSize: 11 }} />
-                    <YAxis tickFormatter={(v) => formatBroncho(v)} domain={["auto", "auto"]} tick={{ fill: chartAxis, fontSize: 11 }} />
-                    <Tooltip contentStyle={{ background: chartTooltipBg, border: `1px solid ${chartTooltipBorder}`, borderRadius: 8 }} formatter={(v: number) => [formatBroncho(v), "Avg Broncho"]} />
+                    <YAxis tickFormatter={(v) => formatBronco(v)} domain={["auto", "auto"]} tick={{ fill: chartAxis, fontSize: 11 }} />
+                    <Tooltip contentStyle={{ background: chartTooltipBg, border: `1px solid ${chartTooltipBorder}`, borderRadius: 8 }} formatter={(v: number) => [formatBronco(v), "Avg Bronco"]} />
                     <Bar dataKey="avg" radius={[3, 3, 0, 0]} minPointSize={2}>
                       {data.map((d, i) => <Cell key={i} fill={d.color} />)}
                     </Bar>
@@ -643,7 +643,7 @@ export default function Analytics() {
                   <div className="grid grid-cols-2 gap-3 mb-4 text-center">
                     <div>
                       <div className="text-[10px] text-muted-foreground uppercase tracking-widest mb-1">Avg Latest</div>
-                      <div className="text-xl font-bold font-time" style={{ color: cfg.color }}>{avgLatest ? formatBroncho(avgLatest) : "—"}</div>
+                      <div className="text-xl font-bold font-time" style={{ color: cfg.color }}>{avgLatest ? formatBronco(avgLatest) : "—"}</div>
                     </div>
                     <div>
                       <div className="text-[10px] text-muted-foreground uppercase tracking-widest mb-1">Tested</div>
@@ -675,7 +675,7 @@ export default function Analytics() {
       {tab === "age" && (
         <div className="space-y-4">
           <div className="bg-card border border-border rounded-2xl p-5">
-            <div className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground mb-4">Avg broncho by age group (latest session)</div>
+            <div className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground mb-4">Avg bronco by age group (latest session)</div>
             {loading ? <ChartSkeleton height={200} /> : (() => {
               const AGE_COLORS: Record<string, string> = { "U18": "#f87171", "18-24": "#60a5fa", "25+": "#34d399" };
               const data = ageRanges.map((r) => {
@@ -689,8 +689,8 @@ export default function Analytics() {
                   <BarChart data={data} margin={{ top: 4, right: 8, bottom: 4, left: 0 }}>
                     <CartesianGrid strokeDasharray="3 3" stroke={chartGrid} />
                     <XAxis dataKey="range" tick={{ fill: chartAxis, fontSize: 11 }} />
-                    <YAxis tickFormatter={(v) => formatBroncho(v)} domain={["auto", "auto"]} tick={{ fill: chartAxis, fontSize: 11 }} />
-                    <Tooltip contentStyle={{ background: chartTooltipBg, border: `1px solid ${chartTooltipBorder}`, borderRadius: 8 }} formatter={(v: number) => [formatBroncho(v), "Avg Broncho"]} />
+                    <YAxis tickFormatter={(v) => formatBronco(v)} domain={["auto", "auto"]} tick={{ fill: chartAxis, fontSize: 11 }} />
+                    <Tooltip contentStyle={{ background: chartTooltipBg, border: `1px solid ${chartTooltipBorder}`, borderRadius: 8 }} formatter={(v: number) => [formatBronco(v), "Avg Bronco"]} />
                     <Bar dataKey="avg" radius={[3, 3, 0, 0]} minPointSize={2}>
                       {data.map((d, i) => <Cell key={i} fill={d.color} />)}
                     </Bar>
@@ -721,7 +721,7 @@ export default function Analytics() {
                   <div className="grid grid-cols-3 gap-2 mb-4 text-center">
                     <div>
                       <div className="text-[10px] text-muted-foreground uppercase tracking-widest mb-1">Avg</div>
-                      <div className="text-lg font-bold font-time" style={{ color }}>{avgLatest ? formatBroncho(avgLatest) : "—"}</div>
+                      <div className="text-lg font-bold font-time" style={{ color }}>{avgLatest ? formatBronco(avgLatest) : "—"}</div>
                     </div>
                     <div>
                       <div className="text-[10px] text-muted-foreground uppercase tracking-widest mb-1">Tested</div>
@@ -810,8 +810,8 @@ export default function Analytics() {
                       y: d.bronco!,
                       name: d.player.name,
                       initials: d.player.name.split(" ").map((w) => w[0]).join("").slice(0, 2).toUpperCase(),
-                      tier: getBronchoTier(d.bronco!),
-                      color: getBronchoTier(d.bronco!).color,
+                      tier: getBroncoTier(d.bronco!),
+                      color: getBroncoTier(d.bronco!).color,
                       diffSecs: playerComparisons.find((x) => x.player.id === d.player.id)?.diffSecs ?? null,
                       percentile: d.percentile,
                     };
@@ -829,7 +829,7 @@ export default function Analytics() {
                         y: d.bronco!,
                         name: d.player.name,
                         initials: d.player.name.split(" ").map((w) => w[0]).join("").slice(0, 2).toUpperCase(),
-                        tier: getBronchoTier(d.bronco!),
+                        tier: getBroncoTier(d.bronco!),
                         color: GROUP_COLORS[g] ?? "#818cf8",
                         diffSecs: playerComparisons.find((x) => x.player.id === d.player.id)?.diffSecs ?? null,
                         percentile: d.percentile,
@@ -875,7 +875,7 @@ export default function Analytics() {
                     style={{ background: chartTooltipBg, borderColor: chartTooltipBorder }}>
                     <div className="font-semibold text-foreground mb-1">{d.name}</div>
                     <div style={{ color: d.tier.color }} className="font-medium">{d.tier.label}</div>
-                    <div className="text-muted-foreground mt-1 font-time">{formatBroncho(d.y)} · {d.percentile}th pct</div>
+                    <div className="text-muted-foreground mt-1 font-time">{formatBronco(d.y)} · {d.percentile}th pct</div>
                     {d.diffSecs !== null && (
                       <div className={cn("mt-0.5 font-time", d.diffSecs > 3 ? "text-emerald-400" : d.diffSecs < -3 ? "text-red-400" : "text-amber-400")}>
                         {d.diffSecs > 3 ? `− ${d.diffSecs}s` : d.diffSecs < -3 ? `+ ${Math.abs(d.diffSecs)}s` : "— unchanged"}
@@ -888,7 +888,7 @@ export default function Analytics() {
               return (
                 <div className="bg-card border border-border rounded-2xl p-5">
                   <div className="flex items-center justify-between mb-1">
-                    <div className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">Player broncho distribution</div>
+                    <div className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">Player bronco distribution</div>
                     <div className="flex gap-1">
                       {(["all", "position", "age"] as const).map((g) => (
                         <button key={g} onClick={() => setRankGroup(g)}
@@ -904,7 +904,7 @@ export default function Analytics() {
                   </div>
                   <p className="text-[11px] text-muted-foreground mb-4">Each circle is a player · lower = faster · hover for details</p>
                   {loading ? <ChartSkeleton height={320} /> : scatterData.length === 0 ? (
-                    <EmptyState title="No broncho data yet" description="Record fitness test sessions first" />
+                    <EmptyState title="No bronco data yet" description="Record fitness test sessions first" />
                   ) : (
                     <>
                       <ResponsiveContainer width="100%" height={320}>
@@ -924,7 +924,7 @@ export default function Analytics() {
                             type="number"
                             dataKey="y"
                             domain={[yMin - yPad, yMax + yPad]}
-                            tickFormatter={(v) => formatBroncho(v)}
+                            tickFormatter={(v) => formatBronco(v)}
                             tick={{ fill: chartAxis, fontSize: 10 }}
                             width={46}
                             tickCount={10}
@@ -937,7 +937,7 @@ export default function Analytics() {
                               stroke="#a78bfa"
                               strokeDasharray="4 3"
                               strokeWidth={1.5}
-                              label={{ value: `Q1 ${formatBroncho(yQ1)}`, position: "insideTopRight", fill: "#a78bfa", fontSize: 9, fontWeight: 600 }}
+                              label={{ value: `Q1 ${formatBronco(yQ1)}`, position: "insideTopRight", fill: "#a78bfa", fontSize: 9, fontWeight: 600 }}
                             />
                           )}
                           {yQ3 !== null && (
@@ -946,7 +946,7 @@ export default function Analytics() {
                               stroke="#a78bfa"
                               strokeDasharray="4 3"
                               strokeWidth={1.5}
-                              label={{ value: `Q3 ${formatBroncho(yQ3)}`, position: "insideTopRight", fill: "#a78bfa", fontSize: 9, fontWeight: 600 }}
+                              label={{ value: `Q3 ${formatBronco(yQ3)}`, position: "insideTopRight", fill: "#a78bfa", fontSize: 9, fontWeight: 600 }}
                             />
                           )}
                           {yAvg !== null && (
@@ -955,7 +955,7 @@ export default function Analytics() {
                               stroke="#fbbf24"
                               strokeDasharray="5 3"
                               strokeWidth={1.5}
-                              label={{ value: `Avg ${formatBroncho(yAvg)}`, position: "insideTopRight", fill: "#fbbf24", fontSize: 9, fontWeight: 600 }}
+                              label={{ value: `Avg ${formatBronco(yAvg)}`, position: "insideTopRight", fill: "#fbbf24", fontSize: 9, fontWeight: 600 }}
                             />
                           )}
                           <Scatter data={scatterData} shape={<CustomDot />} isAnimationActive={false} />
@@ -964,7 +964,7 @@ export default function Analytics() {
                       {/* Legend */}
                       <div className="flex flex-wrap gap-3 mt-3 px-1">
                         {rankGroup === "all"
-                          ? BRONCHO_TIERS.map((t) => (
+                          ? BRONCO_TIERS.map((t) => (
                               <div key={t.label} className="flex items-center gap-1.5 text-xs text-muted-foreground">
                                 <div className="w-2.5 h-2.5 rounded-full" style={{ background: t.color }} />
                                 {t.label}
@@ -983,13 +983,13 @@ export default function Analytics() {
                         {yQ1 !== null && yQ3 !== null && (
                           <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
                             <div className="w-4 h-[2px] rounded-full bg-violet-400" />
-                            Q1 {formatBroncho(yQ1)} · Q3 {formatBroncho(yQ3)}
+                            Q1 {formatBronco(yQ1)} · Q3 {formatBronco(yQ3)}
                           </div>
                         )}
                         {yAvg !== null && (
                           <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
                             <div className="w-4 h-[2px] rounded-full bg-amber-400" />
-                            Avg {formatBroncho(yAvg)}
+                            Avg {formatBronco(yAvg)}
                           </div>
                         )}
                       </div>
@@ -1030,7 +1030,7 @@ export default function Analytics() {
                         >
                           <PosBadge pos={player.primary_position} />
                           <span>{player.name}</span>
-                          <span className="font-time opacity-75">{formatBroncho(latest!.bronco_mins)}</span>
+                          <span className="font-time opacity-75">{formatBronco(latest!.bronco_mins)}</span>
                         </button>
                       );
                     })}
@@ -1045,7 +1045,7 @@ export default function Analytics() {
                 <div className="grid gap-4" style={{ gridTemplateColumns: `repeat(${selected.length}, minmax(0, 1fr))` }}>
                   {selected.map((pc, i) => {
                     const color = COMPARE_COLORS[i];
-                    const tier = pc.latest ? getBronchoTier(pc.latest.bronco_mins) : null;
+                    const tier = pc.latest ? getBroncoTier(pc.latest.bronco_mins) : null;
                     const rankedEntry = ranked.find((r) => r.player.id === pc.player.id);
                     return (
                       <div key={pc.player.id} className="bg-card border border-border rounded-2xl p-5" style={{ borderTopColor: color, borderTopWidth: 3 }}>
@@ -1060,7 +1060,7 @@ export default function Analytics() {
                         <div className="space-y-3">
                           <div>
                             <div className="text-[10px] text-muted-foreground uppercase tracking-widest mb-0.5">Latest</div>
-                            <div className="text-xl font-bold font-time" style={{ color }}>{pc.latest ? formatBroncho(pc.latest.bronco_mins) : "—"}</div>
+                            <div className="text-xl font-bold font-time" style={{ color }}>{pc.latest ? formatBronco(pc.latest.bronco_mins) : "—"}</div>
                           </div>
                           <div>
                             <div className="text-[10px] text-muted-foreground uppercase tracking-widest mb-0.5">Tier</div>
@@ -1072,7 +1072,7 @@ export default function Analytics() {
                           </div>
                           <div>
                             <div className="text-[10px] text-muted-foreground uppercase tracking-widest mb-0.5">First</div>
-                            <div className="text-sm font-time text-muted-foreground">{pc.first ? formatBroncho(pc.first.bronco_mins) : "—"}</div>
+                            <div className="text-sm font-time text-muted-foreground">{pc.first ? formatBronco(pc.first.bronco_mins) : "—"}</div>
                           </div>
                           <div>
                             <div className="text-[10px] text-muted-foreground uppercase tracking-widest mb-0.5">Change</div>
@@ -1091,7 +1091,7 @@ export default function Analytics() {
                 {/* Progress over sessions chart */}
                 {compareChartData.length >= 1 && (
                   <div className="bg-card border border-border rounded-2xl p-5">
-                    <div className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground mb-1">Broncho over time</div>
+                    <div className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground mb-1">Bronco over time</div>
                     <div className="flex flex-wrap gap-4 mb-4 mt-2">
                       {selected.map((pc, i) => (
                         <div key={pc.player.id} className="flex items-center gap-1.5 text-xs text-muted-foreground">
@@ -1104,12 +1104,12 @@ export default function Analytics() {
                       <BarChart data={compareChartData} margin={{ top: 4, right: 16, bottom: 40, left: 0 }}>
                         <CartesianGrid strokeDasharray="3 3" stroke={chartGrid} />
                         <XAxis dataKey="session" tick={{ fill: chartAxis, fontSize: 10 }} angle={-35} textAnchor="end" interval={0} />
-                        <YAxis tickFormatter={(v) => formatBroncho(v)} domain={["auto", "auto"]} tick={{ fill: chartAxis, fontSize: 10 }} />
+                        <YAxis tickFormatter={(v) => formatBronco(v)} domain={["auto", "auto"]} tick={{ fill: chartAxis, fontSize: 10 }} />
                         <Tooltip
                           contentStyle={{ background: chartTooltipBg, border: `1px solid ${chartTooltipBorder}`, borderRadius: 8 }}
                           formatter={(v: number, key: string) => {
                             const pc = selected.find((x) => x.player.id === key);
-                            return [formatBroncho(v), pc?.player.name ?? key];
+                            return [formatBronco(v), pc?.player.name ?? key];
                           }}
                         />
                         {selected.map((pc, i) => (
@@ -1165,17 +1165,17 @@ export default function Analytics() {
                 <div className="grid grid-cols-3 divide-x divide-border border-t border-border">
                   <div className="px-5 py-4">
                     <div className="text-[10px] font-semibold uppercase tracking-widest mb-1" style={{ color: "#34d399" }}>Q1 · Top boundary</div>
-                    <div className="text-2xl font-bold font-time text-foreground">{formatBroncho(q1)}</div>
+                    <div className="text-2xl font-bold font-time text-foreground">{formatBronco(q1)}</div>
                     <div className="text-[11px] text-muted-foreground mt-0.5">Beat this → Top 25%</div>
                   </div>
                   <div className="px-5 py-4">
                     <div className="text-[10px] font-semibold uppercase tracking-widest mb-1" style={{ color: "#60a5fa" }}>Median · Mid boundary</div>
-                    <div className="text-2xl font-bold font-time text-foreground">{formatBroncho(q2!)}</div>
+                    <div className="text-2xl font-bold font-time text-foreground">{formatBronco(q2!)}</div>
                     <div className="text-[11px] text-muted-foreground mt-0.5">Beat this → Upper Mid</div>
                   </div>
                   <div className="px-5 py-4">
                     <div className="text-[10px] font-semibold uppercase tracking-widest mb-1" style={{ color: "#fbbf24" }}>Q3 · Lower boundary</div>
-                    <div className="text-2xl font-bold font-time text-foreground">{formatBroncho(q3!)}</div>
+                    <div className="text-2xl font-bold font-time text-foreground">{formatBronco(q3!)}</div>
                     <div className="text-[11px] text-muted-foreground mt-0.5">Beat this → Lower Mid</div>
                   </div>
                 </div>
@@ -1210,7 +1210,7 @@ export default function Analytics() {
                                 style={{ backgroundColor: band.color + "18", border: `1px solid ${band.color}30` }}>
                                 <PosBadge pos={player.primary_position} />
                                 <span className="text-xs text-foreground font-medium">{player.name}</span>
-                                <span className="text-[11px] font-time text-muted-foreground">{formatBroncho(bronco)}</span>
+                                <span className="text-[11px] font-time text-muted-foreground">{formatBronco(bronco)}</span>
                               </div>
                             ))}
                           </div>

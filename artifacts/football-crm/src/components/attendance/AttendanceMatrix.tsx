@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "wouter";
-import type { DateRange } from "react-day-picker";
-import { ArrowUpDown, CalendarDays, CalendarRange, ChevronLeft, ChevronRight, Download, RefreshCw, X } from "lucide-react";
+import { ArrowUpDown, CalendarRange, ChevronLeft, ChevronRight, Download, RefreshCw } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useTheme } from "@/context/ThemeContext";
 import { useToast } from "@/hooks/use-toast";
@@ -17,6 +16,7 @@ import {
   formatMonthLabel,
 } from "@/lib/attendance";
 import { formatDateRange } from "@/lib/tournaments";
+import { DateRangePicker } from "@/components/DateRangePicker";
 import type { AttendanceStatus, Player, TrainingSession } from "@/lib/types";
 import {
   DropdownMenu,
@@ -24,8 +24,6 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Calendar } from "@/components/ui/calendar";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 
 type SortMode = "name" | "pct";
 
@@ -38,16 +36,6 @@ type Scope =
   | { kind: "all" }
   | { kind: "range"; from: string; to: string }; // ISO dates, inclusive
 
-/** Local-time YYYY-MM-DD — toISOString() would shift across the date line. */
-function isoOf(d: Date): string {
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-}
-
-const RANGE_PRESETS: { label: string; days: number }[] = [
-  { label: "Last 7 days", days: 7 },
-  { label: "Last 30 days", days: 30 },
-  { label: "Last 90 days", days: 90 },
-];
 /** playerId → sessionId → status */
 type Grid = Record<string, Record<string, AttendanceStatus>>;
 
@@ -75,8 +63,6 @@ export function AttendanceMatrix({ sessions, players, refreshKey, onJumpToSessio
   const [sortMode, setSortMode] = useState<SortMode>("name");
   const [grid, setGrid] = useState<Grid>({});
   const [loading, setLoading] = useState(true);
-  const [rangeOpen, setRangeOpen] = useState(false);
-  const [draftRange, setDraftRange] = useState<DateRange | undefined>();
 
   // Months that actually have sessions, oldest → newest
   const availableMonths = useMemo(
@@ -219,18 +205,6 @@ export function AttendanceMatrix({ sessions, players, refreshKey, onJumpToSessio
     [sessions],
   );
 
-  const applyRange = (from: Date, to: Date) => {
-    setScope({ kind: "range", from: isoOf(from), to: isoOf(to) });
-    setRangeOpen(false);
-  };
-
-  const applyPreset = (days: number) => {
-    const to = new Date();
-    const from = new Date(to.getTime() - (days - 1) * 86400000);
-    setDraftRange({ from, to });
-    applyRange(from, to);
-  };
-
   return (
     <div className="space-y-3">
       {/* ── Scope controls ──────────────────────────────────────────────────── */}
@@ -276,85 +250,17 @@ export function AttendanceMatrix({ sessions, players, refreshKey, onJumpToSessio
         </button>
 
         {/* Custom date range */}
-        <Popover open={rangeOpen} onOpenChange={setRangeOpen}>
-          <PopoverTrigger asChild>
-            <button
-              className={cn(
-                "flex items-center gap-1.5 px-2.5 h-8 rounded-lg text-xs font-medium border transition-colors",
-                scope.kind === "range"
-                  ? "bg-indigo-500/15 text-indigo-400 border-indigo-500/30"
-                  : isDark ? "border-white/10 text-muted-foreground hover:bg-white/5" : "border-slate-200 text-slate-500 hover:bg-slate-50",
-              )}
-              data-testid="button-date-range"
-            >
-              <CalendarDays size={12} /> Date range
-            </button>
-          </PopoverTrigger>
-          <PopoverContent align="start" className="w-auto p-0">
-            <div className="flex flex-wrap gap-1.5 p-3 border-b border-border">
-              {RANGE_PRESETS.map((p) => (
-                <button
-                  key={p.days}
-                  onClick={() => applyPreset(p.days)}
-                  className={cn(
-                    "px-2 py-1 rounded-lg text-[11px] font-medium border transition-colors",
-                    isDark ? "border-white/10 text-muted-foreground hover:bg-white/5" : "border-slate-200 text-slate-500 hover:bg-slate-50",
-                  )}
-                >
-                  {p.label}
-                </button>
-              ))}
-            </div>
-
-            {/* Selection only drafts — DayPicker fills both ends on the first
-                click, so auto-applying would make multi-day ranges unpickable. */}
-            <Calendar
-              mode="range"
-              numberOfMonths={1}
-              selected={draftRange}
-              onSelect={setDraftRange}
-              defaultMonth={
-                scope.kind === "range"
-                  ? new Date(scope.from + "T00:00:00")
-                  : sessionDays[0] ?? new Date()
-              }
-              modifiers={{ hasSession: sessionDays }}
-              modifiersClassNames={{ hasSession: "font-bold underline decoration-indigo-500 decoration-2 underline-offset-4" }}
-            />
-
-            <div className="flex items-center justify-between gap-2 p-3 border-t border-border">
-              <span className="text-[11px] text-muted-foreground">
-                {draftRange?.from
-                  ? formatDateRange(isoOf(draftRange.from), isoOf(draftRange.to ?? draftRange.from))
-                  : "Underlined days have sessions"}
-              </span>
-              <div className="flex items-center gap-2 shrink-0">
-                {scope.kind === "range" && (
-                  <button
-                    onClick={() => {
-                      setDraftRange(undefined);
-                      setScope({ kind: "month", month: availableMonths[availableMonths.length - 1] ?? currentMonthKey() });
-                      setRangeOpen(false);
-                    }}
-                    className="flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground transition-colors"
-                  >
-                    <X size={11} /> Clear
-                  </button>
-                )}
-                <button
-                  onClick={() => {
-                    if (draftRange?.from) applyRange(draftRange.from, draftRange.to ?? draftRange.from);
-                  }}
-                  disabled={!draftRange?.from}
-                  className="px-2.5 py-1 rounded-lg text-[11px] font-semibold bg-indigo-600 text-white hover:bg-indigo-500 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-                  data-testid="button-apply-range"
-                >
-                  Apply
-                </button>
-              </div>
-            </div>
-          </PopoverContent>
-        </Popover>
+        <DateRangePicker
+          value={scope.kind === "range" ? { from: scope.from, to: scope.to } : null}
+          onChange={(r) =>
+            setScope(
+              r
+                ? { kind: "range", from: r.from, to: r.to }
+                : { kind: "month", month: availableMonths[availableMonths.length - 1] ?? currentMonthKey() },
+            )
+          }
+          highlightDates={sessionDays}
+        />
 
         <button
           onClick={() => setSortMode((m) => (m === "name" ? "pct" : "name"))}

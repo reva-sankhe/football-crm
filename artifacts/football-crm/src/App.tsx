@@ -16,11 +16,24 @@ import SessionDetail from "@/pages/SessionDetail";
 import Attendance from "@/pages/Attendance";
 import TournamentDetail from "@/pages/TournamentDetail";
 import MatchDetail from "@/pages/MatchDetail";
+import PlayerReports from "@/pages/PlayerReports";
 import NotFound from "@/pages/not-found";
 
 const queryClient = new QueryClient();
 
 function Router() {
+  return (
+    <Switch>
+      {/* Print report renders outside the app chrome — no sidebar, no nav */}
+      <Route path="/reports/players" component={PlayerReports} />
+      <Route>
+        <AppShell />
+      </Route>
+    </Switch>
+  );
+}
+
+function AppShell() {
   return (
     <Layout>
       <Switch>

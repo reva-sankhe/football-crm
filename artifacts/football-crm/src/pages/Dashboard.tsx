@@ -6,7 +6,7 @@ import {
   fetchLatestSessionResults, fetchPlayers, fetchAllRPEWithSessions,
   fetchAllAttendanceStats, fetchAllResults, fetchTrainingSessions,
 } from "@/lib/queries";
-import { cn, formatBroncho } from "@/lib/utils";
+import { cn, formatBronco } from "@/lib/utils";
 import {
   type Player, type TestResult, type TestSession,
   type TrainingSession, type SessionRPE, type SessionAttendance,
@@ -76,8 +76,8 @@ const CAT_CFG: Record<AlertCategory, { label: string; description: string; color
   },
   fitness: {
     label: "Fitness & Testing",
-    description: "Players with a notable broncho time decline since their last test, or who haven't been tested in 60+ days. Without regular testing you can't track fitness trends, spot fatigue-related decline early, or make informed decisions about match minutes.",
-    metricNote: "Broncho test recommended every 4–8 weeks",
+    description: "Players with a notable bronco time decline since their last test, or who haven't been tested in 60+ days. Without regular testing you can't track fitness trends, spot fatigue-related decline early, or make informed decisions about match minutes.",
+    metricNote: "Bronco test recommended every 4–8 weeks",
     color: "#60a5fa",
     dimBg: "bg-blue-400/[0.04]",
   },
@@ -250,8 +250,8 @@ export default function Dashboard() {
         const dec = Math.round((latest.bronco_mins - prev.bronco_mins) * 60);
         if (dec >= 15) {
           items.push({ id: `fitdec-${pid}`, severity: "warning", category: "fitness", player,
-            headline: `Broncho time declined by ${dec}s since last test`,
-            detail: `Previous: ${formatBroncho(prev.bronco_mins)} → Latest: ${formatBroncho(latest.bronco_mins)} at ${latest.test_sessions?.test_name ?? "latest test"}. A drop of ${dec}s+ is a meaningful decline — it can indicate accumulated fatigue, illness during the testing period, or a genuine fitness regression.`,
+            headline: `Bronco time declined by ${dec}s since last test`,
+            detail: `Previous: ${formatBronco(prev.bronco_mins)} → Latest: ${formatBronco(latest.bronco_mins)} at ${latest.test_sessions?.test_name ?? "latest test"}. A drop of ${dec}s+ is a meaningful decline — it can indicate accumulated fatigue, illness during the testing period, or a genuine fitness regression.`,
             action: "Don't act on one result in isolation — schedule a retest to confirm. If the decline holds, review this player's training load and recovery from the past 4 weeks before making changes." });
         }
       }
@@ -270,8 +270,8 @@ export default function Dashboard() {
       if (last && last < days60) {
         items.push({ id: `overdue-${player.id}`, severity: "info", category: "fitness", player,
           headline: `No fitness test recorded since ${last}`,
-          detail: `That's 60+ days without a broncho result. Without recent data you're making squad and load decisions without knowing where this player's fitness actually sits — trends can shift significantly in 8 weeks.`,
-          action: "Get this player into the next testing session. If a full broncho isn't possible soon, a shorter time-trial can give a useful reference point." });
+          detail: `That's 60+ days without a bronco result. Without recent data you're making squad and load decisions without knowing where this player's fitness actually sits — trends can shift significantly in 8 weeks.`,
+          action: "Get this player into the next testing session. If a full bronco isn't possible soon, a shorter time-trial can give a useful reference point." });
       }
     }
 
@@ -375,7 +375,7 @@ export default function Dashboard() {
               {testedCount > 0 ? (
                 <><div className="text-2xl font-bold text-foreground"><span className="text-emerald-400">{atBenchmark}</span><span className="text-muted-foreground font-normal text-lg"> / {testedCount}</span></div><div className="text-[11px] text-muted-foreground mt-1">Good tier · latest session</div></>
               ) : (
-                <><div className="text-2xl font-bold text-muted-foreground">—</div><div className="text-[11px] text-muted-foreground mt-1">No broncho data yet</div></>
+                <><div className="text-2xl font-bold text-muted-foreground">—</div><div className="text-[11px] text-muted-foreground mt-1">No bronco data yet</div></>
               )}
             </div>
           </>

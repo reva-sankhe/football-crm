@@ -4,10 +4,11 @@ import { useTeam } from "@/context/TeamContext";
 import { TeamSwitcher } from "@/components/TeamSwitcher";
 import { TableSkeleton } from "@/components/Skeleton";
 import { EmptyState } from "@/components/EmptyState";
-import { fetchPlayers, createPlayer } from "@/lib/queries";
+import { fetchPlayers, createPlayer, fetchTrainingSessions } from "@/lib/queries";
+import { ReportOptionsModal } from "@/components/report/ReportOptionsModal";
 import { calcAgeRange, positionColor, ageRangeColor, cn } from "@/lib/utils";
 import type { Player } from "@/lib/types";
-import { Users, Plus, Search, ChevronRight } from "lucide-react";
+import { Users, Plus, Search, ChevronRight, Check, FileText, X } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 
 const PRIMARY_POSITIONS = ["Goalkeeper", "Defender", "Midfielder", "Forward"];
@@ -200,6 +201,9 @@ export default function Players() {
   const [filterAge, setFilterAge] = useState("");
   const [filterActive, setFilterActive] = useState<"all" | "active" | "inactive">("active");
   const [showAdd, setShowAdd] = useState(false);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [showReport, setShowReport] = useState(false);
+  const [sessionDates, setSessionDates] = useState<Date[]>([]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -210,6 +214,13 @@ export default function Players() {
       setLoading(false);
     }
   }, [team]);
+
+  // Only used to underline days that have data in the report range picker
+  useEffect(() => {
+    fetchTrainingSessions()
+      .then((ss) => setSessionDates(ss.map((s) => new Date(s.date + "T00:00:00"))))
+      .catch(() => {/* the picker just shows no underlines */});
+  }, []);
 
   useEffect(() => { load(); }, [load]);
 
@@ -222,12 +233,40 @@ export default function Players() {
     return true;
   });
 
+  // Select-all operates on the *filtered* set, so search and filters compose
+  // with selection rather than fighting it.
+  const allFilteredSelected = filtered.length > 0 && filtered.every((p) => selected.has(p.id));
+
+  const toggleAllFiltered = () =>
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (allFilteredSelected) filtered.forEach((p) => next.delete(p.id));
+      else filtered.forEach((p) => next.add(p.id));
+      return next;
+    });
+
+  const toggleOne = (id: string) =>
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+
   return (
     <div className="space-y-5">
       <div className="flex items-center justify-between flex-wrap gap-3">
         <p className="text-sm text-muted-foreground">{players.filter((p) => p.is_active).length} active players</p>
         <div className="flex items-center gap-2">
           <TeamSwitcher />
+          <button
+            onClick={() => setShowReport(true)}
+            className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg border border-border text-muted-foreground hover:text-foreground text-sm font-medium transition-colors"
+            data-testid="button-download-report"
+          >
+            <FileText size={13} />
+            {selected.size > 0 ? `Report (${selected.size})` : "Report all"}
+          </button>
           <button
             onClick={() => setShowAdd(true)}
             className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg border border-indigo-500/50 text-indigo-400 dark:text-indigo-400 text-sm font-medium hover:bg-indigo-500/10 transition-colors"
@@ -282,6 +321,27 @@ export default function Players() {
         </select>
       </div>
 
+      {/* Selection bar */}
+      {selected.size > 0 && (
+        <div className="flex items-center gap-3 rounded-xl border border-indigo-500/30 bg-indigo-500/[0.07] px-4 py-2.5">
+          <span className="text-sm text-foreground font-medium">
+            {selected.size} player{selected.size !== 1 ? "s" : ""} selected
+          </span>
+          <button
+            onClick={() => setSelected(new Set())}
+            className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
+          >
+            <X size={11} /> Clear
+          </button>
+          <button
+            onClick={() => setShowReport(true)}
+            className="ml-auto flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-indigo-600 text-white hover:bg-indigo-500 transition-colors"
+          >
+            <FileText size={12} /> Download report
+          </button>
+        </div>
+      )}
+
       {/* Table */}
       <div className="bg-card border border-border rounded-2xl overflow-hidden">
         {loading ? (
@@ -293,6 +353,20 @@ export default function Players() {
             <table className="w-full text-sm" data-testid="players-table">
               <thead>
                 <tr className="border-b border-border text-xs text-muted-foreground">
+                  <th className="pl-4 pr-1 py-2.5 w-8">
+                    <button
+                      onClick={toggleAllFiltered}
+                      aria-label={allFilteredSelected ? "Clear selection" : "Select all shown"}
+                      title={allFilteredSelected ? "Clear selection" : "Select all shown"}
+                      className={cn(
+                        "w-4 h-4 rounded border flex items-center justify-center transition-colors",
+                        allFilteredSelected ? "bg-indigo-600 border-indigo-600 text-white" : "border-border hover:border-indigo-500",
+                      )}
+                      data-testid="checkbox-select-all"
+                    >
+                      {allFilteredSelected && <Check size={11} />}
+                    </button>
+                  </th>
                   <th className="px-4 py-2.5 text-left font-medium">Code</th>
                   <th className="px-4 py-2.5 text-left font-medium">Name</th>
                   <th className="px-4 py-2.5 text-left font-medium">Position</th>
@@ -303,7 +377,27 @@ export default function Players() {
               </thead>
               <tbody>
                 {filtered.map((p) => (
-                  <tr key={p.id} className="border-b border-border/50 hover:bg-muted/30 transition-colors" data-testid={`row-player-${p.id}`}>
+                  <tr
+                    key={p.id}
+                    className={cn(
+                      "border-b border-border/50 transition-colors",
+                      selected.has(p.id) ? "bg-indigo-500/[0.07]" : "hover:bg-muted/30",
+                    )}
+                    data-testid={`row-player-${p.id}`}
+                  >
+                    <td className="pl-4 pr-1 py-2.5">
+                      <button
+                        onClick={() => toggleOne(p.id)}
+                        aria-label={`Select ${p.name}`}
+                        className={cn(
+                          "w-4 h-4 rounded border flex items-center justify-center transition-colors",
+                          selected.has(p.id) ? "bg-indigo-600 border-indigo-600 text-white" : "border-border hover:border-indigo-500",
+                        )}
+                        data-testid={`checkbox-player-${p.id}`}
+                      >
+                        {selected.has(p.id) && <Check size={11} />}
+                      </button>
+                    </td>
                     <td className="px-4 py-2.5 font-time text-muted-foreground text-xs">{p.code}</td>
                     <td className="px-4 py-2.5 font-medium text-foreground">{p.name}</td>
                     <td className="px-4 py-2.5">
@@ -341,6 +435,15 @@ export default function Players() {
       </div>
 
       {showAdd && <AddPlayerModal onClose={() => setShowAdd(false)} onSaved={load} />}
+
+      {showReport && (
+        <ReportOptionsModal
+          playerIds={selected.size > 0 ? [...selected] : null}
+          playerCount={selected.size}
+          highlightDates={sessionDates}
+          onClose={() => setShowReport(false)}
+        />
+      )}
     </div>
   );
 }

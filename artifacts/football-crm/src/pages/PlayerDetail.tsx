@@ -4,8 +4,9 @@ import {
   fetchPlayer, fetchResultsByPlayer, updatePlayer, fetchAllResults, fetchPlayerRecentSessions,
   fetchAttendanceByPlayer, fetchTrainingSessions, fetchMatchStatsByPlayer, type PlayerMatchStat,
 } from "@/lib/queries";
-import { formatBroncho, cn } from "@/lib/utils";
+import { formatBronco, cn } from "@/lib/utils";
 import { attendancePctColor, countsAsAttended } from "@/lib/attendance";
+import { ACWR_CONFIG, computeAcwr } from "@/lib/report";
 import { ChartSkeleton, Skeleton } from "@/components/Skeleton";
 import { EmptyState } from "@/components/EmptyState";
 import { PlayerTournamentStats } from "@/components/tournaments/PlayerTournamentStats";
@@ -136,13 +137,13 @@ export default function PlayerDetail() {
 
   const latestResult = results[0];
 
-  const bronchoChartData = [...results]
+  const broncoChartData = [...results]
     .sort((a, b) => (a.test_sessions?.test_date ?? "").localeCompare(b.test_sessions?.test_date ?? ""))
     .map((r) => ({
       date: r.test_sessions?.test_date ?? "",
       session: r.test_sessions?.test_name ?? "",
       mins: r.bronco_mins,
-      display: formatBroncho(r.bronco_mins),
+      display: formatBronco(r.bronco_mins),
     }));
 
   // ── Training load ─────────────────────────────────────────────────────────
@@ -161,36 +162,8 @@ export default function PlayerDetail() {
     return { ...d, rollingAvg: Math.round(window.reduce((s, x) => s + x.load, 0) / window.length) };
   });
 
-  // ACWR — Acute:Chronic Workload Ratio
-  const now = new Date();
-  const days7Ago = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
-  const days28Ago = new Date(now.getTime() - 28 * 24 * 60 * 60 * 1000);
-
-  const acuteLoad = recentLoad
-    .filter((r) => r.sessions?.date && new Date(r.sessions.date + "T00:00:00") >= days7Ago)
-    .reduce((s, r) => s + r.load_au, 0);
-  const chronicLoad28 = recentLoad
-    .filter((r) => r.sessions?.date && new Date(r.sessions.date + "T00:00:00") >= days28Ago)
-    .reduce((s, r) => s + r.load_au, 0);
-  const chronicWeeklyAvg = chronicLoad28 / 4;
-  const acwr = chronicWeeklyAvg > 0 ? acuteLoad / chronicWeeklyAvg : null;
-
-  const acwrStatus: "safe" | "caution" | "danger" | "low" | "unknown" =
-    acwr === null ? "unknown"
-    : acwr < 0.5  ? "low"
-    : acwr <= 1.3 ? "safe"
-    : acwr <= 1.5 ? "caution"
-    : "danger";
-
-  // Indigo is reserved for the highlight role, so "low" reads as muted rather
-  // than as a status colour.
-  const ACWR_CONFIG = {
-    safe:    { label: "Safe Zone",        color: "#34d399", desc: "Optimal training load balance." },
-    caution: { label: "Caution",          color: "#fbbf24", desc: "High load — monitor recovery closely." },
-    danger:  { label: "High Risk",        color: "#f87171", desc: "Injury risk elevated. Consider reducing load." },
-    low:     { label: "Underloaded",      color: "#94a3b8", desc: "Below baseline — may indicate detraining." },
-    unknown: { label: "Not enough data",  color: "#94a3b8", desc: "Need 28 days of session data to calculate." },
-  };
+  // ACWR — shared with the printable report so the two can't disagree
+  const { acwr, acute: acuteLoad, chronicWeeklyAvg, status: acwrStatus } = computeAcwr(recentLoad);
   const acwrCfg = ACWR_CONFIG[acwrStatus];
 
   // ── Attendance ────────────────────────────────────────────────────────────
@@ -332,7 +305,7 @@ export default function PlayerDetail() {
           />
           <SnapshotTile label="Goals" value={matchTotals.goals} sub={matchTotals.assists > 0 ? `${matchTotals.assists} assists` : undefined} />
           <SnapshotTile label="Appearances" value={matchTotals.appearances} sub={matchStats.length > 0 ? `${matchStats.length} call-ups` : undefined} />
-          <SnapshotTile label="Best Broncho" value={formatBroncho(bestBronco)} sub={latestResult?.bronco_mins != null ? `Latest ${formatBroncho(latestResult.bronco_mins)}` : undefined} />
+          <SnapshotTile label="Best Bronco" value={formatBronco(bestBronco)} sub={latestResult?.bronco_mins != null ? `Latest ${formatBronco(latestResult.bronco_mins)}` : undefined} />
         </div>
       </div>
 
@@ -355,20 +328,20 @@ export default function PlayerDetail() {
       <section className="space-y-2">
         <SectionLabel>Fitness</SectionLabel>
         <div className="bg-card border border-border rounded-2xl p-5">
-          <h3 className="text-sm font-semibold text-foreground mb-4">Broncho Over Time</h3>
-          {bronchoChartData.length === 0 ? (
+          <h3 className="text-sm font-semibold text-foreground mb-4">Bronco Over Time</h3>
+          {broncoChartData.length === 0 ? (
             <EmptyState icon={Timer} title="No test history" description="This player hasn't been tested yet" />
           ) : (
             <>
               <ResponsiveContainer width="100%" height={180}>
-                <LineChart data={bronchoChartData} margin={{ top: 4, right: 8, bottom: 40, left: 0 }}>
+                <LineChart data={broncoChartData} margin={{ top: 4, right: 8, bottom: 40, left: 0 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke={chartGrid} />
                   <XAxis dataKey="session" tick={{ fill: chartAxis, fontSize: 10 }} angle={-35} textAnchor="end" interval={0} />
-                  <YAxis tickFormatter={(v) => formatBroncho(v)} domain={["auto", "auto"]} tick={{ fill: chartAxis, fontSize: 11 }} />
+                  <YAxis tickFormatter={(v) => formatBronco(v)} domain={["auto", "auto"]} tick={{ fill: chartAxis, fontSize: 11 }} />
                   <Tooltip
                     contentStyle={{ background: chartTooltipBg, border: `1px solid ${chartTooltipBorder}`, borderRadius: 8 }}
                     labelStyle={{ color: chartLabel, fontSize: 12 }}
-                    formatter={(v: number) => [formatBroncho(v), "Broncho"]}
+                    formatter={(v: number) => [formatBronco(v), "Bronco"]}
                   />
                   <Line type="monotone" dataKey="mins" stroke="#6366f1" strokeWidth={2} dot={{ fill: "#6366f1", r: 4 }} connectNulls />
                 </LineChart>
@@ -377,7 +350,7 @@ export default function PlayerDetail() {
               {/* Best / latest test numbers live with the chart they describe */}
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 pt-4 mt-2 border-t border-border">
                 {[
-                  { label: "Broncho",    best: formatBroncho(bestBronco), latest: formatBroncho(latestResult?.bronco_mins) },
+                  { label: "Bronco",    best: formatBronco(bestBronco), latest: formatBronco(latestResult?.bronco_mins) },
                   { label: "MAS (m/s)",  best: fmtBest(results, "mas_ms", true),     latest: fmtVal(latestResult?.mas_ms) },
                   { label: "10m Sprint", best: fmtBest(results, "ten_m_1", false, "s"),    latest: fmtVal(latestResult?.ten_m_1, "s") },
                   { label: "20m Sprint", best: fmtBest(results, "twenty_m_1", false, "s"), latest: fmtVal(latestResult?.twenty_m_1, "s") },

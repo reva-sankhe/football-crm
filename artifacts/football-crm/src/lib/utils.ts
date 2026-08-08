@@ -6,10 +6,10 @@ export function cn(...inputs: ClassValue[]) {
 }
 
 /**
- * Format a broncho value (decimal minutes) into M:SS display.
+ * Format a bronco value (decimal minutes) into M:SS display.
  * e.g. 6.25 → "6:15"
  */
-export function formatBroncho(mins: number | null | undefined): string {
+export function formatBronco(mins: number | null | undefined): string {
   if (mins === null || mins === undefined) return "—";
   const totalSeconds = Math.round(mins * 60);
   const m = Math.floor(totalSeconds / 60);
@@ -18,9 +18,9 @@ export function formatBroncho(mins: number | null | undefined): string {
 }
 
 /**
- * Format a broncho difference in seconds (signed).
+ * Format a bronco difference in seconds (signed).
  */
-export function formatBronchoDiff(diffSeconds: number): string {
+export function formatBroncoDiff(diffSeconds: number): string {
   const abs = Math.abs(diffSeconds);
   const m = Math.floor(abs / 60);
   const s = abs % 60;

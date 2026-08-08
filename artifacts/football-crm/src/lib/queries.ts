@@ -108,7 +108,7 @@ export async function insertResult(result: Omit<TestResult, "id" | "created_at">
   return data as TestResult;
 }
 
-// Most improved player: finds player with the biggest Broncho improvement (lower is better)
+// Most improved player: finds player with the biggest Bronco improvement (lower is better)
 // Compares first-ever result to most-recent result per player
 export async function fetchMostImprovedPlayer(team: string): Promise<{ name: string; improvementSecs: number } | null> {
   const { data, error } = await supabase
@@ -165,15 +165,15 @@ export async function fetchLatestSessionResults(team: string): Promise<{
   return { session: null, results: [] };
 }
 
-export interface TeamAvgBroncho {
+export interface TeamAvgBronco {
   session: TestSession;
-  avgBronchoMins: number;
+  avgBroncoMins: number;
   playerCount: number;
 }
 
-export async function fetchTeamAvgBroncho(team: string): Promise<TeamAvgBroncho[]> {
+export async function fetchTeamAvgBronco(team: string): Promise<TeamAvgBronco[]> {
   const sessions = await fetchSessions();
-  const results: TeamAvgBroncho[] = [];
+  const results: TeamAvgBronco[] = [];
 
   for (const session of [...sessions].reverse()) {
     const { data, error } = await supabase
@@ -185,7 +185,7 @@ export async function fetchTeamAvgBroncho(team: string): Promise<TeamAvgBroncho[
     if (error) throw error;
     if (data && data.length > 0) {
       const avg = data.reduce((sum: number, r: { bronco_mins: number | null }) => sum + (r.bronco_mins ?? 0), 0) / data.length;
-      results.push({ session, avgBronchoMins: avg, playerCount: data.length });
+      results.push({ session, avgBroncoMins: avg, playerCount: data.length });
     }
   }
   return results;
@@ -638,6 +638,18 @@ export type PlayerMatchStat = MatchPlayerStat & {
     sessions: Pick<TrainingSession, "id" | "date"> | null;
   }) | null;
 };
+
+const PLAYER_MATCH_STAT_SELECT =
+  "*, matches(id, stage, opponent, goals_for, goals_against, tournament_id, tournaments(id, name), sessions(id, date))";
+
+/** Every player's match stats in one request — backs the bulk report page. */
+export async function fetchAllMatchStats(): Promise<PlayerMatchStat[]> {
+  const { data, error } = await supabase.from("match_player_stats").select(PLAYER_MATCH_STAT_SELECT);
+  if (error) throw error;
+  return ((data ?? []) as PlayerMatchStat[]).sort((a, b) =>
+    (b.matches?.sessions?.date ?? "").localeCompare(a.matches?.sessions?.date ?? ""),
+  );
+}
 
 export async function fetchMatchStatsByPlayer(playerId: string): Promise<PlayerMatchStat[]> {
   const { data, error } = await supabase

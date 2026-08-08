@@ -1,3 +1,4 @@
+// @refresh reset
 import { cn } from "@/lib/utils";
 
 export const POS_CFG: Record<string, { label: string; color: string; tailwindText: string; tailwindBg: string }> = {

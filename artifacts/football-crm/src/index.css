@@ -340,3 +340,30 @@ html.dark .nav-glow {
   .border.active-elevate-2:not(.no-active-interaction-elevate)::after,
   .border.hover-elevate:not(.no-hover-interaction-elevate)::after { inset: -1px; }
 }
+
+/* ── Print: player reports ───────────────────────────────────────────────────
+   The report route renders outside the app chrome; these rules make the
+   browser's "Save as PDF" produce one clean A4 page per player. */
+@media print {
+  @page {
+    size: A4 portrait;
+    margin: 12mm;
+  }
+
+  /* Toolbars, buttons and anything else that shouldn't reach paper */
+  .no-print { display: none !important; }
+
+  .report-page { break-after: page; page-break-after: always; }
+  .report-page:last-child { break-after: auto; page-break-after: auto; }
+  /* Never split a section across a page boundary */
+  .report-page section { break-inside: avoid; page-break-inside: avoid; }
+
+  /* Without this, browsers strip background fills — chart bars and tinted
+     badges would print blank. */
+  * {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  html, body { background: #fff !important; }
+}
