@@ -3,43 +3,9 @@ import { Link } from "wouter";
 import { Activity, ChevronDown, Trophy } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useTheme } from "@/context/ThemeContext";
-import { STAGE_CFG } from "@/lib/tournaments";
+import { STAGE_CFG, sumStats } from "@/lib/tournaments";
 import { formatDateShort } from "@/lib/attendance";
 import type { PlayerMatchStat } from "@/lib/queries";
-
-interface Totals {
-  appearances: number;
-  minutes: number;
-  goals: number;
-  assists: number;
-  yellow: number;
-  red: number;
-  injuries: number;
-}
-
-/**
- * Minutes are often left at 0 when only goals get logged, so a contribution
- * counts as evidence of playing — otherwise a two-goal game reads as
- * "0 appearances".
- */
-function didPlay(r: PlayerMatchStat): boolean {
-  return r.minutes_played > 0 || r.goals > 0 || r.assists > 0 || r.yellow_cards > 0 || r.red_cards > 0;
-}
-
-function sumStats(rows: PlayerMatchStat[]): Totals {
-  return rows.reduce<Totals>(
-    (acc, r) => ({
-      appearances: acc.appearances + (didPlay(r) ? 1 : 0),
-      minutes: acc.minutes + r.minutes_played,
-      goals: acc.goals + r.goals,
-      assists: acc.assists + r.assists,
-      yellow: acc.yellow + r.yellow_cards,
-      red: acc.red + r.red_cards,
-      injuries: acc.injuries + (r.injured ? 1 : 0),
-    }),
-    { appearances: 0, minutes: 0, goals: 0, assists: 0, yellow: 0, red: 0, injuries: 0 },
-  );
-}
 
 export function PlayerTournamentStats({ stats }: { stats: PlayerMatchStat[] }) {
   const { theme } = useTheme();
@@ -66,7 +32,7 @@ export function PlayerTournamentStats({ stats }: { stats: PlayerMatchStat[] }) {
     return (
       <div className="bg-card border border-border rounded-2xl p-5">
         <div className="flex items-center gap-2 mb-1">
-          <Trophy size={15} className="text-amber-400" />
+          <Trophy size={15} className="text-muted-foreground" />
           <h2 className="text-sm font-semibold text-foreground">Tournament History</h2>
         </div>
         <p className="text-xs text-muted-foreground">
@@ -77,12 +43,14 @@ export function PlayerTournamentStats({ stats }: { stats: PlayerMatchStat[] }) {
   }
 
   const minsPerApp = totals.appearances > 0 ? Math.round(totals.minutes / totals.appearances) : 0;
+  // Distinguish "played 0 minutes" from "minutes were never entered"
+  const minutesUnrecorded = totals.minutes === 0 && totals.appearances > 0;
 
   return (
     <div className="bg-card border border-border rounded-2xl overflow-hidden">
       <div className="px-5 pt-5 pb-4">
         <div className="flex items-center gap-2 mb-3">
-          <Trophy size={15} className="text-amber-400" />
+          <Trophy size={15} className="text-muted-foreground" />
           <h2 className="text-sm font-semibold text-foreground">Tournament History</h2>
           <span className="text-xs text-muted-foreground">
             {byTournament.length} competition{byTournament.length !== 1 ? "s" : ""}
@@ -91,9 +59,13 @@ export function PlayerTournamentStats({ stats }: { stats: PlayerMatchStat[] }) {
 
         {/* Headline totals */}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-          <Tile label="Goals"       value={totals.goals}       color="text-emerald-400" />
-          <Tile label="Assists"     value={totals.assists}     color="text-blue-400" />
-          <Tile label="Minutes"     value={totals.minutes}     sub={totals.appearances > 0 ? `${minsPerApp} per app` : undefined} />
+          <Tile label="Goals"       value={totals.goals} />
+          <Tile label="Assists"     value={totals.assists} />
+          <Tile
+            label="Minutes"
+            value={minutesUnrecorded ? "—" : totals.minutes}
+            sub={minutesUnrecorded ? "not recorded" : totals.appearances > 0 ? `${minsPerApp} per app` : undefined}
+          />
           <Tile label="Appearances" value={totals.appearances} sub={`${stats.length} squad call-up${stats.length !== 1 ? "s" : ""}`} />
         </div>
 
@@ -101,19 +73,19 @@ export function PlayerTournamentStats({ stats }: { stats: PlayerMatchStat[] }) {
         {(totals.yellow > 0 || totals.red > 0 || totals.injuries > 0) && (
           <div className="flex flex-wrap gap-1.5 mt-3">
             {totals.yellow > 0 && (
-              <span className="flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[11px] font-medium bg-amber-500/15 text-amber-400">
+              <span className="flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[11px] font-medium border border-border text-muted-foreground">
                 <span className="w-2 h-2.5 rounded-[2px] bg-amber-400" />
                 {totals.yellow} yellow
               </span>
             )}
             {totals.red > 0 && (
-              <span className="flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[11px] font-medium bg-red-500/15 text-red-400">
+              <span className="flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[11px] font-medium border border-border text-muted-foreground">
                 <span className="w-2 h-2.5 rounded-[2px] bg-red-400" />
                 {totals.red} red
               </span>
             )}
             {totals.injuries > 0 && (
-              <span className="flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium bg-orange-500/15 text-orange-400">
+              <span className="flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium border border-border text-muted-foreground">
                 <Activity size={10} />
                 {totals.injuries} injury{totals.injuries !== 1 ? " incidents" : ""}
               </span>
@@ -137,8 +109,8 @@ export function PlayerTournamentStats({ stats }: { stats: PlayerMatchStat[] }) {
                   <span className="text-sm font-medium text-muted-foreground">{group.name}</span>
                 )}
                 <div className="ml-auto flex items-center gap-3 text-[11px] font-time">
-                  <span className="text-emerald-400">{gt.goals} G</span>
-                  <span className="text-blue-400">{gt.assists} A</span>
+                  <span className="text-foreground">{gt.goals} G</span>
+                  <span className="text-muted-foreground">{gt.assists} A</span>
                   <span className="text-muted-foreground">{gt.minutes} min</span>
                   <span className="text-muted-foreground">{gt.appearances} app</span>
                 </div>
@@ -168,7 +140,7 @@ export function PlayerTournamentStats({ stats }: { stats: PlayerMatchStat[] }) {
             return (
               <div key={r.id} className="px-5 py-2.5 flex items-center gap-3 flex-wrap">
                 {cfg && (
-                  <span className={cn("px-1.5 py-0.5 rounded text-[10px] font-medium shrink-0", cfg.bg, cfg.text)}>
+                  <span className="px-1.5 py-0.5 rounded text-[10px] font-medium shrink-0 border border-border text-muted-foreground">
                     {cfg.short}
                   </span>
                 )}
@@ -187,13 +159,15 @@ export function PlayerTournamentStats({ stats }: { stats: PlayerMatchStat[] }) {
                 </div>
 
                 <div className="flex items-center gap-2.5 text-[11px] font-time shrink-0">
-                  <span className="text-muted-foreground">{r.minutes_played}'</span>
-                  {r.goals > 0 && <span className="text-emerald-400">{r.goals} G</span>}
-                  {r.assists > 0 && <span className="text-blue-400">{r.assists} A</span>}
+                  <span className="text-muted-foreground">
+                    {r.minutes_played > 0 ? `${r.minutes_played}'` : "—"}
+                  </span>
+                  {r.goals > 0 && <span className="text-foreground font-semibold">{r.goals} G</span>}
+                  {r.assists > 0 && <span className="text-muted-foreground">{r.assists} A</span>}
                   {r.yellow_cards > 0 && <span className="w-2 h-2.5 rounded-[2px] bg-amber-400" title={`${r.yellow_cards} yellow`} />}
                   {r.red_cards > 0 && <span className="w-2 h-2.5 rounded-[2px] bg-red-400" title="Red card" />}
                   {r.injured && (
-                    <span className="text-orange-400 flex items-center gap-1" title={r.injury_note ?? "Injured"}>
+                    <span className="text-muted-foreground flex items-center gap-1" title={r.injury_note ?? "Injured"}>
                       <Activity size={10} />
                     </span>
                   )}
@@ -207,7 +181,7 @@ export function PlayerTournamentStats({ stats }: { stats: PlayerMatchStat[] }) {
   );
 }
 
-function Tile({ label, value, sub, color }: { label: string; value: number; sub?: string; color?: string }) {
+function Tile({ label, value, sub, color }: { label: string; value: number | string; sub?: string; color?: string }) {
   return (
     <div>
       <div className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground mb-1">{label}</div>

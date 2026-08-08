@@ -73,6 +73,46 @@ export function tournamentRecord(
   return rec;
 }
 
+// ── Player match stat aggregation ────────────────────────────────────────────
+// Uses a structural type to avoid importing from queries.ts.
+interface StatRow {
+  minutes_played: number;
+  goals: number;
+  assists: number;
+  yellow_cards: number;
+  red_cards: number;
+  injured: boolean;
+}
+
+export interface Totals {
+  appearances: number;
+  minutes: number;
+  goals: number;
+  assists: number;
+  yellow: number;
+  red: number;
+  injuries: number;
+}
+
+function didPlay(r: StatRow): boolean {
+  return r.minutes_played > 0 || r.goals > 0 || r.assists > 0 || r.yellow_cards > 0 || r.red_cards > 0;
+}
+
+export function sumStats(rows: StatRow[]): Totals {
+  return rows.reduce<Totals>(
+    (acc, r) => ({
+      appearances: acc.appearances + (didPlay(r) ? 1 : 0),
+      minutes: acc.minutes + r.minutes_played,
+      goals: acc.goals + r.goals,
+      assists: acc.assists + r.assists,
+      yellow: acc.yellow + r.yellow_cards,
+      red: acc.red + r.red_cards,
+      injuries: acc.injuries + (r.injured ? 1 : 0),
+    }),
+    { appearances: 0, minutes: 0, goals: 0, assists: 0, yellow: 0, red: 0, injuries: 0 },
+  );
+}
+
 /** "12 Apr – 20 Apr 2026", or a single date, or null when neither is set. */
 export function formatDateRange(start: string | null, end: string | null): string | null {
   const fmt = (iso: string, withYear: boolean) =>

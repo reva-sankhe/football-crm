@@ -1,19 +1,24 @@
 import { useEffect, useState, useCallback, useMemo } from "react";
 import { useParams, useLocation } from "wouter";
-import { fetchPlayer, fetchResultsByPlayer, updatePlayer, fetchAllResults, fetchPlayerRecentSessions, fetchAttendanceByPlayer, fetchTrainingSessions, fetchMatchStatsByPlayer, type PlayerMatchStat } from "@/lib/queries";
-import { PlayerTournamentStats } from "@/components/tournaments/PlayerTournamentStats";
-import { formatBroncho, positionColor, ageRangeColor, cn } from "@/lib/utils";
-import { SESSION_TYPE_CFG, countsAsAttended } from "@/lib/attendance";
-import { MasBadge } from "@/components/MasBadge";
-import { ChartSkeleton, TableSkeleton, Skeleton } from "@/components/Skeleton";
-import { EmptyState } from "@/components/EmptyState";
-import type { Player, TestResult, SessionRPE, TrainingSession, SessionType, SessionAttendance } from "@/lib/types";
 import {
-  ComposedChart, BarChart, LineChart, Line, Bar,
-  XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell, ReferenceLine,
+  fetchPlayer, fetchResultsByPlayer, updatePlayer, fetchAllResults, fetchPlayerRecentSessions,
+  fetchAttendanceByPlayer, fetchTrainingSessions, fetchMatchStatsByPlayer, type PlayerMatchStat,
+} from "@/lib/queries";
+import { formatBroncho, cn } from "@/lib/utils";
+import { attendancePctColor, countsAsAttended } from "@/lib/attendance";
+import { ChartSkeleton, Skeleton } from "@/components/Skeleton";
+import { EmptyState } from "@/components/EmptyState";
+import { PlayerTournamentStats } from "@/components/tournaments/PlayerTournamentStats";
+import { sumStats } from "@/lib/tournaments";
+import { AttendanceCard } from "@/components/player/AttendanceCard";
+import { LastSessionsCard } from "@/components/player/LastSessionsCard";
+import type { Player, TestResult, SessionRPE, TrainingSession, SessionAttendance } from "@/lib/types";
+import {
+  LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
 } from "recharts";
-import { ArrowLeft, Edit, Save, X, Timer, Dumbbell, ChevronLeft, ChevronRight, ChevronDown } from "lucide-react";
+import { ArrowLeft, Edit, Save, X, Timer, Dumbbell } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import { useTheme } from "@/context/ThemeContext";
 
 const PRIMARY_POSITIONS = ["Goalkeeper", "Defender", "Midfielder", "Forward"];
 const SECONDARY_POSITIONS: Record<string, string[]> = {
@@ -23,17 +28,32 @@ const SECONDARY_POSITIONS: Record<string, string[]> = {
   Forward:    ["Striker", "CAM"],
 };
 
-const SESSION_TYPE_COLORS: Record<string, string> = {
-  Training: "#818cf8",
-  Match:    "#fbbf24",
-  Gym:      "#34d399",
-  Recovery: "#94a3b8",
-};
+/** Small uppercase anchor above each section. */
+function SectionLabel({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">
+      {children}
+    </div>
+  );
+}
+
+function SnapshotTile({ label, value, sub, valueColor }: { label: string; value: string | number; sub?: string; valueColor?: string }) {
+  return (
+    <div>
+      <div className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground mb-1">{label}</div>
+      <div className={cn("text-2xl font-bold font-time leading-none", valueColor ?? "text-foreground")}>{value}</div>
+      {sub && <div className="text-[11px] text-muted-foreground mt-1">{sub}</div>}
+    </div>
+  );
+}
 
 export default function PlayerDetail() {
   const { id } = useParams<{ id: string }>();
   const [, setLocation] = useLocation();
   const { toast } = useToast();
+  const { theme } = useTheme();
+  const isDark = theme === "dark";
+
   const [player, setPlayer] = useState<Player | null>(null);
   const [results, setResults] = useState<(TestResult & { test_sessions?: { test_date: string; test_name: string; type: string | null } })[]>([]);
   const [recentLoad, setRecentLoad] = useState<(SessionRPE & { sessions: TrainingSession })[]>([]);
@@ -41,14 +61,17 @@ export default function PlayerDetail() {
   const [editing, setEditing] = useState(false);
   const [editForm, setEditForm] = useState<Partial<Player>>({});
   const [saving, setSaving] = useState(false);
-  const [historyPage, setHistoryPage] = useState(0);
   const [teamBand, setTeamBand] = useState<{ label: string; color: string } | null>(null);
-  const [recentLoadOpen, setRecentLoadOpen] = useState(false);
-  const [testHistoryOpen, setTestHistoryOpen] = useState(false);
   const [allSessions, setAllSessions] = useState<TrainingSession[]>([]);
   const [playerAttendance, setPlayerAttendance] = useState<(SessionAttendance & { sessions: { id: string; date: string; session_type: string } })[]>([]);
   const [matchStats, setMatchStats] = useState<PlayerMatchStat[]>([]);
-  const HISTORY_PAGE_SIZE = 10;
+
+  // Theme-aware chart colours, matching the pattern in Analytics.tsx
+  const chartGrid = isDark ? "rgba(255,255,255,0.05)" : "rgba(0,0,0,0.07)";
+  const chartAxis = isDark ? "#6b7280" : "#9ca3af";
+  const chartTooltipBg = isDark ? "#0f172a" : "#ffffff";
+  const chartTooltipBorder = isDark ? "#1e293b" : "#e2e8f0";
+  const chartLabel = isDark ? "#f1f5f9" : "#0f172a";
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -122,25 +145,20 @@ export default function PlayerDetail() {
       display: formatBroncho(r.bronco_mins),
     }));
 
-  // ── Load analytics ────────────────────────────────────────────────────────
-  const sortedLoad = [...recentLoad].sort(
-    (a, b) => (a.sessions?.date ?? "").localeCompare(b.sessions?.date ?? "")
-  );
-
-  const loadChartData = sortedLoad.map((r) => ({
-    date: r.sessions?.date
-      ? new Date(r.sessions.date + "T00:00:00").toLocaleDateString("en-GB", { day: "numeric", month: "short" })
-      : "—",
-    load: Math.round(r.load_au),
-    rpe: r.rpe,
-    sessionType: r.sessions?.session_type ?? "Training",
-    color: SESSION_TYPE_COLORS[r.sessions?.session_type ?? "Training"] ?? "#818cf8",
-  }));
+  // ── Training load ─────────────────────────────────────────────────────────
+  const loadChartData = [...recentLoad]
+    .sort((a, b) => (a.sessions?.date ?? "").localeCompare(b.sessions?.date ?? ""))
+    .map((r) => ({
+      date: r.sessions?.date
+        ? new Date(r.sessions.date + "T00:00:00").toLocaleDateString("en-GB", { day: "numeric", month: "short" })
+        : "—",
+      load: Math.round(r.load_au),
+      rpe: r.rpe,
+    }));
 
   const loadWithAvg = loadChartData.map((d, i, arr) => {
     const window = arr.slice(Math.max(0, i - 3), i + 1);
-    const avg = Math.round(window.reduce((s, x) => s + x.load, 0) / window.length);
-    return { ...d, rollingAvg: avg };
+    return { ...d, rollingAvg: Math.round(window.reduce((s, x) => s + x.load, 0) / window.length) };
   });
 
   // ACWR — Acute:Chronic Workload Ratio
@@ -151,11 +169,9 @@ export default function PlayerDetail() {
   const acuteLoad = recentLoad
     .filter((r) => r.sessions?.date && new Date(r.sessions.date + "T00:00:00") >= days7Ago)
     .reduce((s, r) => s + r.load_au, 0);
-
   const chronicLoad28 = recentLoad
     .filter((r) => r.sessions?.date && new Date(r.sessions.date + "T00:00:00") >= days28Ago)
     .reduce((s, r) => s + r.load_au, 0);
-
   const chronicWeeklyAvg = chronicLoad28 / 4;
   const acwr = chronicWeeklyAvg > 0 ? acuteLoad / chronicWeeklyAvg : null;
 
@@ -166,65 +182,58 @@ export default function PlayerDetail() {
     : acwr <= 1.5 ? "caution"
     : "danger";
 
+  // Indigo is reserved for the highlight role, so "low" reads as muted rather
+  // than as a status colour.
   const ACWR_CONFIG = {
-    safe:    { label: "Safe Zone",   color: "#34d399", bg: "bg-emerald-400/10", border: "border-emerald-400/20", desc: "Optimal training load balance." },
-    caution: { label: "Caution",     color: "#fbbf24", bg: "bg-amber-400/10",   border: "border-amber-400/20",  desc: "High load — monitor recovery closely." },
-    danger:  { label: "High Risk",   color: "#f87171", bg: "bg-red-400/10",     border: "border-red-400/20",    desc: "Injury risk elevated. Consider reducing load." },
-    low:     { label: "Underloaded", color: "#818cf8", bg: "bg-indigo-400/10",  border: "border-indigo-400/20", desc: "Below baseline — may indicate detraining." },
-    unknown: { label: "Not enough data", color: "#9ca3af", bg: "bg-muted",      border: "border-border",        desc: "Need 28 days of session data to calculate." },
+    safe:    { label: "Safe Zone",        color: "#34d399", desc: "Optimal training load balance." },
+    caution: { label: "Caution",          color: "#fbbf24", desc: "High load — monitor recovery closely." },
+    danger:  { label: "High Risk",        color: "#f87171", desc: "Injury risk elevated. Consider reducing load." },
+    low:     { label: "Underloaded",      color: "#94a3b8", desc: "Below baseline — may indicate detraining." },
+    unknown: { label: "Not enough data",  color: "#94a3b8", desc: "Need 28 days of session data to calculate." },
   };
   const acwrCfg = ACWR_CONFIG[acwrStatus];
 
-  const loadByType = Object.entries(SESSION_TYPE_COLORS).map(([type, color]) => {
-    const rows = recentLoad.filter((r) => r.sessions?.session_type === type);
-    return { type, total: Math.round(rows.reduce((s, r) => s + r.load_au, 0)), count: rows.length, color };
-  }).filter((d) => d.count > 0);
+  // ── Attendance ────────────────────────────────────────────────────────────
+  const attendedIds = useMemo(
+    () => new Set(playerAttendance.filter((a) => countsAsAttended(a.status)).map((a) => a.session_id)),
+    [playerAttendance],
+  );
 
-  // ── Monthly attendance ────────────────────────────────────────────────────
   const monthlyAttendance = useMemo(() => {
     if (!allSessions.length) return [];
-
-    const sessionsByMonth: Record<string, string[]> = {};
+    const byMonth: Record<string, string[]> = {};
     for (const s of allSessions) {
-      const month = s.date.slice(0, 7);
-      if (!sessionsByMonth[month]) sessionsByMonth[month] = [];
-      sessionsByMonth[month].push(s.id);
+      (byMonth[s.date.slice(0, 7)] ??= []).push(s.id);
     }
-
-    const attendedIds = new Set(
-      playerAttendance.filter((a) => countsAsAttended(a.status)).map((a) => a.session_id)
-    );
-
-    return Object.entries(sessionsByMonth)
-      .map(([month, sessionIds]) => {
-        const total = sessionIds.length;
-        const attended = sessionIds.filter((sid) => attendedIds.has(sid)).length;
-        const pct = Math.round((attended / total) * 100);
-        return { month, total, attended, pct };
+    return Object.entries(byMonth)
+      .map(([month, ids]) => {
+        const attended = ids.filter((sid) => attendedIds.has(sid)).length;
+        return { month, total: ids.length, attended, pct: Math.round((attended / ids.length) * 100) };
       })
       .sort((a, b) => a.month.localeCompare(b.month));
-  }, [allSessions, playerAttendance]);
+  }, [allSessions, attendedIds]);
 
-  const attendanceChartData = monthlyAttendance.map(({ month, pct, attended, total }) => ({
-    label: new Date(month + "-01T00:00:00").toLocaleDateString("en-US", { month: "short", year: "2-digit" }),
-    pct,
-    attended,
-    total,
-  }));
+  // ── Snapshot ──────────────────────────────────────────────────────────────
+  const overallAttendancePct = allSessions.length > 0
+    ? Math.round((allSessions.filter((s) => attendedIds.has(s.id)).length / allSessions.length) * 100)
+    : null;
 
-  const currentMonth = new Date().toISOString().slice(0, 7);
+  const matchTotals = useMemo(() => sumStats(matchStats), [matchStats]);
+
+  const bestBronco = results.reduce<number | null>(
+    (best, r) => (r.bronco_mins !== null && (best === null || r.bronco_mins < best) ? r.bronco_mins : best),
+    null,
+  );
 
   if (loading) {
     return (
       <div className="space-y-5">
         <Skeleton className="h-6 w-40" />
-        <div className="bg-card border border-border rounded-lg p-5 space-y-3">
+        <div className="bg-card border border-border rounded-2xl p-5 space-y-3">
           <Skeleton className="h-6 w-48" />
           <Skeleton className="h-4 w-32" />
-          <Skeleton className="h-4 w-64" />
         </div>
         <div className="bg-card border border-border rounded-2xl p-5"><ChartSkeleton /></div>
-        <div className="bg-card border border-border rounded-2xl p-5"><TableSkeleton /></div>
       </div>
     );
   }
@@ -234,18 +243,16 @@ export default function PlayerDetail() {
   }
 
   return (
-    <div className="space-y-5">
-      <div className="flex items-center gap-2">
-        <button onClick={() => setLocation("/players")} className="flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground transition-colors" data-testid="button-back">
-          <ArrowLeft size={14} />
-          Players
-        </button>
-      </div>
+    <div className="space-y-6">
+      <button onClick={() => setLocation("/players")} className="flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground transition-colors" data-testid="button-back">
+        <ArrowLeft size={14} />
+        Players
+      </button>
 
-      {/* Player info card */}
-      <div className="bg-card border border-border rounded-lg p-5">
-        <div className="flex items-start justify-between mb-4">
-          <div>
+      {/* ── Identity + snapshot ────────────────────────────────────────────── */}
+      <div className="bg-card border border-border rounded-2xl p-5">
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
             {editing ? (
               <input
                 value={editForm.name ?? ""}
@@ -256,50 +263,50 @@ export default function PlayerDetail() {
             ) : (
               <h1 className="text-3xl font-semibold tracking-tight text-foreground">{player.name}</h1>
             )}
-            <div className="flex items-center gap-3 mt-1">
-              <span className="font-time text-xs text-muted-foreground">{player.code}</span>
-              <span className={cn("text-xs font-semibold", positionColor(player.primary_position))}>{player.primary_position}</span>
-              {player.secondary_position && <span className="text-xs text-muted-foreground">/ {player.secondary_position}</span>}
-              <span className={cn("text-xs font-medium", ageRangeColor(player.age_range))}>{player.age_range ?? "—"}</span>
-              <span className={cn("inline-flex px-2 py-0.5 rounded text-xs", player.is_active ? "bg-emerald-500/15 text-emerald-400" : "bg-muted text-muted-foreground")}>
+            <div className="flex flex-wrap items-center gap-x-2 gap-y-1 mt-1.5 text-sm text-muted-foreground">
+              <span className="text-foreground font-medium">{player.primary_position}</span>
+              {player.secondary_position && <span>/ {player.secondary_position}</span>}
+              <span aria-hidden>·</span>
+              <span>{player.age_range ?? "—"}</span>
+              <span aria-hidden>·</span>
+              <span className={cn(!player.is_active && "text-muted-foreground/60")}>
                 {player.is_active ? "Active" : "Inactive"}
               </span>
             </div>
           </div>
-          <div className="flex gap-2">
-            {editing ? (
-              <div className="hidden sm:flex gap-2">
-                <button onClick={cancelEdit} className="flex items-center gap-1 px-3 py-1.5 text-sm border border-border rounded-md text-muted-foreground hover:text-foreground" data-testid="button-cancel-edit"><X size={13} />Cancel</button>
-                <button onClick={saveEdit} disabled={saving} className="flex items-center gap-1 px-3 py-1.5 text-sm btn-primary text-white rounded-xl font-semibold disabled:opacity-60" data-testid="button-save-edit"><Save size={13} />{saving ? "Saving…" : "Save"}</button>
-              </div>
-            ) : (
-              <button onClick={startEdit} className="flex items-center gap-1.5 px-3 py-1.5 text-sm border border-border rounded-md text-muted-foreground hover:text-foreground transition-colors" data-testid="button-edit-player"><Edit size={13} />Edit</button>
-            )}
-          </div>
+
+          {editing ? (
+            <div className="hidden sm:flex gap-2 shrink-0">
+              <button onClick={cancelEdit} className="flex items-center gap-1 px-3 py-1.5 text-sm border border-border rounded-lg text-muted-foreground hover:text-foreground" data-testid="button-cancel-edit"><X size={13} />Cancel</button>
+              <button onClick={saveEdit} disabled={saving} className="flex items-center gap-1 px-3 py-1.5 text-sm btn-primary text-white rounded-xl font-semibold disabled:opacity-60" data-testid="button-save-edit"><Save size={13} />{saving ? "Saving…" : "Save"}</button>
+            </div>
+          ) : (
+            <button onClick={startEdit} className="flex items-center gap-1.5 px-3 py-1.5 text-sm border border-border rounded-lg text-muted-foreground hover:text-foreground transition-colors shrink-0" data-testid="button-edit-player"><Edit size={13} />Edit</button>
+          )}
         </div>
 
         {editing && (
-          <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 pt-2 border-t border-border">
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 pt-4 mt-4 border-t border-border">
             <div>
               <label className="block text-xs text-muted-foreground mb-1">Primary Position</label>
-              <select value={editForm.primary_position ?? ""} onChange={(e) => setEditForm({ ...editForm, primary_position: e.target.value, secondary_position: null })} className="w-full bg-muted border border-border rounded px-2 py-1.5 text-sm text-foreground">
+              <select value={editForm.primary_position ?? ""} onChange={(e) => setEditForm({ ...editForm, primary_position: e.target.value, secondary_position: null })} className="w-full bg-muted border border-border rounded-lg px-2 py-1.5 text-sm text-foreground">
                 {PRIMARY_POSITIONS.map((p) => <option key={p} value={p}>{p}</option>)}
               </select>
             </div>
             <div>
               <label className="block text-xs text-muted-foreground mb-1">Secondary Position</label>
-              <select value={editForm.secondary_position ?? ""} onChange={(e) => setEditForm({ ...editForm, secondary_position: e.target.value || null })} className="w-full bg-muted border border-border rounded px-2 py-1.5 text-sm text-foreground">
+              <select value={editForm.secondary_position ?? ""} onChange={(e) => setEditForm({ ...editForm, secondary_position: e.target.value || null })} className="w-full bg-muted border border-border rounded-lg px-2 py-1.5 text-sm text-foreground">
                 <option value="">— None —</option>
                 {(SECONDARY_POSITIONS[editForm.primary_position ?? ""] ?? []).map((p) => <option key={p} value={p}>{p}</option>)}
               </select>
             </div>
             <div>
               <label className="block text-xs text-muted-foreground mb-1">Year of Birth</label>
-              <input type="number" value={editForm.year_of_birth ?? ""} onChange={(e) => setEditForm({ ...editForm, year_of_birth: parseInt(e.target.value) || null })} className="w-full bg-muted border border-border rounded px-2 py-1.5 text-sm text-foreground" />
+              <input type="number" value={editForm.year_of_birth ?? ""} onChange={(e) => setEditForm({ ...editForm, year_of_birth: parseInt(e.target.value) || null })} className="w-full bg-muted border border-border rounded-lg px-2 py-1.5 text-sm text-foreground" />
             </div>
             <div>
               <label className="block text-xs text-muted-foreground mb-1">Team</label>
-              <select value={editForm.team ?? "Sharks"} onChange={(e) => setEditForm({ ...editForm, team: e.target.value as "Sharks" | "Wildcats" })} className="w-full bg-muted border border-border rounded px-2 py-1.5 text-sm text-foreground">
+              <select value={editForm.team ?? "Sharks"} onChange={(e) => setEditForm({ ...editForm, team: e.target.value as "Sharks" | "Wildcats" })} className="w-full bg-muted border border-border rounded-lg px-2 py-1.5 text-sm text-foreground">
                 <option value="Sharks">Sharks</option>
                 <option value="Wildcats">Wildcats</option>
               </select>
@@ -309,396 +316,171 @@ export default function PlayerDetail() {
               <label htmlFor="edit_active" className="text-sm text-muted-foreground">Active</label>
             </div>
             <div className="sm:hidden flex gap-2 pt-2 col-span-2">
-              <button onClick={cancelEdit} className="flex-1 flex items-center justify-center gap-1 px-3 py-2 text-sm border border-border rounded-md text-muted-foreground hover:text-foreground"><X size={13} />Cancel</button>
+              <button onClick={cancelEdit} className="flex-1 flex items-center justify-center gap-1 px-3 py-2 text-sm border border-border rounded-lg text-muted-foreground hover:text-foreground"><X size={13} />Cancel</button>
               <button onClick={saveEdit} disabled={saving} className="flex-1 flex items-center justify-center gap-1 px-3 py-2 text-sm btn-primary text-white rounded-xl font-semibold disabled:opacity-60"><Save size={13} />{saving ? "Saving…" : "Save"}</button>
             </div>
           </div>
         )}
 
-        {/* Best + latest stats */}
-        {results.length > 0 && (() => {
-          const bestBronco = results.reduce<number | null>((best, r) => r.bronco_mins !== null && (best === null || r.bronco_mins < best) ? r.bronco_mins : best, null);
-          const bestMas    = results.reduce<number | null>((best, r) => r.mas_ms !== null    && (best === null || r.mas_ms > best)    ? r.mas_ms    : best, null);
-          const bestTen    = results.reduce<number | null>((best, r) => r.ten_m_1 !== null   && (best === null || r.ten_m_1 < best)   ? r.ten_m_1   : best, null);
-          const bestTwenty = results.reduce<number | null>((best, r) => r.twenty_m_1 !== null && (best === null || r.twenty_m_1 < best) ? r.twenty_m_1 : best, null);
-          const stats = [
-            { label: "Broncho",     best: formatBroncho(bestBronco),                                       latest: formatBroncho(latestResult?.bronco_mins) },
-            { label: "MAS (m/s)",   best: bestMas    !== null ? bestMas.toFixed(2)    : "—",               latest: latestResult?.mas_ms    !== null ? latestResult!.mas_ms!.toFixed(2)    + "" : "—" },
-            { label: "10m Sprint",  best: bestTen    !== null ? bestTen.toFixed(2)    + "s" : "—",         latest: latestResult?.ten_m_1   !== null ? latestResult!.ten_m_1!.toFixed(2)   + "s" : "—" },
-            { label: "20m Sprint",  best: bestTwenty !== null ? bestTwenty.toFixed(2) + "s" : "—",         latest: latestResult?.twenty_m_1 !== null ? latestResult!.twenty_m_1!.toFixed(2) + "s" : "—" },
-          ];
-          return (
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-4 border-t border-border mt-4">
-              {stats.map(({ label, best, latest }) => (
-                <div key={label}>
-                  <div className="text-xs text-muted-foreground mb-0.5">{label}</div>
-                  <div className="text-lg font-bold font-time text-foreground">{best}</div>
-                  {best !== latest && <div className="text-[11px] font-time text-muted-foreground/60 mt-0.5">Latest: {latest}</div>}
-                </div>
-              ))}
-              <div className="sm:col-span-4 flex items-center gap-2">
-                <span className="text-xs text-muted-foreground">Team band:</span>
-                {teamBand
-                  ? <span className="inline-block px-2 py-0.5 rounded-full text-[11px] font-semibold" style={{ backgroundColor: teamBand.color + "20", color: teamBand.color }}>{teamBand.label}</span>
-                  : <span className="text-xs text-muted-foreground">—</span>
-                }
-              </div>
-            </div>
-          );
-        })()}
-      </div>
-
-      {/* Tournament record — goals, minutes, appearances */}
-      <PlayerTournamentStats stats={matchStats} />
-
-      {/* ACWR + Load Trend side by side */}
-      {recentLoad.length > 0 && (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 items-stretch">
-          {/* ACWR Card */}
-          <div className={cn("border rounded-2xl p-4 flex flex-col", acwrCfg.bg, acwrCfg.border)}>
-            <div className="flex items-start justify-between mb-2">
-              <div>
-                <div className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground mb-1">
-                  ACWR
-                </div>
-                <div className="text-2xl font-bold font-time" style={{ color: acwrCfg.color }}>
-                  {acwr !== null ? acwr.toFixed(2) : "—"}
-                </div>
-                <div className="text-xs font-medium mt-0.5" style={{ color: acwrCfg.color }}>
-                  {acwrCfg.label}
-                </div>
-              </div>
-              <div className="text-right text-[11px] text-muted-foreground space-y-1">
-                <div>Acute (7d): <span className="text-foreground font-time font-bold">{Math.round(acuteLoad)} AU</span></div>
-                <div>Chronic avg/wk: <span className="text-foreground font-time font-bold">{Math.round(chronicWeeklyAvg)} AU</span></div>
-              </div>
-            </div>
-            <p className="text-xs text-muted-foreground mb-3">{acwrCfg.desc}</p>
-            <div className="flex h-1.5 rounded-full overflow-hidden gap-px">
-              <div className="w-[10%] bg-indigo-400/50" title="< 0.5 Underloaded" />
-              <div className="w-[60%] bg-emerald-400/50" title="0.5–1.3 Safe" />
-              <div className="w-[15%] bg-amber-400/50" title="1.3–1.5 Caution" />
-              <div className="w-[15%] bg-red-400/50" title="> 1.5 Danger" />
-            </div>
-            <div className="flex justify-between text-[10px] text-muted-foreground mt-1">
-              <span>0.5</span><span>0.8</span><span>1.3</span><span>1.5</span><span>2.0+</span>
-            </div>
-          </div>
-
-          {/* Load Trend Chart */}
-          {loadChartData.length > 0 && (
-            <div className="bg-card border border-border rounded-2xl p-4 flex flex-col">
-              <div className="flex items-center justify-between mb-1">
-                <h2 className="text-sm font-semibold text-foreground">Training Load Trend</h2>
-                <span className="text-xs text-muted-foreground">{recentLoad.length} sessions</span>
-              </div>
-              <div className="flex-1 min-h-0 mt-2" style={{ minHeight: 120 }}>
-                <ResponsiveContainer width="100%" height="100%">
-                  <LineChart data={loadWithAvg} margin={{ top: 4, right: 8, bottom: 30, left: -8 }}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#222" vertical={false} />
-                    <XAxis dataKey="date" tick={{ fill: "#9CA3AF", fontSize: 8 }} angle={-35} textAnchor="end" interval="preserveStartEnd" />
-                    <YAxis tick={{ fill: "#9CA3AF", fontSize: 9 }} width={32} />
-                    <Tooltip
-                      contentStyle={{ background: "#111", border: "1px solid #222", borderRadius: 6 }}
-                      labelStyle={{ color: "#fff", fontSize: 12 }}
-                      formatter={(v: number, key: string) => [
-                        `${v} AU`,
-                        key === "rollingAvg" ? "Rolling Avg (4)" : "Load",
-                      ]}
-                    />
-                    <Line
-                      type="monotone"
-                      dataKey="load"
-                      stroke="#818cf8"
-                      strokeWidth={2}
-                      dot={(props: { cx: number; cy: number; payload: { color: string } }) => (
-                        <circle key={`${props.cx}-${props.cy}`} cx={props.cx} cy={props.cy} r={3} fill={props.payload.color} stroke="#111" strokeWidth={1} />
-                      )}
-                    />
-                    <Line
-                      type="monotone"
-                      dataKey="rollingAvg"
-                      stroke="rgba(255,255,255,0.4)"
-                      strokeWidth={1.5}
-                      strokeDasharray="4 2"
-                      dot={false}
-                    />
-                  </LineChart>
-                </ResponsiveContainer>
-              </div>
-              <div className="flex flex-wrap gap-2 mt-2">
-                {Object.entries(SESSION_TYPE_COLORS).map(([type, color]) => (
-                  <div key={type} className="flex items-center gap-1 text-[10px] text-muted-foreground">
-                    <div className="w-1.5 h-1.5 rounded-full" style={{ background: color }} />
-                    {type}
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
+        {/* Snapshot — attendance is the only value carrying colour */}
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 pt-4 mt-4 border-t border-border">
+          <SnapshotTile
+            label="Attendance"
+            value={overallAttendancePct !== null ? `${overallAttendancePct}%` : "—"}
+            sub={allSessions.length > 0 ? `${allSessions.filter((s) => attendedIds.has(s.id)).length}/${allSessions.length} sessions` : undefined}
+            valueColor={overallAttendancePct !== null ? attendancePctColor(overallAttendancePct) : undefined}
+          />
+          <SnapshotTile label="Goals" value={matchTotals.goals} sub={matchTotals.assists > 0 ? `${matchTotals.assists} assists` : undefined} />
+          <SnapshotTile label="Appearances" value={matchTotals.appearances} sub={matchStats.length > 0 ? `${matchStats.length} call-ups` : undefined} />
+          <SnapshotTile label="Best Broncho" value={formatBroncho(bestBronco)} sub={latestResult?.bronco_mins != null ? `Latest ${formatBroncho(latestResult.bronco_mins)}` : undefined} />
         </div>
-      )}
-
-      {/* Broncho over time chart */}
-      <div className="bg-card border border-border rounded-2xl p-5">
-        <h2 className="text-sm font-semibold text-foreground mb-4">Broncho Over Time</h2>
-        {bronchoChartData.length === 0 ? (
-          <EmptyState icon={Timer} title="No test history" description="This player hasn't been tested yet" />
-        ) : (
-          <ResponsiveContainer width="100%" height={180}>
-            <LineChart data={bronchoChartData} margin={{ top: 4, right: 8, bottom: 40, left: 0 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#222" />
-              <XAxis dataKey="session" tick={{ fill: "#9CA3AF", fontSize: 10 }} angle={-35} textAnchor="end" interval={0} />
-              <YAxis tickFormatter={(v) => formatBroncho(v)} domain={["auto", "auto"]} tick={{ fill: "#9CA3AF", fontSize: 11 }} />
-              <Tooltip
-                contentStyle={{ background: "#111", border: "1px solid #222", borderRadius: 6 }}
-                labelStyle={{ color: "#fff", fontSize: 12 }}
-                formatter={(v: number) => [formatBroncho(v), "Broncho"]}
-              />
-              <Line type="monotone" dataKey="mins" stroke="#4F46E5" strokeWidth={2} dot={{ fill: "#4F46E5", r: 4 }} connectNulls />
-            </LineChart>
-          </ResponsiveContainer>
-        )}
       </div>
 
-      {/* Monthly Attendance */}
-      {monthlyAttendance.length > 0 && (
+      {/* ── Availability ───────────────────────────────────────────────────── */}
+      <section className="space-y-2">
+        <SectionLabel>Availability</SectionLabel>
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 items-stretch">
+          <AttendanceCard monthly={monthlyAttendance} />
+          <LastSessionsCard sessions={allSessions} attendance={playerAttendance} />
+        </div>
+      </section>
+
+      {/* ── Match record ───────────────────────────────────────────────────── */}
+      <section className="space-y-2">
+        <SectionLabel>Match Record</SectionLabel>
+        <PlayerTournamentStats stats={matchStats} />
+      </section>
+
+      {/* ── Fitness ────────────────────────────────────────────────────────── */}
+      <section className="space-y-2">
+        <SectionLabel>Fitness</SectionLabel>
         <div className="bg-card border border-border rounded-2xl p-5">
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="text-sm font-semibold text-foreground">Monthly Attendance</h2>
-            <span className="text-xs px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-400 border border-amber-500/20 font-medium">
-              Min. 75% required
-            </span>
-          </div>
-          <ResponsiveContainer width="100%" height={140}>
-            <BarChart data={attendanceChartData} margin={{ top: 4, right: 8, bottom: 0, left: -16 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" vertical={false} />
-              <XAxis dataKey="label" tick={{ fill: "#9CA3AF", fontSize: 10 }} axisLine={false} tickLine={false} />
-              <YAxis domain={[0, 100]} tickFormatter={(v) => `${v}%`} tick={{ fill: "#9CA3AF", fontSize: 10 }} axisLine={false} tickLine={false} />
-              <Tooltip
-                contentStyle={{ background: "#111", border: "1px solid #222", borderRadius: 6, fontSize: 12 }}
-                cursor={{ fill: "rgba(255,255,255,0.04)" }}
-                formatter={(_v: unknown, _n: unknown, props: { payload?: { pct: number; attended: number; total: number } }) => [
-                  `${props.payload?.attended ?? 0}/${props.payload?.total ?? 0} sessions (${props.payload?.pct ?? 0}%)`,
-                  "Attendance",
-                ]}
-              />
-              <ReferenceLine y={75} stroke="#f59e0b" strokeDasharray="4 4" strokeWidth={1.5} />
-              <Bar dataKey="pct" radius={[3, 3, 0, 0]} maxBarSize={20}>
-                {attendanceChartData.map((entry, idx) => (
-                  <Cell key={idx} fill={entry.pct >= 75 ? "#34d399" : "#f87171"} fillOpacity={0.85} />
-                ))}
-              </Bar>
-            </BarChart>
-          </ResponsiveContainer>
-          {/* Month chips */}
-          <div className="flex gap-2 mt-4 flex-wrap">
-            {monthlyAttendance.map(({ month, pct, attended, total }) => {
-              const isCurrentMonth = month === currentMonth;
-              const passing = pct >= 75;
-              return (
-                <div
-                  key={month}
-                  className={cn(
-                    "flex flex-col items-center px-3 py-2 rounded-xl text-center min-w-[58px] border transition-all",
-                    passing
-                      ? "bg-emerald-500/10 border-emerald-500/20"
-                      : "bg-red-500/10 border-red-500/20",
-                    isCurrentMonth && "ring-1 ring-indigo-500 ring-offset-1 ring-offset-card",
-                  )}
-                >
-                  <span className="text-[10px] text-muted-foreground leading-tight">
-                    {new Date(month + "-01T00:00:00").toLocaleDateString("en-US", { month: "short" })}
-                    {" '"}
-                    {month.slice(2, 4)}
-                  </span>
-                  <span className={cn("text-base font-bold font-time leading-tight mt-0.5", passing ? "text-emerald-400" : "text-red-400")}>
-                    {pct}%
-                  </span>
-                  <span className="text-[10px] text-muted-foreground leading-tight">{attended}/{total}</span>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      )}
-
-      {/* Broncho over time chart */}
-      <div className="bg-card border border-border rounded-2xl p-5">
-        <h2 className="text-sm font-semibold text-foreground mb-4">Broncho Over Time</h2>
-        {bronchoChartData.length === 0 ? (
-          <EmptyState icon={Timer} title="No test history" description="This player hasn't been tested yet" />
-        ) : (
-          <ResponsiveContainer width="100%" height={180}>
-            <LineChart data={bronchoChartData} margin={{ top: 4, right: 8, bottom: 40, left: 0 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#222" />
-              <XAxis dataKey="session" tick={{ fill: "#9CA3AF", fontSize: 10 }} angle={-35} textAnchor="end" interval={0} />
-              <YAxis tickFormatter={(v) => formatBroncho(v)} domain={["auto", "auto"]} tick={{ fill: "#9CA3AF", fontSize: 11 }} />
-              <Tooltip
-                contentStyle={{ background: "#111", border: "1px solid #222", borderRadius: 6 }}
-                labelStyle={{ color: "#fff", fontSize: 12 }}
-                formatter={(v: number) => [formatBroncho(v), "Broncho"]}
-              />
-              <Line type="monotone" dataKey="mins" stroke="#4F46E5" strokeWidth={2} dot={{ fill: "#4F46E5", r: 4 }} connectNulls />
-            </LineChart>
-          </ResponsiveContainer>
-        )}
-      </div>
-
-      {/* Session type breakdown */}
-      {loadByType.length > 0 && (
-        <div className="grid grid-cols-2 sm:grid-cols-4 border border-border rounded-2xl overflow-hidden divide-x divide-y sm:divide-y-0 divide-border bg-card">
-          {loadByType.map(({ type, total, count, color }) => (
-            <div key={type} className="px-4 py-3">
-              <div className="text-[10px] text-muted-foreground mb-0.5">{type}</div>
-              <div className="text-lg font-bold font-time" style={{ color }}>{total} AU</div>
-              <div className="text-[11px] text-muted-foreground">{count} session{count !== 1 ? "s" : ""}</div>
-            </div>
-          ))}
-        </div>
-      )}
-
-      {/* Recent Load — collapsible */}
-      <div className="bg-card border border-border rounded-lg">
-        <button
-          onClick={() => setRecentLoadOpen((o) => !o)}
-          className="w-full px-4 py-3 flex items-center justify-between hover:bg-muted/30 transition-colors"
-        >
-          <h2 className="text-sm font-semibold text-foreground">Recent Load</h2>
-          <div className="flex items-center gap-2">
-            <span className="text-xs text-muted-foreground">Last 5 sessions</span>
-            <ChevronDown size={14} className={cn("text-muted-foreground transition-transform", recentLoadOpen && "rotate-180")} />
-          </div>
-        </button>
-        {recentLoadOpen && (
-          recentLoad.length === 0 ? (
-            <div className="py-8 text-center border-t border-border">
-              <p className="text-sm text-muted-foreground">No sessions logged yet</p>
-            </div>
-          ) : (
-            <div className="overflow-x-auto border-t border-border">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b border-border text-xs text-muted-foreground">
-                    <th className="px-4 py-2.5 text-left font-medium">Date</th>
-                    <th className="px-4 py-2.5 text-left font-medium">Type</th>
-                    <th className="px-4 py-2.5 text-right font-medium">RPE</th>
-                    <th className="px-4 py-2.5 text-right font-medium">Load (AU)</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {[...recentLoad]
-                    .sort((a, b) => (b.sessions?.date ?? "").localeCompare(a.sessions?.date ?? ""))
-                    .slice(0, 5)
-                    .map((r) => {
-                      const st = r.sessions?.session_type as SessionType;
-                      const cfg = SESSION_TYPE_CFG[st] ?? SESSION_TYPE_CFG.Training;
-                      const dateStr = r.sessions?.date
-                        ? new Date(r.sessions.date + "T00:00:00").toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })
-                        : "—";
-                      return (
-                        <tr key={r.id} className="border-b border-border/50 hover:bg-muted/30">
-                          <td className="px-4 py-2.5 text-muted-foreground font-time text-xs">{dateStr}</td>
-                          <td className="px-4 py-2.5">
-                            <span className={cn("inline-flex items-center px-2 py-0.5 rounded text-xs font-medium", cfg.bg, cfg.text)}>{st}</span>
-                          </td>
-                          <td className="px-4 py-2.5 text-right font-time text-foreground">{r.rpe.toFixed(1)}</td>
-                          <td className="px-4 py-2.5 text-right font-bold font-time text-amber-400">{Math.round(r.load_au)}</td>
-                        </tr>
-                      );
-                    })}
-                </tbody>
-              </table>
-            </div>
-          )
-        )}
-      </div>
-
-      {/* Test History — collapsible */}
-      <div className="bg-card border border-border rounded-lg">
-        <button
-          onClick={() => setTestHistoryOpen((o) => !o)}
-          className="w-full px-4 py-3 flex items-center justify-between hover:bg-muted/30 transition-colors"
-        >
-          <h2 className="text-sm font-semibold text-foreground">Test History</h2>
-          <div className="flex items-center gap-2">
-            <span className="text-xs text-muted-foreground">{results.length} result{results.length !== 1 ? "s" : ""}</span>
-            <ChevronDown size={14} className={cn("text-muted-foreground transition-transform", testHistoryOpen && "rotate-180")} />
-          </div>
-        </button>
-        {testHistoryOpen && (
-          results.length === 0 ? (
-            <EmptyState icon={Dumbbell} title="No test results" description="No fitness tests recorded for this player" />
+          <h3 className="text-sm font-semibold text-foreground mb-4">Broncho Over Time</h3>
+          {bronchoChartData.length === 0 ? (
+            <EmptyState icon={Timer} title="No test history" description="This player hasn't been tested yet" />
           ) : (
             <>
-              <div className="overflow-x-auto border-t border-border">
-                <table className="w-full text-sm" data-testid="test-history-table">
-                  <thead>
-                    <tr className="border-b border-border text-xs text-muted-foreground">
-                      <th className="px-4 py-2.5 text-left font-medium">Date</th>
-                      <th className="px-4 py-2.5 text-left font-medium">Session</th>
-                      <th className="px-4 py-2.5 text-right font-medium">Broncho</th>
-                      <th className="px-4 py-2.5 text-right font-medium">MAS</th>
-                      <th className="px-4 py-2.5 text-right font-medium">10m</th>
-                      <th className="px-4 py-2.5 text-right font-medium">20m</th>
-                      <th className="px-4 py-2.5 text-right font-medium">40m</th>
-                      <th className="px-4 py-2.5 text-right font-medium">Tier</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {results.slice(historyPage * HISTORY_PAGE_SIZE, (historyPage + 1) * HISTORY_PAGE_SIZE).map((r) => (
-                      <tr key={r.id} className="border-b border-border/50 hover:bg-muted/30" data-testid={`row-result-${r.id}`}>
-                        <td className="px-4 py-2.5 text-muted-foreground font-time text-xs">{r.test_sessions?.test_date ?? "—"}</td>
-                        <td className="px-4 py-2.5 text-foreground">
-                          <div className="flex items-center gap-1.5">
-                            {r.test_sessions?.test_name ?? "—"}
-                            {r.test_sessions?.type && (
-                              <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-indigo-500/10 text-indigo-400 border border-indigo-500/20">
-                                {r.test_sessions.type}
-                              </span>
-                            )}
-                          </div>
-                        </td>
-                        <td className="px-4 py-2.5 text-right font-time text-foreground">{formatBroncho(r.bronco_mins)}</td>
-                        <td className="px-4 py-2.5 text-right font-time text-foreground">{r.mas_ms !== null ? r.mas_ms.toFixed(2) : "—"}</td>
-                        <td className="px-4 py-2.5 text-right font-time text-muted-foreground">{r.ten_m_1 !== null ? r.ten_m_1.toFixed(2) + "s" : "—"}</td>
-                        <td className="px-4 py-2.5 text-right font-time text-muted-foreground">{r.twenty_m_1 !== null ? r.twenty_m_1.toFixed(2) + "s" : "—"}</td>
-                        <td className="px-4 py-2.5 text-right font-time text-muted-foreground">{r.forty_m_1 !== null ? r.forty_m_1.toFixed(2) + "s" : "—"}</td>
-                        <td className="px-4 py-2.5 text-right"><MasBadge mas={r.mas_ms} /></td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-              {results.length > HISTORY_PAGE_SIZE && (
-                <div className="px-4 py-3 border-t border-border flex items-center justify-between">
-                  <span className="text-xs text-muted-foreground">
-                    Page {historyPage + 1} of {Math.ceil(results.length / HISTORY_PAGE_SIZE)}
-                  </span>
-                  <div className="flex gap-1">
-                    <button
-                      onClick={() => setHistoryPage((p) => Math.max(0, p - 1))}
-                      disabled={historyPage === 0}
-                      className="p-1 rounded text-muted-foreground hover:text-foreground disabled:opacity-30 disabled:cursor-not-allowed"
-                      data-testid="history-prev"
-                    >
-                      <ChevronLeft size={16} />
-                    </button>
-                    <button
-                      onClick={() => setHistoryPage((p) => Math.min(Math.ceil(results.length / HISTORY_PAGE_SIZE) - 1, p + 1))}
-                      disabled={historyPage >= Math.ceil(results.length / HISTORY_PAGE_SIZE) - 1}
-                      className="p-1 rounded text-muted-foreground hover:text-foreground disabled:opacity-30 disabled:cursor-not-allowed"
-                      data-testid="history-next"
-                    >
-                      <ChevronRight size={16} />
-                    </button>
+              <ResponsiveContainer width="100%" height={180}>
+                <LineChart data={bronchoChartData} margin={{ top: 4, right: 8, bottom: 40, left: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke={chartGrid} />
+                  <XAxis dataKey="session" tick={{ fill: chartAxis, fontSize: 10 }} angle={-35} textAnchor="end" interval={0} />
+                  <YAxis tickFormatter={(v) => formatBroncho(v)} domain={["auto", "auto"]} tick={{ fill: chartAxis, fontSize: 11 }} />
+                  <Tooltip
+                    contentStyle={{ background: chartTooltipBg, border: `1px solid ${chartTooltipBorder}`, borderRadius: 8 }}
+                    labelStyle={{ color: chartLabel, fontSize: 12 }}
+                    formatter={(v: number) => [formatBroncho(v), "Broncho"]}
+                  />
+                  <Line type="monotone" dataKey="mins" stroke="#6366f1" strokeWidth={2} dot={{ fill: "#6366f1", r: 4 }} connectNulls />
+                </LineChart>
+              </ResponsiveContainer>
+
+              {/* Best / latest test numbers live with the chart they describe */}
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 pt-4 mt-2 border-t border-border">
+                {[
+                  { label: "Broncho",    best: formatBroncho(bestBronco), latest: formatBroncho(latestResult?.bronco_mins) },
+                  { label: "MAS (m/s)",  best: fmtBest(results, "mas_ms", true),     latest: fmtVal(latestResult?.mas_ms) },
+                  { label: "10m Sprint", best: fmtBest(results, "ten_m_1", false, "s"),    latest: fmtVal(latestResult?.ten_m_1, "s") },
+                  { label: "20m Sprint", best: fmtBest(results, "twenty_m_1", false, "s"), latest: fmtVal(latestResult?.twenty_m_1, "s") },
+                ].map(({ label, best, latest }) => (
+                  <div key={label}>
+                    <div className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground mb-1">{label}</div>
+                    <div className="text-lg font-bold font-time text-foreground">{best}</div>
+                    {best !== latest && <div className="text-[11px] font-time text-muted-foreground mt-0.5">Latest: {latest}</div>}
                   </div>
+                ))}
+              </div>
+
+              {teamBand && (
+                <div className="flex items-center gap-2 mt-4">
+                  <span className="text-xs text-muted-foreground">Team band:</span>
+                  <span className="inline-block px-2 py-0.5 rounded-full text-[11px] font-semibold" style={{ backgroundColor: teamBand.color + "20", color: teamBand.color }}>
+                    {teamBand.label}
+                  </span>
                 </div>
               )}
             </>
-          )
-        )}
-      </div>
+          )}
+        </div>
+      </section>
+
+      {/* ── Training load ──────────────────────────────────────────────────── */}
+      {recentLoad.length > 0 && (
+        <section className="space-y-2">
+          <SectionLabel>Training Load</SectionLabel>
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 items-stretch">
+            {/* ACWR */}
+            <div className="bg-card border border-border rounded-2xl p-5 flex flex-col">
+              <div className="flex items-start justify-between mb-2">
+                <div>
+                  <div className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground mb-1">ACWR</div>
+                  <div className="text-3xl font-bold font-time leading-none" style={{ color: acwrCfg.color }}>
+                    {acwr !== null ? acwr.toFixed(2) : "—"}
+                  </div>
+                  <div className="text-xs font-medium mt-1" style={{ color: acwrCfg.color }}>{acwrCfg.label}</div>
+                </div>
+                <div className="text-right text-[11px] text-muted-foreground space-y-1">
+                  <div>Acute (7d) <span className="text-foreground font-time font-bold">{Math.round(acuteLoad)}</span></div>
+                  <div>Chronic /wk <span className="text-foreground font-time font-bold">{Math.round(chronicWeeklyAvg)}</span></div>
+                </div>
+              </div>
+              <p className="text-xs text-muted-foreground mb-3">{acwrCfg.desc}</p>
+              <div className="flex h-1.5 rounded-full overflow-hidden gap-px mt-auto">
+                <div className="w-[10%] bg-slate-400/40" title="< 0.5 Underloaded" />
+                <div className="w-[60%] bg-emerald-400/50" title="0.5–1.3 Safe" />
+                <div className="w-[15%] bg-amber-400/50" title="1.3–1.5 Caution" />
+                <div className="w-[15%] bg-red-400/50" title="> 1.5 High risk" />
+              </div>
+              <div className="flex justify-between text-[10px] text-muted-foreground mt-1">
+                <span>0.5</span><span>0.8</span><span>1.3</span><span>1.5</span><span>2.0+</span>
+              </div>
+            </div>
+
+            {/* Load trend */}
+            {loadChartData.length > 0 && (
+              <div className="bg-card border border-border rounded-2xl p-5 flex flex-col">
+                <div className="flex items-center justify-between mb-2">
+                  <h3 className="text-sm font-semibold text-foreground">Load Trend</h3>
+                  <span className="text-[11px] text-muted-foreground">{recentLoad.length} sessions</span>
+                </div>
+                <div className="flex-1 min-h-0" style={{ minHeight: 150 }}>
+                  <ResponsiveContainer width="100%" height="100%">
+                    <LineChart data={loadWithAvg} margin={{ top: 4, right: 8, bottom: 30, left: -8 }}>
+                      <CartesianGrid strokeDasharray="3 3" stroke={chartGrid} vertical={false} />
+                      <XAxis dataKey="date" tick={{ fill: chartAxis, fontSize: 9 }} angle={-35} textAnchor="end" interval="preserveStartEnd" />
+                      <YAxis tick={{ fill: chartAxis, fontSize: 9 }} width={32} />
+                      <Tooltip
+                        contentStyle={{ background: chartTooltipBg, border: `1px solid ${chartTooltipBorder}`, borderRadius: 8 }}
+                        labelStyle={{ color: chartLabel, fontSize: 12 }}
+                        formatter={(v: number, key: string) => [`${v} AU`, key === "rollingAvg" ? "Rolling avg (4)" : "Load"]}
+                      />
+                      <Line type="monotone" dataKey="load" stroke="#6366f1" strokeWidth={2} dot={{ fill: "#6366f1", r: 2.5 }} />
+                      <Line type="monotone" dataKey="rollingAvg" stroke={chartAxis} strokeWidth={1.5} strokeDasharray="4 2" dot={false} />
+                    </LineChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
+            )}
+          </div>
+        </section>
+      )}
     </div>
   );
+}
+
+// ── Test-value formatting helpers ─────────────────────────────────────────────
+type ResultRow = TestResult & { test_sessions?: { test_date: string; test_name: string; type: string | null } };
+
+function fmtVal(v: number | null | undefined, suffix = ""): string {
+  return v != null ? v.toFixed(2) + suffix : "—";
+}
+
+/** Best value for a numeric test field — higher is better only for MAS. */
+function fmtBest(rows: ResultRow[], field: keyof TestResult, higherIsBetter: boolean, suffix = ""): string {
+  const best = rows.reduce<number | null>((acc, r) => {
+    const v = r[field] as number | null;
+    if (v === null || v === undefined) return acc;
+    if (acc === null) return v;
+    return higherIsBetter ? Math.max(acc, v) : Math.min(acc, v);
+  }, null);
+  return best !== null ? best.toFixed(2) + suffix : "—";
 }
