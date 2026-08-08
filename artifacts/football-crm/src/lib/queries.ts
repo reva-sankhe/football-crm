@@ -631,6 +631,28 @@ export async function bulkUpsertMatchStats(matchId: string, rows: MatchStatInput
   if (error) throw error;
 }
 
+/** One stat line per match a player featured in, newest first. */
+export type PlayerMatchStat = MatchPlayerStat & {
+  matches: (Pick<Match, "id" | "stage" | "opponent" | "goals_for" | "goals_against" | "tournament_id"> & {
+    tournaments: Pick<Tournament, "id" | "name"> | null;
+    sessions: Pick<TrainingSession, "id" | "date"> | null;
+  }) | null;
+};
+
+export async function fetchMatchStatsByPlayer(playerId: string): Promise<PlayerMatchStat[]> {
+  const { data, error } = await supabase
+    .from("match_player_stats")
+    .select(
+      "*, matches(id, stage, opponent, goals_for, goals_against, tournament_id, tournaments(id, name), sessions(id, date))"
+    )
+    .eq("player_id", playerId);
+  if (error) throw error;
+  // Match date lives on the joined session, so sort here rather than in SQL
+  return ((data ?? []) as PlayerMatchStat[]).sort((a, b) =>
+    (b.matches?.sessions?.date ?? "").localeCompare(a.matches?.sessions?.date ?? ""),
+  );
+}
+
 export interface TournamentLeader {
   player: Pick<Player, "id" | "name" | "primary_position">;
   minutes: number;

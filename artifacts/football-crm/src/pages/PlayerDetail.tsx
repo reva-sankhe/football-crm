@@ -1,6 +1,7 @@
 import { useEffect, useState, useCallback, useMemo } from "react";
 import { useParams, useLocation } from "wouter";
-import { fetchPlayer, fetchResultsByPlayer, updatePlayer, fetchAllResults, fetchPlayerRecentSessions, fetchAttendanceByPlayer, fetchTrainingSessions } from "@/lib/queries";
+import { fetchPlayer, fetchResultsByPlayer, updatePlayer, fetchAllResults, fetchPlayerRecentSessions, fetchAttendanceByPlayer, fetchTrainingSessions, fetchMatchStatsByPlayer, type PlayerMatchStat } from "@/lib/queries";
+import { PlayerTournamentStats } from "@/components/tournaments/PlayerTournamentStats";
 import { formatBroncho, positionColor, ageRangeColor, cn } from "@/lib/utils";
 import { SESSION_TYPE_CFG, countsAsAttended } from "@/lib/attendance";
 import { MasBadge } from "@/components/MasBadge";
@@ -46,24 +47,27 @@ export default function PlayerDetail() {
   const [testHistoryOpen, setTestHistoryOpen] = useState(false);
   const [allSessions, setAllSessions] = useState<TrainingSession[]>([]);
   const [playerAttendance, setPlayerAttendance] = useState<(SessionAttendance & { sessions: { id: string; date: string; session_type: string } })[]>([]);
+  const [matchStats, setMatchStats] = useState<PlayerMatchStat[]>([]);
   const HISTORY_PAGE_SIZE = 10;
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [p, rs, allRs, loadHistory, attendance, sessions] = await Promise.all([
+      const [p, rs, allRs, loadHistory, attendance, sessions, mStats] = await Promise.all([
         fetchPlayer(id!),
         fetchResultsByPlayer(id!),
         fetchAllResults(),
         fetchPlayerRecentSessions(id!, 28),
         fetchAttendanceByPlayer(id!),
         fetchTrainingSessions(),
+        fetchMatchStatsByPlayer(id!),
       ]);
       setPlayer(p);
       setResults(rs as (TestResult & { test_sessions?: { test_date: string; test_name: string; type: string | null } })[]);
       setRecentLoad(loadHistory as (SessionRPE & { sessions: TrainingSession })[]);
       setPlayerAttendance(attendance);
       setAllSessions(sessions);
+      setMatchStats(mStats);
 
       const teamLatest = new Map<string, number>();
       for (const r of (allRs as (TestResult & { players?: { team: string } })[]).filter(r => r.players?.team === p?.team && r.bronco_mins !== null)) {
@@ -343,6 +347,9 @@ export default function PlayerDetail() {
           );
         })()}
       </div>
+
+      {/* Tournament record — goals, minutes, appearances */}
+      <PlayerTournamentStats stats={matchStats} />
 
       {/* ACWR + Load Trend side by side */}
       {recentLoad.length > 0 && (
