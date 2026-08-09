@@ -1,17 +1,16 @@
 import { Link, useLocation } from "wouter";
-import { ChevronDown, ChevronsLeft, ChevronsRight, Sun, Moon, ClipboardCheck, LayoutDashboard, Users, Dumbbell, BarChart2, ClipboardList } from "lucide-react";
+import { ChevronDown, ChevronsLeft, ChevronsRight, Sun, Moon, ClipboardCheck, Users, BarChart2, ClipboardList } from "lucide-react";
 import { useState, useRef, useEffect } from "react";
 import { cn } from "@/lib/utils";
 import { useTheme } from "@/context/ThemeContext";
 
 const COLLAPSE_KEY = "bg-crm-sidebar-collapsed";
 
+// Dashboard is hidden for now — it still lives at /dashboard
 const navItems = [
-  { href: "/",         label: "Dashboard",    icon: LayoutDashboard },
   { href: "/players",  label: "Players",      icon: Users           },
   { href: "/sessions", label: "Sessions",     icon: ClipboardList   },
   { href: "/attendance", label: "Attendance", icon: ClipboardCheck  },
-  { href: "/fitness",  label: "Fitness Tests",icon: Dumbbell        },
   { href: "/analytics",label: "Analytics",    icon: BarChart2       },
 ];
 
@@ -32,9 +31,10 @@ export function Layout({ children }: { children: React.ReactNode }) {
     try { localStorage.setItem(COLLAPSE_KEY, collapsed ? "1" : "0"); } catch {}
   }, [collapsed]);
 
+  // Falls back to Analytics — the landing page, and the only route not in the nav
   const currentLabel = navItems.find(
     (item) => location === item.href || (item.href !== "/" && location.startsWith(item.href))
-  )?.label ?? "Dashboard";
+  )?.label ?? (location === "/dashboard" ? "Dashboard" : "Analytics");
 
   useEffect(() => {
     if (!mobileOpen) return;
@@ -87,17 +87,24 @@ export function Layout({ children }: { children: React.ReactNode }) {
     );
   };
 
+  // One shape for every sidebar action, so theme and collapse read as a pair.
+  // No fill — the 8×8 box is hit area only, the icon carries the control.
+  const actionCls = cn(
+    "w-8 h-8 rounded-lg flex items-center justify-center transition-colors shrink-0",
+    isDark
+      ? "text-slate-500 hover:text-slate-200"
+      : "text-slate-400 hover:text-slate-700"
+  );
+
+  const themeLabel = isDark ? "Switch to light mode" : "Switch to dark mode";
+
   const ThemeToggle = () => (
     <button
       onClick={toggleTheme}
       data-testid="theme-toggle"
-      className={cn(
-        "w-8 h-8 rounded-lg flex items-center justify-center transition-all duration-150 shrink-0",
-        isDark
-          ? "bg-white/6 text-slate-400 hover:bg-white/10 hover:text-slate-200"
-          : "bg-slate-100 text-slate-500 hover:bg-slate-200 hover:text-slate-700"
-      )}
-      title={isDark ? "Switch to light mode" : "Switch to dark mode"}
+      className={actionCls}
+      title={themeLabel}
+      aria-label={themeLabel}
     >
       {isDark ? <Sun size={14} /> : <Moon size={14} />}
     </button>
@@ -105,32 +112,20 @@ export function Layout({ children }: { children: React.ReactNode }) {
 
   const SidebarContent = ({ onNav, compact = false }: { onNav?: () => void; compact?: boolean }) => (
     <div className="flex flex-col h-full">
-      {/* Brand */}
-      <div className={cn("pt-5 pb-4", compact ? "px-2" : "px-4")}>
-        <div className={cn("flex gap-2", compact ? "flex-col items-center" : "items-center justify-between")}>
-          <div className={cn("flex items-center min-w-0", !compact && "gap-3")}>
-            <img
-              src={logoSrc}
-              alt="Bombay Gymkhana"
-              title={compact ? "Bombay Gymkhana · Women's Football" : undefined}
-              className={cn(
-                "w-10 h-10 object-contain shrink-0",
-                !isDark && "brightness-75"
-              )}
-            />
-            {!compact && (
-              <div className="min-w-0">
-                <div className={cn("text-[10px] font-semibold uppercase tracking-[0.14em]", isDark ? "text-slate-500" : "text-slate-400")}>
-                  Bombay Gymkhana
-                </div>
-                <div className="text-base font-medium leading-tight truncate text-foreground">
-                  Women's <span className="text-indigo-500 dark:text-indigo-400">Football</span>
-                </div>
-              </div>
-            )}
-          </div>
-          <ThemeToggle />
-        </div>
+      {/* Brand — the mark alone; the title lives in the page header. The source
+          PNG carries a wide transparent margin, so it needs a larger box than
+          its pixel size suggests to read at the same weight as the nav. */}
+      <div className={cn("pt-4 pb-3 flex", compact ? "px-2 justify-center" : "px-4")}>
+        <img
+          src={logoSrc}
+          alt="Bombay Gymkhana · Women's Football"
+          title="Bombay Gymkhana · Women's Football"
+          className={cn(
+            "object-contain shrink-0",
+            compact ? "w-9 h-9" : "w-12 h-12",
+            !isDark && "brightness-75",
+          )}
+        />
       </div>
 
       <div className={cn("mb-4 h-px", compact ? "mx-3" : "mx-5", isDark ? "bg-white/6" : "bg-slate-200")} />
@@ -147,17 +142,21 @@ export function Layout({ children }: { children: React.ReactNode }) {
         ))}
       </nav>
 
-      {/* Footer */}
+      {/* Footer — the sidebar's two controls, matched in shape and size */}
       <div className={cn("py-4", compact ? "px-3" : "px-5")}>
         <div className={cn("h-px mb-3", isDark ? "bg-white/6" : "bg-slate-200")} />
-        <div className={cn("flex items-center gap-2", compact && "justify-center")}>
-          <div
-            className="w-1.5 h-1.5 rounded-full bg-status-good animate-pulse shrink-0"
-            title={compact ? "BG CRM · v1.0" : undefined}
-          />
-          {!compact && (
-            <span className={cn("text-[11px]", isDark ? "text-slate-600" : "text-slate-400")}>BG CRM · v1.0</span>
-          )}
+        <div className={cn("flex gap-1", compact ? "flex-col items-center" : "items-center justify-end")}>
+          <ThemeToggle />
+          <button
+            onClick={() => setCollapsed((c) => !c)}
+            data-testid="sidebar-collapse-toggle"
+            title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+            aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+            aria-expanded={!collapsed}
+            className={actionCls}
+          >
+            {collapsed ? <ChevronsRight size={14} /> : <ChevronsLeft size={14} />}
+          </button>
         </div>
       </div>
     </div>
@@ -168,28 +167,10 @@ export function Layout({ children }: { children: React.ReactNode }) {
       <aside className={cn(
         "hidden lg:flex flex-col flex-shrink-0 border-r sticky top-0 h-screen bg-sidebar z-40",
         "transition-[width] duration-200 ease-out",
-        collapsed ? "w-16" : "w-56",
+        collapsed ? "w-14" : "w-48",
         isDark ? "border-white/[0.06]" : "border-slate-200"
       )}>
         <SidebarContent compact={collapsed} />
-
-        {/* Collapse handle — straddles the sidebar's right border */}
-        <button
-          onClick={() => setCollapsed((c) => !c)}
-          data-testid="sidebar-collapse-toggle"
-          title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
-          aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
-          aria-expanded={!collapsed}
-          className={cn(
-            "absolute -right-3 top-[72px] w-6 h-6 rounded-full border flex items-center justify-center",
-            "transition-colors shadow-sm",
-            isDark
-              ? "bg-slate-900 border-white/10 text-slate-400 hover:text-slate-100 hover:border-white/25"
-              : "bg-white border-slate-200 text-slate-500 hover:text-slate-800 hover:border-slate-300"
-          )}
-        >
-          {collapsed ? <ChevronsRight size={13} /> : <ChevronsLeft size={13} />}
-        </button>
       </aside>
 
       <div className={cn(

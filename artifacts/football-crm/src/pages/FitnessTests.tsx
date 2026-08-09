@@ -6,6 +6,7 @@ import { EmptyState } from "@/components/EmptyState";
 import { formatBronco } from "@/lib/utils";
 import { cn } from "@/lib/utils";
 import { PosBadge } from "@/components/PosBadge";
+import { AddButton } from "@/components/AddButton";
 import type { TestSession, Player, TestResult } from "@/lib/types";
 import { Dumbbell, Plus, CheckCircle2, AlertCircle, ChevronRight, Pencil, Trash2 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
@@ -1105,16 +1106,12 @@ export default function FitnessTests() {
   // ── List view ────────────────────────────────────────────────────────────
   return (
     <div className="space-y-5">
-      <div className="flex items-center justify-between">
-        <p className="text-sm text-muted-foreground">{sessions.length} session{sessions.length !== 1 ? "s" : ""}</p>
-        <button
+      <div className="flex items-center justify-end">
+        <AddButton
+          label="Add test session"
           onClick={() => setStep("create-session")}
-          className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg border border-indigo-500/50 text-indigo-400 text-sm font-medium hover:bg-indigo-500/10 transition-colors"
           data-testid="button-new-session"
-        >
-          <Plus size={13} />
-          New Session
-        </button>
+        />
       </div>
 
       <div className="bg-card border border-border rounded-2xl overflow-hidden">

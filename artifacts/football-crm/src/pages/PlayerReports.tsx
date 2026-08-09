@@ -25,6 +25,14 @@ export default function PlayerReports() {
   const [error, setError] = useState<string | null>(null);
   const printedRef = useRef(false);
 
+  // Browsers seed the "Save as PDF" filename from the document title, so this
+  // is what names the downloaded file.
+  useEffect(() => {
+    const previous = document.title;
+    document.title = "Player report";
+    return () => { document.title = previous; };
+  }, []);
+
   // A dark report would waste ink and read badly on paper, so force light
   // while this route is mounted and restore the user's choice on the way out.
   useEffect(() => {

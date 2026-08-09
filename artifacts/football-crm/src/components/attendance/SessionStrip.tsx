@@ -168,6 +168,8 @@ function NewSessionForm({
     planned_rpe: 7,
   });
 
+  // Lectures are attendance only, so they neither plan nor accumulate load
+  const carriesLoad = form.session_type !== "Lecture";
   const plannedLoad = Math.round(form.planned_rpe * form.duration_mins);
   const duplicate = existingDates.has(form.date);
 
@@ -183,7 +185,7 @@ function NewSessionForm({
         date: form.date,
         session_type: form.session_type,
         duration_mins: form.duration_mins,
-        planned_rpe: form.planned_rpe,
+        planned_rpe: carriesLoad ? form.planned_rpe : 0,
         notes: null,
       });
       onCreated(session);
@@ -252,28 +254,32 @@ function NewSessionForm({
             required
           />
         </div>
-        <div>
-          <label className="block text-[11px] text-muted-foreground mb-1">
-            Planned RPE <span className="font-time text-foreground">{form.planned_rpe.toFixed(1)}</span>
-          </label>
-          <input
-            type="range"
-            min={1}
-            max={10}
-            step={0.5}
-            value={form.planned_rpe}
-            onChange={(e) => setForm({ ...form, planned_rpe: parseFloat(e.target.value) })}
-            className="w-full accent-indigo-500 mt-2"
-          />
-        </div>
+        {carriesLoad && (
+          <div>
+            <label className="block text-[11px] text-muted-foreground mb-1">
+              Planned RPE <span className="font-time text-foreground">{form.planned_rpe.toFixed(1)}</span>
+            </label>
+            <input
+              type="range"
+              min={1}
+              max={10}
+              step={0.5}
+              value={form.planned_rpe}
+              onChange={(e) => setForm({ ...form, planned_rpe: parseFloat(e.target.value) })}
+              className="w-full accent-indigo-500 mt-2"
+            />
+          </div>
+        )}
       </div>
 
-      <div className="flex items-center justify-between rounded-lg bg-status-warn border border-status-warn px-3 py-2">
-        <span className="flex items-center gap-1.5 text-[11px] text-muted-foreground font-medium">
-          <Zap size={11} /> Planned Load
-        </span>
-        <span className="text-sm font-bold text-status-warn font-time">{plannedLoad} AU</span>
-      </div>
+      {carriesLoad && (
+        <div className="flex items-center justify-between rounded-lg bg-status-warn border border-status-warn px-3 py-2">
+          <span className="flex items-center gap-1.5 text-[11px] text-muted-foreground font-medium">
+            <Zap size={11} /> Planned Load
+          </span>
+          <span className="text-sm font-bold text-status-warn font-time">{plannedLoad} AU</span>
+        </div>
+      )}
 
       <div className="flex gap-2">
         <button

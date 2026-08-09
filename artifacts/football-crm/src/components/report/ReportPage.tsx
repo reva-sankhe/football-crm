@@ -54,6 +54,11 @@ function Stat({ label, value, valueNote, sub, color }: {
   );
 }
 
+/** Match-day availability, sitting under the training-attendance headline. */
+function matchSub(m: { attended: number; total: number; pct: number | null }): string {
+  return m.pct !== null ? `${m.pct}% matches (${m.attended}/${m.total})` : "No matches";
+}
+
 /** "Mar 26" — the month a test was taken. */
 function monthYear(iso: string | null): string | null {
   if (!iso) return null;
@@ -64,6 +69,7 @@ export function ReportPage({ report, generatedAt }: { report: PlayerReport; gene
   const { player, range, attendance, matches, fitness, load } = report;
   const rangeLabel = range ? formatDateRange(range.from, range.to) : "All time";
   const acwrCfg = ACWR_CONFIG[load.status];
+  const monthLabel = new Date().toLocaleDateString("en-GB", { month: "short" });
 
   return (
     <article className="report-page bg-white text-slate-900 mx-auto p-8 mb-6 shadow-sm print:shadow-none print:mb-0 print:p-0 w-[210mm] min-h-[297mm] print:w-auto print:min-h-0">
@@ -92,15 +98,32 @@ export function ReportPage({ report, generatedAt }: { report: PlayerReport; gene
       </header>
 
       {/* ── Snapshot ──────────────────────────────────────────────────────── */}
+      {/* With no range the tiles mirror the player profile — current month and
+          this year. A chosen period overrides that and reports on the period. */}
       <div className="grid grid-cols-4 gap-4 mt-4 pb-3 border-b border-slate-200">
-        <Stat
-          label="Attendance"
-          value={attendance.pct !== null ? `${attendance.pct}%` : "—"}
-          sub={attendance.total > 0 ? `${attendance.attended}/${attendance.total} sessions` : "No sessions"}
-          color={attendance.pct !== null ? attendancePctFill(attendance.pct) : undefined}
-        />
-        <Stat label="Goals" value={matches.goals} sub={matches.assists > 0 ? `${matches.assists} assists` : undefined} />
-        <Stat label="Appearances" value={matches.appearances} sub={matches.callUps > 0 ? `${matches.callUps} call-ups` : undefined} />
+        {range ? (
+          <>
+            <Stat
+              label="Attendance"
+              value={attendance.training.pct !== null ? `${attendance.training.pct}%` : "—"}
+              sub={matchSub(attendance.match)}
+              color={attendance.training.pct !== null ? attendancePctFill(attendance.training.pct) : undefined}
+            />
+            <Stat label="Goals" value={matches.goals} sub="This period" />
+            <Stat label="Appearances" value={matches.appearances} sub="This period" />
+          </>
+        ) : (
+          <>
+            <Stat
+              label={`${monthLabel} Attendance`}
+              value={attendance.currentMonthTraining.pct !== null ? `${attendance.currentMonthTraining.pct}%` : "—"}
+              sub={matchSub(attendance.currentMonthMatch)}
+              color={attendance.currentMonthTraining.pct !== null ? attendancePctFill(attendance.currentMonthTraining.pct) : undefined}
+            />
+            <Stat label="Goals" value={matches.thisYear.goals} sub="This year" />
+            <Stat label="Appearances" value={matches.thisYear.appearances} sub="This year" />
+          </>
+        )}
         <Stat
           label="Latest Bronco"
           value={formatBronco(fitness.latestBronco)}

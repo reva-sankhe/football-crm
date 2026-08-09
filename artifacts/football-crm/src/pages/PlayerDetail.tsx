@@ -6,11 +6,12 @@ import {
 } from "@/lib/queries";
 import { formatBronco, cn } from "@/lib/utils";
 import { attendancePctColor, countsAsAttended } from "@/lib/attendance";
-import { ACWR_CONFIG, computeAcwr, teamBandFor } from "@/lib/report";
+import { ACWR_CONFIG, computeAcwr, isMatchSession, teamBandFor } from "@/lib/report";
 import { ChartSkeleton, Skeleton } from "@/components/Skeleton";
 import { EmptyState } from "@/components/EmptyState";
 import { PlayerTournamentStats } from "@/components/tournaments/PlayerTournamentStats";
 import { sumStats } from "@/lib/tournaments";
+import { SectionLabel, StatTile as SnapshotTile } from "@/components/StatTile";
 import { AttendanceCard } from "@/components/player/AttendanceCard";
 import { LastSessionsCard } from "@/components/player/LastSessionsCard";
 import type { Player, TestResult, SessionRPE, TrainingSession, SessionAttendance } from "@/lib/types";
@@ -29,35 +30,6 @@ const SECONDARY_POSITIONS: Record<string, string[]> = {
   Midfielder: ["Right Wing", "Left Wing", "CDM", "CM"],
   Forward:    ["Striker", "CAM"],
 };
-
-/** Small uppercase anchor above each section. */
-function SectionLabel({ children }: { children: React.ReactNode }) {
-  return (
-    <div className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">
-      {children}
-    </div>
-  );
-}
-
-function SnapshotTile({ label, value, valueNote, sub, valueColor }: {
-  label: string;
-  value: string | number;
-  /** Sits inline after the value, small — e.g. the month a test was taken. */
-  valueNote?: string;
-  sub?: string;
-  valueColor?: string;
-}) {
-  return (
-    <div>
-      <div className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground mb-1">{label}</div>
-      <div className="flex items-baseline gap-1.5">
-        <span className={cn("text-2xl font-bold font-time leading-none", valueColor ?? "text-foreground")}>{value}</span>
-        {valueNote && <span className="text-[11px] text-muted-foreground">{valueNote}</span>}
-      </div>
-      {sub && <div className="text-[11px] text-muted-foreground mt-1">{sub}</div>}
-    </div>
-  );
-}
 
 /** "Mar 26" — the month a test was taken, for the snapshot sub-line. */
 function monthYear(iso: string | null | undefined): string | null {
@@ -177,8 +149,10 @@ export default function PlayerDetail() {
         ? new Date(r.sessions.date + "T00:00:00").toLocaleDateString("en-GB", { day: "numeric", month: "short" })
         : "—",
       load: Math.round(r.load_au),
-      // What the session was planned for, so over/under-shooting is visible
-      planned: r.sessions?.planned_load_au != null ? Math.round(r.sessions.planned_load_au) : null,
+      // What the session was planned for, so over/under-shooting is visible.
+      // Matches carry no plan (load 0) — null skips them rather than drawing a
+      // floor-scraping zero on the Set line.
+      planned: r.sessions?.planned_load_au ? Math.round(r.sessions.planned_load_au) : null,
       rpe: r.rpe,
     }));
 
@@ -212,15 +186,18 @@ export default function PlayerDetail() {
   }, [allSessions, attendedIds]);
 
   // ── Snapshot ──────────────────────────────────────────────────────────────
-  const attendedSessions = allSessions.filter((s) => attendedIds.has(s.id)).length;
-  const overallAttendancePct = allSessions.length > 0
-    ? Math.round((attendedSessions / allSessions.length) * 100)
-    : null;
+  // The headline is this month's training turnout; match-day availability is a
+  // separate question, so matches are excluded above and reported underneath.
+  const attendanceSlice = (ss: TrainingSession[]) => {
+    const a = ss.filter((s) => attendedIds.has(s.id)).length;
+    return { total: ss.length, attended: a, pct: ss.length > 0 ? Math.round((a / ss.length) * 100) : null };
+  };
 
-  // The headline number is this month — the season total sits underneath it.
   const thisMonth = new Date().toISOString().slice(0, 7);
-  const currentMonth = monthlyAttendance.find((m) => m.month === thisMonth) ?? null;
   const monthLabel = new Date(thisMonth + "-01T00:00:00").toLocaleDateString("en-GB", { month: "short" });
+  const monthSessions = allSessions.filter((s) => s.date.slice(0, 7) === thisMonth);
+  const currentMonth = attendanceSlice(monthSessions.filter((s) => !isMatchSession(s)));
+  const matchAttendance = attendanceSlice(monthSessions.filter(isMatchSession));
 
   // Goals and appearances are labelled "this year", so they are scoped to it
   const thisYear = String(new Date().getFullYear());
@@ -340,9 +317,13 @@ export default function PlayerDetail() {
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 pt-4 mt-4 border-t border-border">
           <SnapshotTile
             label={`${monthLabel} Attendance`}
-            value={currentMonth ? `${currentMonth.pct}%` : "—"}
-            sub={overallAttendancePct !== null ? `${overallAttendancePct}% overall` : undefined}
-            valueColor={currentMonth ? attendancePctColor(currentMonth.pct) : undefined}
+            value={currentMonth.pct !== null ? `${currentMonth.pct}%` : "—"}
+            sub={
+              matchAttendance.pct !== null
+                ? `${matchAttendance.pct}% matches (${matchAttendance.attended}/${matchAttendance.total})`
+                : "No matches"
+            }
+            valueColor={currentMonth.pct !== null ? attendancePctColor(currentMonth.pct) : undefined}
           />
           <SnapshotTile label="Goals" value={matchTotals.goals} sub="This year" />
           <SnapshotTile label="Appearances" value={matchTotals.appearances} sub="This year" />

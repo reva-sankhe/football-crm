@@ -1,30 +1,28 @@
 import { useMemo, useState } from "react";
-import { Check, ChevronDown, Pencil, Search, Trash2, Users, X } from "lucide-react";
+import { Check, Pencil, Search, Trash2, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useTheme } from "@/context/ThemeContext";
 import { useToast } from "@/hooks/use-toast";
 import { deleteSquad, setSquadPlayers, updateSquad } from "@/lib/queries";
 import { PosBadge } from "@/components/PosBadge";
-import type { TournamentRecord } from "@/lib/tournaments";
+import { posSlot } from "@/lib/viz";
 import type { Player, SquadWithPlayers } from "@/lib/types";
 
 interface SquadCardProps {
   squad: SquadWithPlayers;
   players: Player[];       // active roster
-  /** This squad's own match record, shown beside the name. */
-  record?: TournamentRecord;
   onChanged: () => void;   // refetch after a write
 }
 
-export function SquadCard({ squad, players, record, onChanged }: SquadCardProps) {
+export function SquadCard({ squad, players, onChanged }: SquadCardProps) {
   const { theme } = useTheme();
   const isDark = theme === "dark";
   const { toast } = useToast();
 
-  const [expanded, setExpanded] = useState(false);
+  // One flag, one control: name, size limit, roster and delete all live in here.
+  const [editing, setEditing] = useState(false);
   const [search, setSearch] = useState("");
   const [saving, setSaving] = useState(false);
-  const [editingMeta, setEditingMeta] = useState(false);
   const [name, setName] = useState(squad.name);
   const [sizeLimit, setSizeLimit] = useState<string>(squad.size_limit?.toString() ?? "");
 
@@ -36,8 +34,10 @@ export function SquadCard({ squad, players, record, onChanged }: SquadCardProps)
   // Parent renders with key={squad.id}, so this seeds once per squad
   const [selected, setSelected] = useState<Set<string>>(savedIds);
 
-  const dirty =
+  const rosterDirty =
     selected.size !== savedIds.size || [...selected].some((id) => !savedIds.has(id));
+  const metaDirty =
+    name.trim() !== squad.name || (sizeLimit === "" ? null : parseInt(sizeLimit)) !== squad.size_limit;
 
   const overLimit = squad.size_limit != null && selected.size > squad.size_limit;
 
@@ -47,6 +47,12 @@ export function SquadCard({ squad, players, record, onChanged }: SquadCardProps)
     return players.filter((p) => p.name.toLowerCase().includes(q));
   }, [players, search]);
 
+  // Goalkeepers first, so the collapsed chips read as a squad shape
+  const selectedPlayers = useMemo(
+    () => players.filter((p) => selected.has(p.id)).sort((a, b) => posSlot(b.primary_position) - posSlot(a.primary_position)),
+    [players, selected],
+  );
+
   const toggle = (id: string) =>
     setSelected((s) => {
       const next = new Set(s);
@@ -55,33 +61,36 @@ export function SquadCard({ squad, players, record, onChanged }: SquadCardProps)
       return next;
     });
 
-  const handleSaveRoster = async () => {
+  const cancel = () => {
+    setEditing(false);
+    setSearch("");
+    setName(squad.name);
+    setSizeLimit(squad.size_limit?.toString() ?? "");
+    setSelected(savedIds);
+  };
+
+  const handleSave = async () => {
+    if (!name.trim()) {
+      toast({ title: "Squad name is required", variant: "destructive" });
+      return;
+    }
     setSaving(true);
     try {
-      await setSquadPlayers(squad.id, [...selected]);
-      toast({ title: `${squad.name} updated`, description: `${selected.size} players selected` });
+      if (metaDirty) {
+        await updateSquad(squad.id, {
+          name: name.trim(),
+          size_limit: sizeLimit === "" ? null : Math.max(1, parseInt(sizeLimit) || 1),
+        });
+      }
+      if (rosterDirty) await setSquadPlayers(squad.id, [...selected]);
+      toast({ title: `${name.trim()} saved`, description: `${selected.size} players selected` });
+      setEditing(false);
+      setSearch("");
       onChanged();
     } catch (err) {
       toast({ title: "Failed to save squad", description: String(err), variant: "destructive" });
     } finally {
       setSaving(false);
-    }
-  };
-
-  const handleSaveMeta = async () => {
-    if (!name.trim()) {
-      toast({ title: "Squad name is required", variant: "destructive" });
-      return;
-    }
-    try {
-      await updateSquad(squad.id, {
-        name: name.trim(),
-        size_limit: sizeLimit === "" ? null : Math.max(1, parseInt(sizeLimit) || 1),
-      });
-      setEditingMeta(false);
-      onChanged();
-    } catch (err) {
-      toast({ title: "Failed to update squad", description: String(err), variant: "destructive" });
     }
   };
 
@@ -102,107 +111,77 @@ export function SquadCard({ squad, players, record, onChanged }: SquadCardProps)
   return (
     <div className="bg-card border border-border rounded-xl overflow-hidden">
       {/* Header */}
-      <div className="px-4 py-3 flex items-center gap-3 flex-wrap">
-        <Users size={15} className="text-muted-foreground shrink-0" />
+      <div className="px-4 py-3 flex items-center gap-2 flex-wrap">
+        <span className="text-sm font-semibold text-foreground">{squad.name}</span>
+        <span className="text-[11px] text-muted-foreground font-time">
+          {selected.size}{squad.size_limit != null ? `/${squad.size_limit}` : ""} players
+        </span>
+        {overLimit && (
+          <span className="text-[11px] text-status-warn">over the {squad.size_limit}-player limit</span>
+        )}
 
-        {editingMeta ? (
-          <div className="flex items-center gap-2 flex-wrap flex-1">
-            <input value={name} onChange={(e) => setName(e.target.value)} className={cn(inputCls, "w-40")} placeholder="Squad name" />
-            <input
-              type="number"
-              min={1}
-              value={sizeLimit}
-              onChange={(e) => setSizeLimit(e.target.value)}
-              className={cn(inputCls, "w-24")}
-              placeholder="No limit"
-              title="Squad size limit"
-            />
-            <button onClick={handleSaveMeta} className="px-2.5 py-1.5 rounded-lg text-xs font-medium bg-indigo-600 text-white hover:bg-indigo-500">Save</button>
-            <button
-              onClick={() => { setEditingMeta(false); setName(squad.name); setSizeLimit(squad.size_limit?.toString() ?? ""); }}
-              className="px-2.5 py-1.5 rounded-lg text-xs text-muted-foreground hover:text-foreground"
-            >
-              Cancel
-            </button>
-          </div>
-        ) : (
-          <>
-            <button onClick={() => setEditingMeta(true)} className="text-sm font-semibold text-foreground hover:text-indigo-400 transition-colors">
-              {squad.name}
-            </button>
-            <button
-              onClick={() => setEditingMeta(true)}
-              aria-label={`Rename ${squad.name}`}
-              title="Rename squad"
-              className="p-1 -ml-1 rounded text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
-              data-testid={`button-rename-squad-${squad.id}`}
-            >
-              <Pencil size={12} />
-            </button>
-            <span
-              className={cn(
-                "px-2 py-0.5 rounded-full text-[11px] font-medium font-time",
-                overLimit
-                  ? "bg-muted text-muted-foreground"
-                  : isDark ? "bg-white/8 text-muted-foreground" : "bg-slate-100 text-slate-500",
-              )}
-            >
-              {selected.size}{squad.size_limit != null ? `/${squad.size_limit}` : ""} players
-            </span>
-            {overLimit && (
-              <span className="text-[11px] text-status-warn">over the {squad.size_limit}-player limit</span>
-            )}
-            {record && record.played > 0 && (
-              <span className="text-[11px] text-muted-foreground font-time">
-                {record.played} played · {record.won}/{record.drawn}/{record.lost} · {record.goalsFor}–{record.goalsAgainst}
-              </span>
-            )}
-
-            <div className="ml-auto flex items-center gap-1">
-              <button
-                onClick={handleDelete}
-                title="Delete squad"
-                className="w-7 h-7 flex items-center justify-center rounded-lg text-muted-foreground hover:text-status-bad transition-colors"
-              >
-                <Trash2 size={13} />
-              </button>
-              <button
-                onClick={() => setExpanded((v) => !v)}
-                className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-medium text-indigo-400 hover:text-indigo-300 transition-colors"
-              >
-                {expanded ? "Done" : "Pick players"}
-                <ChevronDown size={12} className={cn("transition-transform", expanded && "rotate-180")} />
-              </button>
-            </div>
-          </>
+        {!editing && (
+          <button
+            onClick={() => setEditing(true)}
+            aria-label={`Edit ${squad.name}`}
+            title="Edit squad"
+            className="ml-auto p-1 rounded text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+            data-testid={`button-edit-squad-${squad.id}`}
+          >
+            <Pencil size={13} />
+          </button>
         )}
       </div>
 
       {/* Selected players preview */}
-      {!expanded && selected.size > 0 && (
+      {!editing && selectedPlayers.length > 0 && (
         <div className="px-4 pb-3 flex flex-wrap gap-1.5">
-          {players
-            .filter((p) => selected.has(p.id))
-            .map((p) => (
-              <span
-                key={p.id}
-                className={cn(
-                  "flex items-center gap-1.5 px-2 py-1 rounded-lg text-xs",
-                  isDark ? "bg-white/[0.04] text-foreground" : "bg-slate-50 text-slate-700",
-                )}
-              >
-                <PosBadge pos={p.primary_position} className="w-5 h-5 text-[9px]" />
-                {p.name}
-              </span>
-            ))}
+          {selectedPlayers.map((p) => (
+            <span
+              key={p.id}
+              className={cn(
+                "flex items-center gap-1.5 pl-1.5 pr-2 py-1 rounded-lg text-xs",
+                isDark ? "bg-white/[0.04] text-foreground" : "bg-slate-50 text-slate-700",
+              )}
+            >
+              {/* Transparent so the badge doesn't nest a pill inside this one */}
+              <PosBadge pos={p.primary_position} className="bg-transparent px-0 h-auto text-muted-foreground" />
+              {p.name}
+            </span>
+          ))}
         </div>
       )}
 
-      {/* Player picker */}
-      {expanded && (
+      {/* Edit panel — name, size, roster and delete in one place */}
+      {editing && (
         <div className="border-t border-border">
-          <div className="px-4 py-2.5 flex items-center gap-2">
-            <div className="relative flex-1">
+          <div className="px-4 py-3 flex items-end gap-2 flex-wrap">
+            <div>
+              <label className="block text-xs text-muted-foreground mb-1">Name</label>
+              <input
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                className={cn(inputCls, "w-44")}
+                placeholder="Squad name"
+                data-testid={`input-squad-name-${squad.id}`}
+                autoFocus
+              />
+            </div>
+            <div>
+              <label className="block text-xs text-muted-foreground mb-1">Size limit</label>
+              <input
+                type="number"
+                min={1}
+                value={sizeLimit}
+                onChange={(e) => setSizeLimit(e.target.value)}
+                className={cn(inputCls, "w-24")}
+                placeholder="No limit"
+              />
+            </div>
+          </div>
+
+          <div className="px-4 pb-2.5">
+            <div className="relative">
               <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground/60" />
               <input
                 value={search}
@@ -216,16 +195,9 @@ export function SquadCard({ squad, players, record, onChanged }: SquadCardProps)
                 </button>
               )}
             </div>
-            <button
-              onClick={handleSaveRoster}
-              disabled={!dirty || saving}
-              className="shrink-0 px-3 py-1.5 rounded-lg text-xs font-semibold bg-indigo-600 text-white hover:bg-indigo-500 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-            >
-              {saving ? "Saving…" : dirty ? "Save squad" : "Saved"}
-            </button>
           </div>
 
-          <div className="max-h-72 overflow-y-auto divide-y divide-border/40">
+          <div className="max-h-72 overflow-y-auto divide-y divide-border/40 border-y border-border">
             {visiblePlayers.map((p) => {
               const isIn = selected.has(p.id);
               return (
@@ -258,6 +230,29 @@ export function SquadCard({ squad, players, record, onChanged }: SquadCardProps)
             {visiblePlayers.length === 0 && (
               <div className="py-8 text-center text-sm text-muted-foreground">No players match “{search}”</div>
             )}
+          </div>
+
+          <div className="px-4 py-3 flex items-center gap-2">
+            <button
+              onClick={handleDelete}
+              className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-status-bad transition-colors"
+              data-testid={`button-delete-squad-${squad.id}`}
+            >
+              <Trash2 size={12} /> Delete squad
+            </button>
+            <div className="ml-auto flex items-center gap-2">
+              <button onClick={cancel} className="px-3 py-1.5 rounded-lg text-xs text-muted-foreground hover:text-foreground transition-colors">
+                Cancel
+              </button>
+              <button
+                onClick={handleSave}
+                disabled={saving}
+                className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-indigo-600 text-white hover:bg-indigo-500 disabled:opacity-40 transition-colors"
+                data-testid={`button-save-squad-${squad.id}`}
+              >
+                {saving ? "Saving…" : "Save"}
+              </button>
+            </div>
           </div>
         </div>
       )}

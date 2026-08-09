@@ -36,6 +36,18 @@ export interface MonthlyAttendance {
   pct: number;
 }
 
+export interface AttendanceSlice {
+  total: number;
+  attended: number;
+  /** null when there were no sessions to attend. */
+  pct: number | null;
+}
+
+/** Matches are availability, not training turnout — they are counted apart. */
+export function isMatchSession(s: { session_type: string }): boolean {
+  return s.session_type === "Match";
+}
+
 export interface AcwrResult {
   acwr: number | null;
   acute: number;
@@ -49,14 +61,27 @@ export interface PlayerReport {
   player: Player;
   range: ReportRange | null;
   attendance: {
+    /** Every session type — what the monthly chart and table below report on. */
     total: number;
     attended: number;
     pct: number | null;
     monthly: MonthlyAttendance[];
+    /** Training, gym and recovery — the sessions a player is expected at. */
+    training: AttendanceSlice;
+    /** Match-day availability, reported separately from turning up to train. */
+    match: AttendanceSlice;
+    /**
+     * Unscoped figures, so an all-time report leads with the same numbers the
+     * player profile does rather than a lifetime average.
+     */
+    currentMonthTraining: AttendanceSlice & { month: string };
+    currentMonthMatch: AttendanceSlice;
   };
   matches: Totals & {
     callUps: number;
     byTournament: { name: string; totals: Totals }[];
+    /** Current calendar year, matching the profile's Goals/Appearances tiles. */
+    thisYear: Totals & { callUps: number };
   };
   fitness: {
     tested: number;
@@ -192,9 +217,28 @@ export function buildPlayerReport(
     })
     .sort((x, y) => x.month.localeCompare(y.month));
 
+  const slice = (ss: TrainingSession[]): AttendanceSlice => {
+    const a = ss.filter((s) => attendedIds.has(s.id)).length;
+    return { total: ss.length, attended: a, pct: ss.length > 0 ? Math.round((a / ss.length) * 100) : null };
+  };
+
+  // Unscoped, for the profile-matching tiles an all-time report leads with —
+  // both halves read the current month so they describe the same period.
+  const thisMonthKey = isoOf(new Date()).slice(0, 7);
+  const monthSessions = data.sessions.filter((s) => s.date.slice(0, 7) === thisMonthKey);
+  const currentMonthTraining = {
+    month: thisMonthKey,
+    ...slice(monthSessions.filter((s) => !isMatchSession(s))),
+  };
+  const currentMonthMatch = slice(monthSessions.filter(isMatchSession));
+
   // ── Matches ─────────────────────────────────────────────────────────────
   const playerStats = data.matchStats.filter(
     (m) => m.player_id === player.id && inRange(m.matches?.sessions?.date, range),
+  );
+  const thisYear = isoOf(new Date()).slice(0, 4);
+  const yearStats = data.matchStats.filter(
+    (m) => m.player_id === player.id && (m.matches?.sessions?.date ?? "").startsWith(thisYear),
   );
   const byTournamentMap = new Map<string, PlayerMatchStat[]>();
   for (const s of playerStats) {
@@ -285,6 +329,10 @@ export function buildPlayerReport(
       attended,
       pct: scopedSessions.length > 0 ? Math.round((attended / scopedSessions.length) * 100) : null,
       monthly,
+      training: slice(scopedSessions.filter((s) => !isMatchSession(s))),
+      match: slice(scopedSessions.filter(isMatchSession)),
+      currentMonthTraining,
+      currentMonthMatch,
     },
     matches: {
       ...sumStats(playerStats),
@@ -293,6 +341,7 @@ export function buildPlayerReport(
         name,
         totals: sumStats(rows),
       })),
+      thisYear: { ...sumStats(yearStats), callUps: yearStats.length },
     },
     fitness: {
       tested: playerResults.length,

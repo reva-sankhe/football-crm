@@ -1,14 +1,16 @@
 import { useEffect, useState, useCallback } from "react";
 import { useLocation } from "wouter";
-import { Plus, CalendarDays, Clock, Zap } from "lucide-react";
+import { CalendarDays, Clock, Zap } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
 import { fetchTrainingSessions, createTrainingSession } from "@/lib/queries";
 import { SESSION_TYPES, dayFromISO, todayISO } from "@/lib/attendance";
 import { SessionTypeBadge } from "@/components/Badges";
+import { AddButton } from "@/components/AddButton";
 import { supabase } from "@/lib/supabase";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { TournamentsTab } from "@/components/tournaments/TournamentsTab";
+import FitnessTests from "@/pages/FitnessTests";
 import type { TrainingSession, SessionType } from "@/lib/types";
 
 
@@ -19,7 +21,8 @@ function formatDate(iso: string) {
 // ── New Session Modal ─────────────────────────────────────────────────────────
 interface NewSessionModalProps {
   onClose: () => void;
-  onSaved: (id: string) => void;
+  /** `carriesLoad` is false for lectures, which have no RPE to log. */
+  onSaved: (id: string, carriesLoad: boolean) => void;
 }
 
 function NewSessionModal({ onClose, onSaved }: NewSessionModalProps) {
@@ -33,6 +36,8 @@ function NewSessionModal({ onClose, onSaved }: NewSessionModalProps) {
     notes: "",
   });
 
+  // Lectures are attendance only, so they neither plan nor accumulate load
+  const carriesLoad = form.session_type !== "Lecture";
   const plannedLoad = Math.round(form.planned_rpe * form.duration_mins);
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -51,10 +56,10 @@ function NewSessionModal({ onClose, onSaved }: NewSessionModalProps) {
         date: form.date,
         session_type: form.session_type,
         duration_mins: form.duration_mins,
-        planned_rpe: form.planned_rpe,
+        planned_rpe: carriesLoad ? form.planned_rpe : 0,
         notes: form.notes || null,
       });
-      onSaved(session.id);
+      onSaved(session.id, carriesLoad);
     } catch (err: unknown) {
       toast({ title: "Failed to create session", description: String(err), variant: "destructive" });
     } finally {
@@ -120,34 +125,37 @@ function NewSessionModal({ onClose, onSaved }: NewSessionModalProps) {
             />
           </div>
 
-          {/* Planned RPE slider */}
-          <div>
-            <div className="flex items-center justify-between mb-1">
-              <label className="text-xs text-muted-foreground">Planned RPE</label>
-              <span className="text-sm font-bold text-foreground font-time">{form.planned_rpe.toFixed(1)}</span>
-            </div>
-            <input
-              type="range"
-              min={1}
-              max={10}
-              step={0.5}
-              value={form.planned_rpe}
-              onChange={(e) => setForm({ ...form, planned_rpe: parseFloat(e.target.value) })}
-              className="w-full accent-indigo-500"
-            />
-            <div className="flex justify-between text-[10px] text-muted-foreground mt-0.5">
-              <span>1</span><span>10</span>
-            </div>
-          </div>
+          {/* A lecture carries no physical load — it's an attendance record */}
+          {carriesLoad && (
+            <>
+              <div>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="text-xs text-muted-foreground">Planned RPE</label>
+                  <span className="text-sm font-bold text-foreground font-time">{form.planned_rpe.toFixed(1)}</span>
+                </div>
+                <input
+                  type="range"
+                  min={1}
+                  max={10}
+                  step={0.5}
+                  value={form.planned_rpe}
+                  onChange={(e) => setForm({ ...form, planned_rpe: parseFloat(e.target.value) })}
+                  className="w-full accent-indigo-500"
+                />
+                <div className="flex justify-between text-[10px] text-muted-foreground mt-0.5">
+                  <span>1</span><span>10</span>
+                </div>
+              </div>
 
-          {/* Planned Load AU */}
-          <div className="rounded-xl bg-status-warn border border-status-warn px-4 py-3 flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <Zap size={14} className="text-status-warn" />
-              <span className="text-xs text-muted-foreground font-medium">Planned Load (AU)</span>
-            </div>
-            <span className="text-2xl font-bold text-status-warn font-time">{plannedLoad}</span>
-          </div>
+              <div className="rounded-xl bg-status-warn border border-status-warn px-4 py-3 flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Zap size={14} className="text-status-warn" />
+                  <span className="text-xs text-muted-foreground font-medium">Planned Load (AU)</span>
+                </div>
+                <span className="text-2xl font-bold text-status-warn font-time">{plannedLoad}</span>
+              </div>
+            </>
+          )}
 
           {/* Notes */}
           <div>
@@ -175,7 +183,7 @@ function NewSessionModal({ onClose, onSaved }: NewSessionModalProps) {
               disabled={saving}
               className="flex-1 px-4 py-2.5 text-sm btn-primary text-white rounded-xl font-semibold disabled:opacity-60"
             >
-              {saving ? "Saving…" : "Create & Log RPE →"}
+              {saving ? "Saving…" : carriesLoad ? "Create & Log RPE" : "Create Session"}
             </button>
           </div>
         </form>
@@ -186,22 +194,28 @@ function NewSessionModal({ onClose, onSaved }: NewSessionModalProps) {
 
 // ── Sessions Page ─────────────────────────────────────────────────────────────
 export default function Sessions() {
-  const [tab, setTab] = useState<"tournaments" | "training">("tournaments");
+  const [tab, setTab] = useState<"training" | "tournaments" | "fitness">("training");
 
   return (
     <div className="space-y-5">
       <Tabs value={tab} onValueChange={(v) => setTab(v as typeof tab)} className="space-y-4">
-        <TabsList>
-          <TabsTrigger value="tournaments" data-testid="tab-tournaments">Tournaments</TabsTrigger>
+        <TabsList className="justify-end">
           <TabsTrigger value="training" data-testid="tab-training">Training</TabsTrigger>
+          <TabsTrigger value="tournaments" data-testid="tab-tournaments">Tournaments</TabsTrigger>
+          <TabsTrigger value="fitness" data-testid="tab-fitness">Fitness Tests</TabsTrigger>
         </TabsList>
+
+        <TabsContent value="training" className="mt-0">
+          <TrainingTab />
+        </TabsContent>
 
         <TabsContent value="tournaments" className="mt-0">
           <TournamentsTab />
         </TabsContent>
 
-        <TabsContent value="training" className="mt-0">
-          <TrainingTab />
+        {/* Self-contained: its own step machine, no routing of its own */}
+        <TabsContent value="fitness" className="mt-0">
+          <FitnessTests />
         </TabsContent>
       </Tabs>
     </div>
@@ -253,18 +267,8 @@ function TrainingTab() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between gap-3">
-        <p className="text-sm text-muted-foreground">
-          Every logged session, matches included
-        </p>
-        <button
-          onClick={() => setShowNew(true)}
-          className="flex items-center gap-1.5 px-3 py-2 text-sm btn-primary text-white rounded-xl font-semibold shrink-0"
-          data-testid="button-new-session"
-        >
-          <Plus size={15} />
-          New Session
-        </button>
+      <div className="flex items-center justify-end">
+        <AddButton label="Add session" onClick={() => setShowNew(true)} data-testid="button-new-session" />
       </div>
 
       {/* Content */}
@@ -301,9 +305,12 @@ function TrainingTab() {
                 </div>
                 <div className="flex items-center gap-3 text-xs text-muted-foreground">
                   <span className="flex items-center gap-1"><Clock size={11} />{s.duration_mins} min</span>
-                  <span className="flex items-center gap-1 text-status-warn font-bold font-time">
-                    <Zap size={11} />{Math.round(s.planned_load_au)} AU planned
-                  </span>
+                  {/* Matches carry no plan, so 0 reads as "not planned" */}
+                  {s.planned_load_au > 0 && (
+                    <span className="flex items-center gap-1 text-status-warn font-bold font-time">
+                      <Zap size={11} />{Math.round(s.planned_load_au)} AU planned
+                    </span>
+                  )}
                   {avgLoads[s.id] != null && (
                     <span className="text-status-good font-time">{avgLoads[s.id]} AU avg</span>
                   )}
@@ -339,7 +346,11 @@ function TrainingTab() {
                     <td className="px-4 py-3 text-muted-foreground font-time text-xs">{formatDate(s.date)}</td>
                     <td className="px-4 py-3"><SessionTypeBadge type={s.session_type} /></td>
                     <td className="px-4 py-3 text-right text-muted-foreground font-time">{s.duration_mins} min</td>
-                    <td className="px-4 py-3 text-right font-bold text-status-warn font-time">{Math.round(s.planned_load_au)}</td>
+                    <td className="px-4 py-3 text-right font-bold text-status-warn font-time">
+                      {s.planned_load_au > 0
+                        ? Math.round(s.planned_load_au)
+                        : <span className="text-muted-foreground/40 font-normal">—</span>}
+                    </td>
                     <td className="px-4 py-3 text-right font-time text-status-good">
                       {avgLoads[s.id] != null ? avgLoads[s.id] : <span className="text-muted-foreground/40">—</span>}
                     </td>
@@ -356,9 +367,10 @@ function TrainingTab() {
       {showNew && (
         <NewSessionModal
           onClose={() => setShowNew(false)}
-          onSaved={(id) => {
+          onSaved={(id, carriesLoad) => {
             setShowNew(false);
-            setLocation(`/sessions/${id}/rpe`);
+            // A lecture has no RPE to log — go straight to the session
+            setLocation(carriesLoad ? `/sessions/${id}/rpe` : `/sessions/${id}`);
           }}
         />
       )}

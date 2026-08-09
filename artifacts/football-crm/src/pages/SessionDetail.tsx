@@ -81,6 +81,8 @@ export default function SessionDetail() {
   const lowest = sorted[sorted.length - 1] ?? null;
 
   const planLoad = Math.round(session.planned_load_au);
+  // Lectures are attendance only; matches record minutes, not a planned RPE
+  const carriesLoad = session.session_type !== "Lecture" && session.planned_rpe > 0;
 
   // Chart B data — sorted ascending by load, RPE-colored
   const chartData = [...rpeRows]
@@ -153,27 +155,34 @@ export default function SessionDetail() {
           </div>
           <SessionTypeBadge type={session.session_type} />
         </div>
-        <div className="grid grid-cols-3 gap-3 mb-4">
+        {/* Lectures and matches carry no plan, so the load chrome is dropped */}
+        <div className={cn("grid gap-3 mb-4", carriesLoad ? "grid-cols-3" : "grid-cols-1")}>
           <div>
             <div className="text-xs text-muted-foreground mb-0.5">Duration</div>
             <div className="text-lg font-bold font-time text-foreground">{session.duration_mins}<span className="text-xs font-normal text-muted-foreground ml-1">min</span></div>
           </div>
-          <div>
-            <div className="text-xs text-muted-foreground mb-0.5">Planned RPE</div>
-            <div className="text-lg font-bold font-time text-foreground">{session.planned_rpe.toFixed(1)}</div>
-          </div>
-          <div>
-            <div className="text-xs text-muted-foreground mb-0.5">Planned Load</div>
-            <div className="text-lg font-bold font-time text-status-warn">{planLoad} <span className="text-xs font-normal text-muted-foreground">AU</span></div>
-          </div>
+          {carriesLoad && (
+            <>
+              <div>
+                <div className="text-xs text-muted-foreground mb-0.5">Planned RPE</div>
+                <div className="text-lg font-bold font-time text-foreground">{session.planned_rpe.toFixed(1)}</div>
+              </div>
+              <div>
+                <div className="text-xs text-muted-foreground mb-0.5">Planned Load</div>
+                <div className="text-lg font-bold font-time text-status-warn">{planLoad} <span className="text-xs font-normal text-muted-foreground">AU</span></div>
+              </div>
+            </>
+          )}
         </div>
-        <div className="flex items-center justify-between bg-status-warn border border-status-warn rounded-lg px-4 py-2.5">
-          <div className="flex items-center gap-2">
-            <Zap size={14} className="text-status-warn" />
-            <span className="text-xs text-muted-foreground font-medium">Planned Load (AU)</span>
+        {carriesLoad && (
+          <div className="flex items-center justify-between bg-status-warn border border-status-warn rounded-lg px-4 py-2.5">
+            <div className="flex items-center gap-2">
+              <Zap size={14} className="text-status-warn" />
+              <span className="text-xs text-muted-foreground font-medium">Planned Load (AU)</span>
+            </div>
+            <span className="text-2xl font-bold text-status-warn font-time">{planLoad}</span>
           </div>
-          <span className="text-2xl font-bold text-status-warn font-time">{planLoad}</span>
-        </div>
+        )}
         {session.notes && (
           <p className="text-xs text-muted-foreground mt-3 border-t border-border pt-3">{session.notes}</p>
         )}
@@ -300,13 +309,21 @@ export default function SessionDetail() {
         {count === 0 ? (
           <div className="py-12 text-center">
             <ClipboardList size={28} className="mx-auto text-muted-foreground/30 mb-2" />
-            <p className="text-sm text-muted-foreground">No RPE entries yet</p>
-            <button
-              onClick={() => setLocation(`/sessions/${id}/rpe`)}
-              className="mt-2 text-sm text-indigo-400 hover:text-indigo-300"
-            >
-              Start logging RPE →
-            </button>
+            {session.session_type === "Lecture" ? (
+              <p className="text-sm text-muted-foreground">
+                A lecture is an attendance record — there's no RPE to log.
+              </p>
+            ) : (
+              <>
+                <p className="text-sm text-muted-foreground">No RPE entries yet</p>
+                <button
+                  onClick={() => setLocation(`/sessions/${id}/rpe`)}
+                  className="mt-2 text-sm text-indigo-400 hover:text-indigo-300"
+                >
+                  Start logging RPE
+                </button>
+              </>
+            )}
           </div>
         ) : (
           <div className="overflow-x-auto">

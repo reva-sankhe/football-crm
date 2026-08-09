@@ -6,11 +6,10 @@ import { STATUS, STATUS_TEXT } from "./viz";
 export const SESSION_TYPE_CFG: Record<SessionType, { dot: string }> = {
   Training: { dot: "bg-slate-400" },
   Match:    { dot: "bg-indigo-500" },
-  Gym:      { dot: "bg-slate-500" },
-  Recovery: { dot: "bg-slate-300 dark:bg-slate-600" },
+  Lecture:  { dot: "bg-slate-300 dark:bg-slate-600" },
 };
 
-export const SESSION_TYPES: SessionType[] = ["Training", "Match", "Gym", "Recovery"];
+export const SESSION_TYPES: SessionType[] = ["Training", "Match", "Lecture"];
 
 // ── Attendance status styling ─────────────────────────────────────────────────
 export interface AttendanceCfg {

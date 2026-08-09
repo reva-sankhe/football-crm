@@ -1,8 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useLocation, useParams } from "wouter";
-import {
-  ArrowLeft, ArrowRight, CalendarRange, Link2, MapPin, Pencil, Plus, RefreshCw, Trophy, Users,
-} from "lucide-react";
+import { ArrowLeft, ArrowRight, Link2, Pencil, RefreshCw } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useTheme } from "@/context/ThemeContext";
 import { useToast } from "@/hooks/use-toast";
@@ -24,7 +22,10 @@ import {
 import { formatDateShort, todayISO } from "@/lib/attendance";
 import { SquadCard } from "@/components/tournaments/SquadCard";
 import { TournamentFormModal } from "@/components/tournaments/TournamentFormModal";
+import { LinksArchive } from "@/components/tournaments/LinksArchive";
 import { StageBadge } from "@/components/Badges";
+import { SectionLabel, StatTile } from "@/components/StatTile";
+import { AddButton } from "@/components/AddButton";
 import type {
   MatchStage, MatchWithSession, Player, SquadWithPlayers, Tournament, TrainingSession,
 } from "@/lib/types";
@@ -104,19 +105,6 @@ export default function TournamentDetail() {
 
   const record = useMemo(() => tournamentRecord(visibleMatches), [visibleMatches]);
   const topScorer = leaders.find((l) => l.goals > 0) ?? null;
-  const mostMinutes = useMemo(
-    () => [...leaders].sort((a, b) => b.minutes - a.minutes)[0] ?? null,
-    [leaders],
-  );
-
-  /** Per-squad record, so both squads' form reads at a glance under "All squads". */
-  const recordBySquad = useMemo(() => {
-    const out: Record<string, ReturnType<typeof tournamentRecord>> = {};
-    for (const sq of squads) {
-      out[sq.id] = tournamentRecord(matches.filter((m) => m.squad_id === sq.id));
-    }
-    return out;
-  }, [squads, matches]);
 
   if (loading) {
     return (
@@ -140,7 +128,7 @@ export default function TournamentDetail() {
   const range = formatDateRange(tournament.start_date, tournament.end_date);
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-6">
       <button
         onClick={() => setLocation("/sessions")}
         className="flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground transition-colors"
@@ -150,81 +138,67 @@ export default function TournamentDetail() {
 
       {/* ── Header ─────────────────────────────────────────────────────────── */}
       <div className="bg-card border border-border rounded-2xl p-5">
-        <div className="flex items-start justify-between gap-3">
-          <div className="min-w-0">
-            <h1 className="text-xl font-semibold text-foreground">{tournament.name}</h1>
-            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-1 text-xs text-muted-foreground">
-              {range && <span className="flex items-center gap-1"><CalendarRange size={11} /> {range}</span>}
-              {tournament.location && <span className="flex items-center gap-1"><MapPin size={11} /> {tournament.location}</span>}
-              <span className="font-time">{tournament.default_match_mins} min default</span>
-            </div>
-          </div>
+        {/* Name, edit and the squad filter all share one line */}
+        <div className="flex items-center gap-2 flex-wrap">
+          <h1 className="text-3xl font-semibold tracking-tight text-foreground">{tournament.name}</h1>
           <button
             onClick={() => setShowEdit(true)}
-            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-border text-xs font-medium text-muted-foreground hover:text-foreground transition-colors shrink-0"
+            aria-label="Edit tournament"
+            title="Edit tournament"
+            className="p-1 rounded text-muted-foreground hover:text-foreground hover:bg-muted transition-colors shrink-0"
             data-testid="button-edit-tournament"
           >
-            <Pencil size={12} /> Edit
+            <Pencil size={15} />
           </button>
+
+          {squads.length > 1 && (
+            <div className="ml-auto flex flex-wrap gap-1.5">
+              {[{ id: "all", name: "All" }, ...squads].map((sq) => (
+                <button
+                  key={sq.id}
+                  onClick={() => setSquadFilter(sq.id)}
+                  className={cn(
+                    "px-2.5 h-8 rounded-lg text-xs font-medium border transition-colors",
+                    squadFilter === sq.id
+                      ? "bg-indigo-500/15 text-indigo-400 border-indigo-500/30"
+                      : isDark ? "border-white/10 text-muted-foreground hover:bg-white/5" : "border-slate-200 text-slate-500 hover:bg-slate-50",
+                  )}
+                  data-testid={`button-squad-filter-${sq.id}`}
+                >
+                  {sq.name}
+                </button>
+              ))}
+            </div>
+          )}
         </div>
 
-        {/* Squad filter — every number below reads for the selected squad */}
-        {squads.length > 1 && (
-          <div className="flex flex-wrap gap-1.5 mt-4">
-            {[{ id: "all", name: "All squads" }, ...squads].map((sq) => (
-              <button
-                key={sq.id}
-                onClick={() => setSquadFilter(sq.id)}
-                className={cn(
-                  "px-2.5 h-8 rounded-lg text-xs font-medium border transition-colors",
-                  squadFilter === sq.id
-                    ? "bg-indigo-500/15 text-indigo-400 border-indigo-500/30"
-                    : isDark ? "border-white/10 text-muted-foreground hover:bg-white/5" : "border-slate-200 text-slate-500 hover:bg-slate-50",
-                )}
-                data-testid={`button-squad-filter-${sq.id}`}
-              >
-                {sq.name}
-              </button>
-            ))}
-          </div>
-        )}
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1 mt-1.5 text-sm text-muted-foreground">
+          {range && <span>{range}</span>}
+          {tournament.location && <><span aria-hidden>·</span><span>{tournament.location}</span></>}
+          {tournament.format && <><span aria-hidden>·</span><span>{tournament.format}</span></>}
+          <span aria-hidden>·</span>
+          <span>{tournament.default_match_mins} min default</span>
+        </div>
 
         {/* Record strip */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-6 gap-px mt-4 pt-4 border-t border-border">
-          <Metric label="Played"  value={record.played} />
-          <Metric label="W / D / L" value={`${record.won}/${record.drawn}/${record.lost}`} valueColor="text-foreground" />
-          <Metric label="Goals For" value={record.goalsFor} valueColor="text-status-good" />
-          <Metric label="Against"  value={record.goalsAgainst} valueColor="text-status-bad" />
-          <Metric
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 pt-4 mt-4 border-t border-border">
+          <StatTile label="Played" value={record.played} />
+          <StatTile label="W / D / L" value={`${record.won}/${record.drawn}/${record.lost}`} />
+          <StatTile label="Goals" value={`${record.goalsFor}–${record.goalsAgainst}`} />
+          <StatTile
             label="Top Scorer"
             value={topScorer ? topScorer.goals : "—"}
             sub={topScorer?.player.name}
-          />
-          <Metric
-            label="Most Minutes"
-            value={mostMinutes && mostMinutes.minutes > 0 ? mostMinutes.minutes : "—"}
-            sub={mostMinutes && mostMinutes.minutes > 0 ? mostMinutes.player.name : undefined}
           />
         </div>
       </div>
 
       {/* ── Squads ─────────────────────────────────────────────────────────── */}
       <div className="space-y-3">
-        <div className="flex items-center justify-between gap-3">
-          <div className="flex items-center gap-2">
-            <Users size={15} className="text-muted-foreground" />
-            <h2 className="text-sm font-semibold text-foreground">Squads</h2>
-            <span className="text-xs text-muted-foreground">{squads.length}</span>
-          </div>
-          <button
-            onClick={() => setShowNewSquad(true)}
-            className={cn(
-              "flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium border transition-colors",
-              isDark ? "border-white/10 text-slate-300 hover:bg-white/5" : "border-slate-200 text-slate-600 hover:bg-slate-50",
-            )}
-          >
-            <Plus size={12} /> Add squad
-          </button>
+        <div className="flex items-center gap-2">
+          <SectionLabel>Squads</SectionLabel>
+          <span className="text-[10px] text-muted-foreground font-time">{squads.length}</span>
+          <AddButton label="Add squad" onClick={() => setShowNewSquad(true)} data-testid="button-add-squad" />
         </div>
 
         {squads.length === 0 ? (
@@ -237,13 +211,7 @@ export default function TournamentDetail() {
         ) : (
           <div className="space-y-3">
             {visibleSquads.map((sq) => (
-              <SquadCard
-                key={sq.id}
-                squad={sq}
-                players={players}
-                record={recordBySquad[sq.id]}
-                onChanged={load}
-              />
+              <SquadCard key={sq.id} squad={sq} players={players} onChanged={load} />
             ))}
           </div>
         )}
@@ -251,19 +219,10 @@ export default function TournamentDetail() {
 
       {/* ── Matches ────────────────────────────────────────────────────────── */}
       <div className="space-y-3">
-        <div className="flex items-center justify-between gap-3">
-          <div className="flex items-center gap-2">
-            <Trophy size={15} className="text-muted-foreground" />
-            <h2 className="text-sm font-semibold text-foreground">Matches</h2>
-            <span className="text-xs text-muted-foreground">{visibleMatches.length}</span>
-          </div>
-          <button
-            onClick={() => setShowNewMatch(true)}
-            className="flex items-center gap-1.5 px-3 py-2 text-sm btn-primary text-white rounded-xl font-semibold"
-            data-testid="button-new-match"
-          >
-            <Plus size={14} /> New Match
-          </button>
+        <div className="flex items-center gap-2">
+          <SectionLabel>Matches</SectionLabel>
+          <span className="text-[10px] text-muted-foreground font-time">{visibleMatches.length}</span>
+          <AddButton label="Add match" onClick={() => setShowNewMatch(true)} data-testid="button-new-match" />
         </div>
 
         {visibleMatches.length === 0 ? (
@@ -317,6 +276,9 @@ export default function TournamentDetail() {
           </div>
         )}
       </div>
+
+      {/* ── Links archive ──────────────────────────────────────────────────── */}
+      <LinksArchive tournamentId={tournament.id} />
 
       {showNewMatch && (
         <NewMatchModal
@@ -444,17 +406,6 @@ function NewSquadModal({
   );
 }
 
-// ── Metric tile ───────────────────────────────────────────────────────────────
-function Metric({ label, value, sub, valueColor }: { label: string; value: string | number; sub?: string; valueColor?: string }) {
-  return (
-    <div className="py-1">
-      <div className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground mb-1">{label}</div>
-      <div className={cn("text-xl font-bold font-time leading-none", valueColor ?? "text-foreground")}>{value}</div>
-      {sub && <div className="text-[11px] text-muted-foreground mt-1 truncate">{sub}</div>}
-    </div>
-  );
-}
-
 // ── New match modal ───────────────────────────────────────────────────────────
 function NewMatchModal({
   tournament,
@@ -515,7 +466,8 @@ function NewMatchModal({
           ...shared,
           date: form.date,
           duration_mins: form.duration_mins,
-          planned_rpe: tournament.default_planned_rpe,
+          // Matches carry no planned RPE — 0 is the app's "no plan" sentinel
+          planned_rpe: 0,
         });
         toast({ title: "Match created" });
       }

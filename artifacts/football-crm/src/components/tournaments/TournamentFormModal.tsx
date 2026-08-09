@@ -1,9 +1,8 @@
 import { useState } from "react";
 import { Trash2 } from "lucide-react";
-import { cn } from "@/lib/utils";
-import { useTheme } from "@/context/ThemeContext";
 import { useToast } from "@/hooks/use-toast";
 import { createTournament, deleteTournament, updateTournament } from "@/lib/queries";
+import { MATCH_FORMATS } from "@/lib/tournaments";
 import { todayISO } from "@/lib/attendance";
 import type { Tournament } from "@/lib/types";
 
@@ -22,8 +21,6 @@ export function TournamentFormModal({
   onSaved,
   onDeleted,
 }: TournamentFormModalProps) {
-  const { theme } = useTheme();
-  const isDark = theme === "dark";
   const { toast } = useToast();
   const editing = tournament != null;
   const [saving, setSaving] = useState(false);
@@ -32,8 +29,8 @@ export function TournamentFormModal({
     start_date: tournament?.start_date ?? todayISO(),
     end_date: tournament?.end_date ?? "",
     location: tournament?.location ?? "",
+    format: tournament?.format ?? "",
     default_match_mins: tournament?.default_match_mins ?? 90,
-    default_planned_rpe: tournament?.default_planned_rpe ?? 8,
   });
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -49,8 +46,8 @@ export function TournamentFormModal({
         start_date: form.start_date || null,
         end_date: form.end_date || null,
         location: form.location.trim() || null,
+        format: form.format || null,
         default_match_mins: form.default_match_mins,
-        default_planned_rpe: form.default_planned_rpe,
       };
       if (editing) {
         await updateTournament(tournament.id, fields);
@@ -128,43 +125,39 @@ export function TournamentFormModal({
             </div>
           </div>
 
-          <div>
-            <label className="block text-xs text-muted-foreground mb-1">Location <span className="text-muted-foreground/50">(optional)</span></label>
-            <input value={form.location} onChange={(e) => setForm({ ...form, location: e.target.value })} placeholder="e.g. Cooperage Ground" className={inputCls} />
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs text-muted-foreground mb-1">Location <span className="text-muted-foreground/50">(optional)</span></label>
+              <input value={form.location} onChange={(e) => setForm({ ...form, location: e.target.value })} placeholder="e.g. Cooperage Ground" className={inputCls} />
+            </div>
+            <div>
+              <label className="block text-xs text-muted-foreground mb-1">Format</label>
+              <select
+                value={form.format}
+                onChange={(e) => setForm({ ...form, format: e.target.value })}
+                className={inputCls}
+                data-testid="select-tournament-format"
+              >
+                <option value="">— Not set —</option>
+                {MATCH_FORMATS.map((f) => <option key={f} value={f}>{f}</option>)}
+              </select>
+            </div>
           </div>
 
-          <div className={cn("rounded-xl border p-3 space-y-3", isDark ? "border-white/[0.06] bg-white/[0.02]" : "border-slate-200 bg-slate-50")}>
-            <p className="text-[11px] text-muted-foreground">
-              Defaults used when creating a match — you can override them per match.
+          <div>
+            <label className="block text-xs text-muted-foreground mb-1">Match duration (min)</label>
+            <input
+              type="number"
+              min={1}
+              max={300}
+              value={form.default_match_mins}
+              onChange={(e) => setForm({ ...form, default_match_mins: parseInt(e.target.value) || 0 })}
+              className={inputCls}
+              required
+            />
+            <p className="text-[11px] text-muted-foreground mt-1">
+              Used when creating a match — you can override it per match.
             </p>
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="block text-xs text-muted-foreground mb-1">Match duration (min)</label>
-                <input
-                  type="number"
-                  min={1}
-                  max={300}
-                  value={form.default_match_mins}
-                  onChange={(e) => setForm({ ...form, default_match_mins: parseInt(e.target.value) || 0 })}
-                  className={inputCls}
-                  required
-                />
-              </div>
-              <div>
-                <label className="block text-xs text-muted-foreground mb-1">
-                  Planned RPE <span className="font-time text-foreground">{form.default_planned_rpe.toFixed(1)}</span>
-                </label>
-                <input
-                  type="range"
-                  min={1}
-                  max={10}
-                  step={0.5}
-                  value={form.default_planned_rpe}
-                  onChange={(e) => setForm({ ...form, default_planned_rpe: parseFloat(e.target.value) })}
-                  className="w-full accent-indigo-500 mt-3"
-                />
-              </div>
-            </div>
           </div>
 
           <div className="flex gap-2 pt-1">

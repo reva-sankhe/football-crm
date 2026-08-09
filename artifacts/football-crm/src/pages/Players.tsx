@@ -5,10 +5,11 @@ import { TableSkeleton } from "@/components/Skeleton";
 import { EmptyState } from "@/components/EmptyState";
 import { fetchPlayers, createPlayer, updatePlayer, fetchTrainingSessions } from "@/lib/queries";
 import { ReportOptionsModal } from "@/components/report/ReportOptionsModal";
+import { AddButton } from "@/components/AddButton";
 import { calcAgeRange, cn } from "@/lib/utils";
 import { PosBadge } from "@/components/PosBadge";
 import type { Player } from "@/lib/types";
-import { Users, Plus, Search, Check, FileText, X, Pencil, SlidersHorizontal } from "lucide-react";
+import { Users, Search, Check, FileText, X, Pencil, SlidersHorizontal } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 
 const PRIMARY_POSITIONS = ["Goalkeeper", "Defender", "Midfielder", "Forward"];
@@ -516,15 +517,7 @@ export default function Players() {
           )}
         </button>
 
-        <button
-          onClick={() => setShowAdd(true)}
-          aria-label="Add player"
-          title="Add player"
-          className={cn(iconBtn, "border-indigo-500/50 text-indigo-400 hover:bg-indigo-500/10")}
-          data-testid="button-add-player"
-        >
-          <Plus size={16} />
-        </button>
+        <AddButton label="Add player" onClick={() => setShowAdd(true)} data-testid="button-add-player" />
 
         {/* Counts what the table is actually showing, so it tracks the filters */}
         <span

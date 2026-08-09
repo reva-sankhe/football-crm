@@ -17,6 +17,19 @@ export const STAGE_CFG: Record<MatchStage, StageCfg> = {
   "Friendly":      { label: "Friendly",      short: "FR"  },
 };
 
+/**
+ * Game sizes a tournament can be played at, smallest first. Mirrors the CHECK
+ * constraint on `tournaments.format` — keep the two in step.
+ */
+export const MATCH_FORMATS = [
+  "5-a-side",
+  "6-a-side",
+  "7-a-side",
+  "8-a-side",
+  "9-a-side",
+  "11-a-side",
+] as const;
+
 /** Bracket order — also the order the stage dropdown offers. */
 export const MATCH_STAGES: MatchStage[] = [
   "Group Stage",

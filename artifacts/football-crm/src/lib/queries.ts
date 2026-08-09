@@ -1,7 +1,8 @@
 import { supabase } from "./supabase";
 import type {
   Player, TestSession, TestResult, TrainingSession, SessionRPE, SessionAttendance, AttendanceStatus,
-  Tournament, Squad, SquadWithPlayers, Match, MatchWithSession, MatchPlayerStat, MatchStatInput, MatchStage,
+  Tournament, TournamentLink, Squad, SquadWithPlayers, Match, MatchWithSession, MatchPlayerStat,
+  MatchStatInput, MatchStage,
 } from "./types";
 
 // Players
@@ -430,8 +431,13 @@ export async function fetchTournament(id: string): Promise<Tournament> {
   return data as Tournament;
 }
 
+/**
+ * `default_planned_rpe` is optional: RPE is a training concept, so nothing in the
+ * tournament UI sets it and the column's DB default fills it in.
+ */
 export async function createTournament(
-  t: Omit<Tournament, "id" | "created_at">
+  t: Omit<Tournament, "id" | "created_at" | "default_planned_rpe">
+    & Partial<Pick<Tournament, "default_planned_rpe">>
 ): Promise<Tournament> {
   const { data, error } = await supabase.from("tournaments").insert(t).select().single();
   if (error) throw error;
@@ -447,6 +453,39 @@ export async function updateTournament(id: string, updates: Partial<Tournament>)
 export async function deleteTournament(id: string): Promise<void> {
   // squads, matches and stats cascade; the underlying sessions rows survive
   const { error } = await supabase.from("tournaments").delete().eq("id", id);
+  if (error) throw error;
+}
+
+// ── Tournament links ──────────────────────────────────────────────────────────
+export async function fetchTournamentLinks(tournamentId: string): Promise<TournamentLink[]> {
+  const { data, error } = await supabase
+    .from("tournament_links")
+    .select("*")
+    .eq("tournament_id", tournamentId)
+    .order("created_at");
+  if (error) throw error;
+  return (data ?? []) as TournamentLink[];
+}
+
+export async function createTournamentLink(
+  link: Omit<TournamentLink, "id" | "created_at">
+): Promise<TournamentLink> {
+  const { data, error } = await supabase.from("tournament_links").insert(link).select().single();
+  if (error) throw error;
+  return data as TournamentLink;
+}
+
+export async function updateTournamentLink(
+  id: string,
+  updates: Partial<Pick<TournamentLink, "title" | "url">>
+): Promise<TournamentLink> {
+  const { data, error } = await supabase.from("tournament_links").update(updates).eq("id", id).select().single();
+  if (error) throw error;
+  return data as TournamentLink;
+}
+
+export async function deleteTournamentLink(id: string): Promise<void> {
+  const { error } = await supabase.from("tournament_links").delete().eq("id", id);
   if (error) throw error;
 }
 

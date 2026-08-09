@@ -8,7 +8,6 @@ import { Layout } from "@/components/Layout";
 import Dashboard from "@/pages/Dashboard";
 import Players from "@/pages/Players";
 import PlayerDetail from "@/pages/PlayerDetail";
-import FitnessTests from "@/pages/FitnessTests";
 import Analytics from "@/pages/Analytics";
 import Sessions from "@/pages/Sessions";
 import SessionRPE from "@/pages/SessionRPE";
@@ -37,7 +36,10 @@ function AppShell() {
   return (
     <Layout>
       <Switch>
-        <Route path="/" component={Dashboard} />
+        {/* Analytics is the landing page; Dashboard is hidden from the nav but
+            still reachable at its own path */}
+        <Route path="/"><Redirect to="/analytics" /></Route>
+        <Route path="/dashboard" component={Dashboard} />
         <Route path="/players" component={Players} />
         <Route path="/players/:id" component={PlayerDetail} />
         <Route path="/sessions" component={Sessions} />
@@ -46,9 +48,10 @@ function AppShell() {
         <Route path="/tournaments/:id" component={TournamentDetail} />
         <Route path="/matches/:id" component={MatchDetail} />
         <Route path="/attendance" component={Attendance} />
-        {/* Legacy link — the calendar was replaced by the Attendance page */}
+        {/* Legacy links — the calendar became Attendance, Fitness Tests became a
+            tab on Sessions */}
         <Route path="/calendar"><Redirect to="/attendance" /></Route>
-        <Route path="/fitness" component={FitnessTests} />
+        <Route path="/fitness"><Redirect to="/sessions" /></Route>
         <Route path="/analytics" component={Analytics} />
         <Route component={NotFound} />
       </Switch>

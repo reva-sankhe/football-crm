@@ -15,10 +15,9 @@ import type { TrainingSession, Player, SessionType } from "@/lib/types";
 
 // ── Session type config ────────────────────────────────────────────────────────
 const SESSION_TYPE_CFG: Record<SessionType, { text: string; bg: string }> = {
-  Training: { text: "text-indigo-400", bg: "bg-indigo-500/15" },
-  Match:    { text: "text-status-warn",  bg: "bg-status-warn"  },
-  Gym:      { text: "text-status-good",bg: "bg-status-good"},
-  Recovery: { text: "text-slate-400",  bg: "bg-slate-500/15"  },
+  Training: { text: "text-indigo-400",  bg: "bg-indigo-500/15" },
+  Match:    { text: "text-status-warn", bg: "bg-status-warn"   },
+  Lecture:  { text: "text-slate-400",   bg: "bg-slate-500/15"  },
 };
 
 function SessionTypeBadge({ type }: { type: SessionType }) {

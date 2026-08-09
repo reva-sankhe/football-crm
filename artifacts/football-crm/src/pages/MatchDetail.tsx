@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useLocation, useParams } from "wouter";
 import {
-  Activity, ArrowLeft, ArrowRight, ClipboardCheck, RefreshCw, Users, Zap,
+  Activity, ArrowLeft, ArrowRight, ClipboardCheck, RefreshCw, Users,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useTheme } from "@/context/ThemeContext";
@@ -287,9 +287,6 @@ export default function MatchDetail() {
               <>
                 <button onClick={() => setLocation("/attendance")} className="flex items-center gap-1 text-indigo-400 hover:text-indigo-300 transition-colors">
                   <ClipboardCheck size={12} /> Attendance
-                </button>
-                <button onClick={() => setLocation(`/sessions/${match.session_id}/rpe`)} className="flex items-center gap-1 text-indigo-400 hover:text-indigo-300 transition-colors">
-                  <Zap size={12} /> Log RPE
                 </button>
                 <button onClick={() => setLocation(`/sessions/${match.session_id}`)} className="flex items-center gap-1 text-muted-foreground hover:text-foreground transition-colors">
                   Session <ArrowRight size={11} />

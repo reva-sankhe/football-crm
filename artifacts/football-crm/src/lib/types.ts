@@ -105,7 +105,7 @@ export interface SessionAttendance {
 }
 
 // ── Session & RPE types ───────────────────────────────────────────────────────
-export type SessionType = "Training" | "Match" | "Gym" | "Recovery";
+export type SessionType = "Training" | "Match" | "Lecture";
 
 export interface TrainingSession {
   id: string;
@@ -149,9 +149,20 @@ export interface Tournament {
   start_date: string | null;
   end_date: string | null;
   location: string | null;
+  /** "7-a-side" etc. — null until set. See MATCH_FORMATS in lib/tournaments. */
+  format: string | null;
   default_match_mins: number;
   default_planned_rpe: number;
   notes: string | null;
+  created_at: string;
+}
+
+/** One titled link filed against a tournament — a Drive folder, a results page. */
+export interface TournamentLink {
+  id: string;
+  tournament_id: string;
+  title: string;
+  url: string;
   created_at: string;
 }
 
