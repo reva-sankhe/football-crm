@@ -1,19 +1,22 @@
 import { useMemo, useState } from "react";
-import { Check, ChevronDown, Search, Trash2, Users, X } from "lucide-react";
+import { Check, ChevronDown, Pencil, Search, Trash2, Users, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useTheme } from "@/context/ThemeContext";
 import { useToast } from "@/hooks/use-toast";
 import { deleteSquad, setSquadPlayers, updateSquad } from "@/lib/queries";
 import { PosBadge } from "@/components/PosBadge";
+import type { TournamentRecord } from "@/lib/tournaments";
 import type { Player, SquadWithPlayers } from "@/lib/types";
 
 interface SquadCardProps {
   squad: SquadWithPlayers;
   players: Player[];       // active roster
+  /** This squad's own match record, shown beside the name. */
+  record?: TournamentRecord;
   onChanged: () => void;   // refetch after a write
 }
 
-export function SquadCard({ squad, players, onChanged }: SquadCardProps) {
+export function SquadCard({ squad, players, record, onChanged }: SquadCardProps) {
   const { theme } = useTheme();
   const isDark = theme === "dark";
   const { toast } = useToast();
@@ -127,6 +130,15 @@ export function SquadCard({ squad, players, onChanged }: SquadCardProps) {
             <button onClick={() => setEditingMeta(true)} className="text-sm font-semibold text-foreground hover:text-indigo-400 transition-colors">
               {squad.name}
             </button>
+            <button
+              onClick={() => setEditingMeta(true)}
+              aria-label={`Rename ${squad.name}`}
+              title="Rename squad"
+              className="p-1 -ml-1 rounded text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+              data-testid={`button-rename-squad-${squad.id}`}
+            >
+              <Pencil size={12} />
+            </button>
             <span
               className={cn(
                 "px-2 py-0.5 rounded-full text-[11px] font-medium font-time",
@@ -139,6 +151,11 @@ export function SquadCard({ squad, players, onChanged }: SquadCardProps) {
             </span>
             {overLimit && (
               <span className="text-[11px] text-status-warn">over the {squad.size_limit}-player limit</span>
+            )}
+            {record && record.played > 0 && (
+              <span className="text-[11px] text-muted-foreground font-time">
+                {record.played} played · {record.won}/{record.drawn}/{record.lost} · {record.goalsFor}–{record.goalsAgainst}
+              </span>
             )}
 
             <div className="ml-auto flex items-center gap-1">

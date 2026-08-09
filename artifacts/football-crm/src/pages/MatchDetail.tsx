@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useLocation, useParams } from "wouter";
 import {
-  Activity, ArrowLeft, ArrowRight, ClipboardCheck, RefreshCw, Trophy, Zap,
+  Activity, ArrowLeft, ArrowRight, ClipboardCheck, RefreshCw, Users, Zap,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useTheme } from "@/context/ThemeContext";
@@ -246,7 +246,7 @@ export default function MatchDetail() {
             <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-1 text-xs text-muted-foreground">
               {match.sessions && <span>{formatDateLong(match.sessions.date)}</span>}
               {match.sessions && <span className="font-time">{match.sessions.duration_mins} min</span>}
-              {match.squads && <span className="flex items-center gap-1"><Trophy size={10} /> {match.squads.name}</span>}
+              {match.squads && <span className="flex items-center gap-1"><Users size={10} /> {match.squads.name}</span>}
             </div>
           </div>
 

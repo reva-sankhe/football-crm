@@ -673,12 +673,21 @@ export interface TournamentLeader {
   appearances: number;
 }
 
-/** Per-player totals across every match in a tournament, best scorers first. */
-export async function fetchTournamentLeaders(tournamentId: string): Promise<TournamentLeader[]> {
-  const { data, error } = await supabase
+/**
+ * Per-player totals across a tournament's matches, best scorers first.
+ * Pass `squadId` to scope the table to one squad — a tournament entered with
+ * two squads has two independent sets of leaders.
+ */
+export async function fetchTournamentLeaders(
+  tournamentId: string,
+  squadId?: string | null,
+): Promise<TournamentLeader[]> {
+  let q = supabase
     .from("match_player_stats")
-    .select("*, players(id, name, primary_position), matches!inner(tournament_id)")
+    .select("*, players(id, name, primary_position), matches!inner(tournament_id, squad_id)")
     .eq("matches.tournament_id", tournamentId);
+  if (squadId) q = q.eq("matches.squad_id", squadId);
+  const { data, error } = await q;
   if (error) throw error;
 
   const byPlayer = new Map<string, TournamentLeader>();

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useLocation, useParams } from "wouter";
 import {
-  ArrowLeft, ArrowRight, CalendarRange, Link2, MapPin, Plus, RefreshCw, Trophy, Users,
+  ArrowLeft, ArrowRight, CalendarRange, Link2, MapPin, Pencil, Plus, RefreshCw, Trophy, Users,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useTheme } from "@/context/ThemeContext";
@@ -23,6 +23,7 @@ import {
 } from "@/lib/tournaments";
 import { formatDateShort, todayISO } from "@/lib/attendance";
 import { SquadCard } from "@/components/tournaments/SquadCard";
+import { TournamentFormModal } from "@/components/tournaments/TournamentFormModal";
 import { StageBadge } from "@/components/Badges";
 import type {
   MatchStage, MatchWithSession, Player, SquadWithPlayers, Tournament, TrainingSession,
@@ -42,6 +43,10 @@ export default function TournamentDetail() {
   const [leaders, setLeaders] = useState<TournamentLeader[]>([]);
   const [loading, setLoading] = useState(true);
   const [showNewMatch, setShowNewMatch] = useState(false);
+  const [showEdit, setShowEdit] = useState(false);
+  const [showNewSquad, setShowNewSquad] = useState(false);
+  /** "all", or a squad id — a tournament can be entered with more than one squad. */
+  const [squadFilter, setSquadFilter] = useState<string>("all");
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -67,27 +72,51 @@ export default function TournamentDetail() {
 
   useEffect(() => { load(); }, [load]);
 
-  const record = useMemo(() => tournamentRecord(matches), [matches]);
+  // Leaders are aggregated server-side, so a squad change needs a refetch. The
+  // first load already fetched the "all" table, so this only fires on a change.
+  useEffect(() => {
+    if (squadFilter === "all") return;
+    let cancelled = false;
+    fetchTournamentLeaders(id!, squadFilter)
+      .then((ld) => { if (!cancelled) setLeaders(ld); })
+      .catch(() => {/* the leader tiles just fall back to em dashes */});
+    return () => { cancelled = true; };
+  }, [id, squadFilter]);
+
+  // Re-pull the combined table when the filter goes back to "all"
+  useEffect(() => {
+    if (squadFilter !== "all") return;
+    let cancelled = false;
+    fetchTournamentLeaders(id!)
+      .then((ld) => { if (!cancelled) setLeaders(ld); })
+      .catch(() => {/* leave whatever the last load produced */});
+    return () => { cancelled = true; };
+  }, [id, squadFilter]);
+
+  const visibleMatches = useMemo(
+    () => (squadFilter === "all" ? matches : matches.filter((m) => m.squad_id === squadFilter)),
+    [matches, squadFilter],
+  );
+  const visibleSquads = useMemo(
+    () => (squadFilter === "all" ? squads : squads.filter((s) => s.id === squadFilter)),
+    [squads, squadFilter],
+  );
+
+  const record = useMemo(() => tournamentRecord(visibleMatches), [visibleMatches]);
   const topScorer = leaders.find((l) => l.goals > 0) ?? null;
   const mostMinutes = useMemo(
     () => [...leaders].sort((a, b) => b.minutes - a.minutes)[0] ?? null,
     [leaders],
   );
 
-  const handleAddSquad = async () => {
-    if (!tournament) return;
-    try {
-      await createSquad({
-        tournament_id: tournament.id,
-        name: `Squad ${String.fromCharCode(65 + squads.length)}`,
-        size_limit: null,
-        notes: null,
-      });
-      load();
-    } catch (err) {
-      toast({ title: "Failed to add squad", description: String(err), variant: "destructive" });
+  /** Per-squad record, so both squads' form reads at a glance under "All squads". */
+  const recordBySquad = useMemo(() => {
+    const out: Record<string, ReturnType<typeof tournamentRecord>> = {};
+    for (const sq of squads) {
+      out[sq.id] = tournamentRecord(matches.filter((m) => m.squad_id === sq.id));
     }
-  };
+    return out;
+  }, [squads, matches]);
 
   if (loading) {
     return (
@@ -121,10 +150,7 @@ export default function TournamentDetail() {
 
       {/* ── Header ─────────────────────────────────────────────────────────── */}
       <div className="bg-card border border-border rounded-2xl p-5">
-        <div className="flex items-start gap-3">
-          <div className="w-11 h-11 rounded-xl bg-status-warn flex items-center justify-center shrink-0">
-            <Trophy size={20} className="text-status-warn" />
-          </div>
+        <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
             <h1 className="text-xl font-semibold text-foreground">{tournament.name}</h1>
             <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-1 text-xs text-muted-foreground">
@@ -133,7 +159,35 @@ export default function TournamentDetail() {
               <span className="font-time">{tournament.default_match_mins} min default</span>
             </div>
           </div>
+          <button
+            onClick={() => setShowEdit(true)}
+            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-border text-xs font-medium text-muted-foreground hover:text-foreground transition-colors shrink-0"
+            data-testid="button-edit-tournament"
+          >
+            <Pencil size={12} /> Edit
+          </button>
         </div>
+
+        {/* Squad filter — every number below reads for the selected squad */}
+        {squads.length > 1 && (
+          <div className="flex flex-wrap gap-1.5 mt-4">
+            {[{ id: "all", name: "All squads" }, ...squads].map((sq) => (
+              <button
+                key={sq.id}
+                onClick={() => setSquadFilter(sq.id)}
+                className={cn(
+                  "px-2.5 h-8 rounded-lg text-xs font-medium border transition-colors",
+                  squadFilter === sq.id
+                    ? "bg-indigo-500/15 text-indigo-400 border-indigo-500/30"
+                    : isDark ? "border-white/10 text-muted-foreground hover:bg-white/5" : "border-slate-200 text-slate-500 hover:bg-slate-50",
+                )}
+                data-testid={`button-squad-filter-${sq.id}`}
+              >
+                {sq.name}
+              </button>
+            ))}
+          </div>
+        )}
 
         {/* Record strip */}
         <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-6 gap-px mt-4 pt-4 border-t border-border">
@@ -163,7 +217,7 @@ export default function TournamentDetail() {
             <span className="text-xs text-muted-foreground">{squads.length}</span>
           </div>
           <button
-            onClick={handleAddSquad}
+            onClick={() => setShowNewSquad(true)}
             className={cn(
               "flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium border transition-colors",
               isDark ? "border-white/10 text-slate-300 hover:bg-white/5" : "border-slate-200 text-slate-600 hover:bg-slate-50",
@@ -176,14 +230,20 @@ export default function TournamentDetail() {
         {squads.length === 0 ? (
           <div className="bg-card border border-dashed border-border rounded-xl p-8 text-center">
             <p className="text-sm text-muted-foreground">No squads yet</p>
-            <button onClick={handleAddSquad} className="mt-2 text-sm text-indigo-400 hover:text-indigo-300">
-              Add your first squad →
+            <button onClick={() => setShowNewSquad(true)} className="mt-2 text-sm text-indigo-400 hover:text-indigo-300">
+              Add your first squad
             </button>
           </div>
         ) : (
           <div className="space-y-3">
-            {squads.map((sq) => (
-              <SquadCard key={sq.id} squad={sq} players={players} onChanged={load} />
+            {visibleSquads.map((sq) => (
+              <SquadCard
+                key={sq.id}
+                squad={sq}
+                players={players}
+                record={recordBySquad[sq.id]}
+                onChanged={load}
+              />
             ))}
           </div>
         )}
@@ -195,7 +255,7 @@ export default function TournamentDetail() {
           <div className="flex items-center gap-2">
             <Trophy size={15} className="text-muted-foreground" />
             <h2 className="text-sm font-semibold text-foreground">Matches</h2>
-            <span className="text-xs text-muted-foreground">{matches.length}</span>
+            <span className="text-xs text-muted-foreground">{visibleMatches.length}</span>
           </div>
           <button
             onClick={() => setShowNewMatch(true)}
@@ -206,16 +266,18 @@ export default function TournamentDetail() {
           </button>
         </div>
 
-        {matches.length === 0 ? (
+        {visibleMatches.length === 0 ? (
           <div className="bg-card border border-dashed border-border rounded-xl p-8 text-center">
-            <p className="text-sm text-muted-foreground">No matches yet</p>
+            <p className="text-sm text-muted-foreground">
+              {matches.length === 0 ? "No matches yet" : "No matches for this squad yet"}
+            </p>
             <button onClick={() => setShowNewMatch(true)} className="mt-2 text-sm text-indigo-400 hover:text-indigo-300">
-              Add your first match →
+              Add a match
             </button>
           </div>
         ) : (
           <div className="space-y-2">
-            {matches.map((m) => {
+            {visibleMatches.map((m) => {
               const cfg = STAGE_CFG[m.stage] ?? STAGE_CFG["Group Stage"];
               const result = matchResult(m);
               return (
@@ -264,6 +326,120 @@ export default function TournamentDetail() {
           onSaved={() => { setShowNewMatch(false); load(); }}
         />
       )}
+
+      {showEdit && (
+        <TournamentFormModal
+          tournament={tournament}
+          onClose={() => setShowEdit(false)}
+          onSaved={() => { setShowEdit(false); load(); }}
+          onDeleted={() => setLocation("/sessions")}
+        />
+      )}
+
+      {showNewSquad && (
+        <NewSquadModal
+          tournamentId={tournament.id}
+          defaultName={`Squad ${String.fromCharCode(65 + squads.length)}`}
+          onClose={() => setShowNewSquad(false)}
+          onSaved={() => { setShowNewSquad(false); load(); }}
+        />
+      )}
+    </div>
+  );
+}
+
+// ── New squad modal ───────────────────────────────────────────────────────────
+function NewSquadModal({
+  tournamentId,
+  defaultName,
+  onClose,
+  onSaved,
+}: {
+  tournamentId: string;
+  /** Pre-filled so the old one-click behaviour is still one keystroke away. */
+  defaultName: string;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const { toast } = useToast();
+  const [saving, setSaving] = useState(false);
+  const [name, setName] = useState(defaultName);
+  const [sizeLimit, setSizeLimit] = useState("");
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!name.trim()) {
+      toast({ title: "Squad name is required", variant: "destructive" });
+      return;
+    }
+    setSaving(true);
+    try {
+      await createSquad({
+        tournament_id: tournamentId,
+        name: name.trim(),
+        size_limit: sizeLimit === "" ? null : Math.max(1, parseInt(sizeLimit) || 1),
+        notes: null,
+      });
+      toast({ title: "Squad added" });
+      onSaved();
+    } catch (err) {
+      toast({ title: "Failed to add squad", description: String(err), variant: "destructive" });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const inputCls =
+    "w-full bg-muted border border-border rounded-lg px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground/40 focus:outline-none focus:ring-1 focus:ring-primary";
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4 bg-background/80 backdrop-blur-sm">
+      <div className="w-full max-w-sm bg-card border border-border rounded-2xl shadow-xl overflow-hidden">
+        <div className="flex items-center justify-between px-5 py-4 border-b border-border">
+          <h2 className="text-base font-semibold text-foreground">New Squad</h2>
+          <button onClick={onClose} className="text-muted-foreground hover:text-foreground transition-colors text-xl leading-none">&times;</button>
+        </div>
+        <form onSubmit={handleSubmit} className="px-5 py-4 space-y-4">
+          <div>
+            <label className="block text-xs text-muted-foreground mb-1">Name</label>
+            <input
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="e.g. Development Squad"
+              className={inputCls}
+              data-testid="input-squad-name"
+              autoFocus
+              required
+            />
+          </div>
+          <div>
+            <label className="block text-xs text-muted-foreground mb-1">
+              Size limit <span className="text-muted-foreground/50">(optional)</span>
+            </label>
+            <input
+              type="number"
+              min={1}
+              value={sizeLimit}
+              onChange={(e) => setSizeLimit(e.target.value)}
+              placeholder="No limit"
+              className={inputCls}
+            />
+          </div>
+          <div className="flex gap-2 pt-1">
+            <button type="button" onClick={onClose} className="flex-1 px-4 py-2.5 text-sm border border-border rounded-xl text-muted-foreground hover:text-foreground transition-colors">
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={saving}
+              className="flex-1 px-4 py-2.5 text-sm btn-primary text-white rounded-xl font-semibold disabled:opacity-60"
+              data-testid="button-save-squad"
+            >
+              {saving ? "Saving…" : "Add Squad"}
+            </button>
+          </div>
+        </form>
+      </div>
     </div>
   );
 }

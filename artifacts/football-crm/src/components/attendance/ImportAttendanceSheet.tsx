@@ -3,7 +3,6 @@ import Papa from "papaparse";
 import {
   ChevronDown,
   RefreshCw,
-  CheckCheck,
   Upload,
   FileSpreadsheet,
   AlertCircle,
@@ -527,11 +526,8 @@ export function ImportAttendanceSheet({
           {/* ── Step 3: Done ── */}
           {importStep === "done" && (
             <div className="flex flex-col items-center justify-center py-8 gap-4 text-center">
-              <div className="w-12 h-12 rounded-full bg-status-good flex items-center justify-center">
-                <CheckCheck size={22} className="text-status-good" />
-              </div>
               <div>
-                <p className="text-base font-semibold text-foreground">Import complete!</p>
+                <p className="text-base font-semibold text-foreground">Import complete</p>
                 <p className="text-sm text-muted-foreground mt-1">
                   Attendance records have been saved. Check the Overview tab to verify.
                 </p>
