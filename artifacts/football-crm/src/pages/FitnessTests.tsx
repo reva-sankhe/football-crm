@@ -5,6 +5,7 @@ import { TableSkeleton } from "@/components/Skeleton";
 import { EmptyState } from "@/components/EmptyState";
 import { formatBronco } from "@/lib/utils";
 import { cn } from "@/lib/utils";
+import { PosBadge } from "@/components/PosBadge";
 import type { TestSession, Player, TestResult } from "@/lib/types";
 import { Dumbbell, Plus, CheckCircle2, AlertCircle, ChevronRight, Pencil, Trash2 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
@@ -32,15 +33,6 @@ interface MatchedRow {
 
 type EnrichedResult = TestResult & { players: Player };
 
-const POS_CFG: Record<string, { text: string; bg: string }> = {
-  Forward:    { text: "text-red-400",    bg: "bg-red-400/15"    },
-  Midfielder: { text: "text-blue-400",   bg: "bg-blue-400/15"   },
-  Defender:   { text: "text-indigo-400", bg: "bg-indigo-400/15" },
-  Goalkeeper: { text: "text-amber-400",  bg: "bg-amber-400/15"  },
-};
-function getPos(pos: string | null) {
-  return POS_CFG[pos ?? ""] ?? { text: "text-slate-400", bg: "bg-slate-400/15" };
-}
 
 function parseNum(v: string | undefined | null): number | null {
   if (!v || String(v).trim() === "") return null;
@@ -489,19 +481,16 @@ function SessionDetail({
               </div>
               <div className="max-h-52 overflow-y-auto divide-y divide-border/50">
                 {addCandidates.map((p) => {
-                  const pos = getPos(p.primary_position);
                   return (
                     <button
                       key={p.id}
                       onClick={() => selectAddPlayer(p)}
                       className="w-full flex items-center gap-3 px-4 py-2.5 hover:bg-muted/50 transition-colors text-left"
                     >
-                      <span className={cn("text-[10px] font-bold font-time w-7 text-center", pos.text)}>
-                        {p.primary_position?.slice(0, 3) || "?"}
-                      </span>
+                      <PosBadge pos={p.primary_position} className="h-5 px-1" />
                       <span className="text-sm text-foreground flex-1">{p.name}</span>
                       <span className="text-[11px] text-muted-foreground font-time">{p.code}</span>
-                      <span className={cn("text-[10px] font-medium px-1.5 py-0.5 rounded", p.team === "Sharks" ? "text-blue-400 bg-blue-500/10" : "text-amber-400 bg-amber-500/10")}>
+                      <span className={cn("text-[10px] font-medium px-1.5 py-0.5 rounded", p.team === "Sharks" ? "text-foreground bg-muted" : "text-status-warn bg-status-warn")}>
                         {p.team}
                       </span>
                     </button>
@@ -539,9 +528,7 @@ function SessionDetail({
           {addStep === "result" && addSelectedPlayer && (
             <div className="px-4 py-3 space-y-3">
               <div className="flex items-center gap-2.5">
-                <span className={cn("text-[10px] font-bold font-time", getPos(addSelectedPlayer.primary_position).text)}>
-                  {addSelectedPlayer.primary_position?.slice(0, 3) || "?"}
-                </span>
+                <PosBadge pos={addSelectedPlayer.primary_position} className="h-5 px-1" />
                 <span className="text-sm font-semibold text-foreground">{addSelectedPlayer.name}</span>
                 <span className="text-[11px] text-muted-foreground font-time">{addSelectedPlayer.code}</span>
                 <button
@@ -673,7 +660,6 @@ function SessionDetail({
               const testedIdx = testedParticipants.findIndex((t) => t.id === r.id);
               const isFirst = testedIdx === 0 && r.bronco_mins !== null;
               const isLast = testedIdx === testedParticipants.length - 1 && testedParticipants.length > 1 && r.bronco_mins !== null;
-              const pos = getPos(r.players.primary_position);
               const barPct = r.bronco_mins !== null && maxBronco !== minBronco
                 ? Math.round(100 - ((r.bronco_mins - minBronco) / range) * 80)
                 : r.bronco_mins !== null ? 100 : 0;
@@ -685,9 +671,9 @@ function SessionDetail({
                   className={cn(
                     "bg-card border rounded-xl p-4 flex flex-col gap-2.5",
                     isFirst
-                      ? "border-emerald-500/40 bg-emerald-500/5"
+                      ? "border-status-good bg-status-good"
                       : isLast
-                      ? "border-red-500/30 bg-red-500/5"
+                      ? "border-status-bad bg-status-bad"
                       : "border-border"
                   )}
                 >
@@ -696,8 +682,8 @@ function SessionDetail({
                     <div className="flex items-center gap-2.5">
                       <span className={cn(
                         "flex-shrink-0 w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold font-time",
-                        isFirst ? "bg-emerald-500/20 text-emerald-400"
-                          : isLast ? "bg-red-500/15 text-red-400"
+                        isFirst ? "bg-status-good text-status-good"
+                          : isLast ? "bg-status-bad text-status-bad"
                           : "bg-muted text-muted-foreground"
                       )}>
                         {testedIdx >= 0 ? testedIdx + 1 : idx + 1}
@@ -720,7 +706,7 @@ function SessionDetail({
                           <button
                             onClick={() => handleDelete(r.id)}
                             disabled={saving}
-                            className="p-1 rounded text-muted-foreground hover:text-red-400 transition-colors disabled:opacity-40"
+                            className="p-1 rounded text-muted-foreground hover:text-status-bad transition-colors disabled:opacity-40"
                             title="Delete result"
                           >
                             <Trash2 size={12} />
@@ -728,9 +714,7 @@ function SessionDetail({
                         </>
                       )}
                       <div className="flex flex-col items-end gap-1">
-                        <span className={cn("inline-flex items-center justify-center px-1.5 py-0.5 rounded-md text-[10px] font-bold font-time", pos.text, pos.bg)}>
-                          {r.players.primary_position?.slice(0, 3) || "?"}
-                        </span>
+                        <PosBadge pos={r.players.primary_position} className="h-5 px-1" />
                         {r.players.age_range && (
                           <span className="text-[10px] text-muted-foreground font-time">{r.players.age_range}</span>
                         )}
@@ -743,14 +727,14 @@ function SessionDetail({
                     <div>
                       <div className={cn(
                         "text-2xl font-bold font-time leading-none mb-1.5",
-                        isFirst ? "text-emerald-400" : isLast ? "text-red-400" : "text-foreground"
+                        isFirst ? "text-status-good" : isLast ? "text-status-bad" : "text-foreground"
                       )}>
                         {formatBronco(r.bronco_mins)}
                       </div>
                       <div className="h-1 rounded-full bg-muted overflow-hidden">
                         <div
                           className={cn("h-full rounded-full transition-all duration-500",
-                            isFirst ? "bg-emerald-400" : isLast ? "bg-red-400" : "bg-indigo-400"
+                            isFirst ? "bg-status-good" : isLast ? "bg-status-bad" : "bg-indigo-500"
                           )}
                           style={{ width: `${barPct}%` }}
                         />
@@ -774,7 +758,7 @@ function SessionDetail({
                   {(isFirst || isLast) && (
                     <div className={cn(
                       "text-[10px] font-semibold uppercase tracking-widest",
-                      isFirst ? "text-emerald-500" : "text-red-400/70"
+                      isFirst ? "text-status-good" : "text-status-bad/70"
                     )}>
                       {isFirst ? "Best time" : "Slowest"}
                     </div>
@@ -806,7 +790,6 @@ function SessionDetail({
           <div className="bg-card border border-border rounded-xl p-4 space-y-2">
             <div className="flex flex-wrap gap-2">
               {absentees.map((p) => {
-                const pos = getPos(p.primary_position);
                 const addKey = `add:${p.id}`;
                 const isAdding = editingId === addKey;
                 return (
@@ -815,7 +798,7 @@ function SessionDetail({
                     isAdding ? "w-full" : "inline-block"
                   )}>
                     <div className="flex items-center gap-1.5 px-2.5 py-1.5 bg-muted/60">
-                      <span className={cn("text-[10px] font-bold font-time", pos.text)}>{p.primary_position?.slice(0, 3) || "?"}</span>
+                      <PosBadge pos={p.primary_position} className="h-5 px-1" />
                       <span className="text-sm text-foreground">{p.name}</span>
                       <span className="text-[10px] text-muted-foreground font-time">{p.code}</span>
                       {editMode && !isAdding && (
@@ -1081,8 +1064,8 @@ export default function FitnessTests() {
           <h2 className="text-base font-semibold text-foreground mb-2">Preview Results</h2>
           <p className="text-xs text-muted-foreground mb-3">Session will be created when you confirm below.</p>
           <div className="flex gap-4 mb-4 text-sm">
-            <span className="text-emerald-400 flex items-center gap-1"><CheckCircle2 size={14} />{matchedCount} matched</span>
-            {unmatchedCount > 0 && <span className="text-red-400 flex items-center gap-1"><AlertCircle size={14} />{unmatchedCount} unmatched (skipped)</span>}
+            <span className="text-status-good flex items-center gap-1"><CheckCircle2 size={14} />{matchedCount} matched</span>
+            {unmatchedCount > 0 && <span className="text-status-bad flex items-center gap-1"><AlertCircle size={14} />{unmatchedCount} unmatched (skipped)</span>}
           </div>
           <div className="overflow-x-auto">
             <table className="w-full text-sm" data-testid="preview-table">
@@ -1097,11 +1080,11 @@ export default function FitnessTests() {
               </thead>
               <tbody>
                 {matched.map((m, i) => (
-                  <tr key={i} className={`border-b border-border/50 ${m.player ? "bg-emerald-950/20" : "bg-red-950/20"}`} data-testid={`row-preview-${i}`}>
-                    <td className="px-3 py-2">{m.player ? <CheckCircle2 size={14} className="text-emerald-400" /> : <AlertCircle size={14} className="text-red-400" />}</td>
+                  <tr key={i} className={`border-b border-border/50 ${m.player ? "bg-status-good" : "bg-status-bad"}`} data-testid={`row-preview-${i}`}>
+                    <td className="px-3 py-2">{m.player ? <CheckCircle2 size={14} className="text-status-good" /> : <AlertCircle size={14} className="text-status-bad" />}</td>
                     <td className="px-3 py-2 font-time text-xs text-muted-foreground">{m.row.code}</td>
                     <td className="px-3 py-2 text-foreground">{m.row.name}</td>
-                    <td className="px-3 py-2 text-foreground">{m.player?.name ?? <span className="text-red-400 text-xs">No match found</span>}</td>
+                    <td className="px-3 py-2 text-foreground">{m.player?.name ?? <span className="text-status-bad text-xs">No match found</span>}</td>
                     <td className="px-3 py-2 text-right font-time">{formatBronco(m.row.bronco_mins ?? null)}</td>
                   </tr>
                 ))}

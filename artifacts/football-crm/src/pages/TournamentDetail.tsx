@@ -23,6 +23,7 @@ import {
 } from "@/lib/tournaments";
 import { formatDateShort, todayISO } from "@/lib/attendance";
 import { SquadCard } from "@/components/tournaments/SquadCard";
+import { StageBadge } from "@/components/Badges";
 import type {
   MatchStage, MatchWithSession, Player, SquadWithPlayers, Tournament, TrainingSession,
 } from "@/lib/types";
@@ -121,8 +122,8 @@ export default function TournamentDetail() {
       {/* ── Header ─────────────────────────────────────────────────────────── */}
       <div className="bg-card border border-border rounded-2xl p-5">
         <div className="flex items-start gap-3">
-          <div className="w-11 h-11 rounded-xl bg-amber-500/15 flex items-center justify-center shrink-0">
-            <Trophy size={20} className="text-amber-400" />
+          <div className="w-11 h-11 rounded-xl bg-status-warn flex items-center justify-center shrink-0">
+            <Trophy size={20} className="text-status-warn" />
           </div>
           <div className="min-w-0">
             <h1 className="text-xl font-semibold text-foreground">{tournament.name}</h1>
@@ -138,8 +139,8 @@ export default function TournamentDetail() {
         <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-6 gap-px mt-4 pt-4 border-t border-border">
           <Metric label="Played"  value={record.played} />
           <Metric label="W / D / L" value={`${record.won}/${record.drawn}/${record.lost}`} valueColor="text-foreground" />
-          <Metric label="Goals For" value={record.goalsFor} valueColor="text-emerald-400" />
-          <Metric label="Against"  value={record.goalsAgainst} valueColor="text-red-400" />
+          <Metric label="Goals For" value={record.goalsFor} valueColor="text-status-good" />
+          <Metric label="Against"  value={record.goalsAgainst} valueColor="text-status-bad" />
           <Metric
             label="Top Scorer"
             value={topScorer ? topScorer.goals : "—"}
@@ -224,9 +225,7 @@ export default function TournamentDetail() {
                   className="flex items-center gap-3 bg-card border border-border rounded-xl px-4 py-3 hover:border-indigo-500/40 transition-colors"
                   data-testid={`row-match-${m.id}`}
                 >
-                  <span className={cn("px-2 py-0.5 rounded text-[11px] font-medium shrink-0 border", cfg.bg, cfg.text, cfg.border)}>
-                    {cfg.label}
-                  </span>
+                  <StageBadge stage={m.stage} />
                   <div className="min-w-0 flex-1">
                     <div className="text-sm font-medium text-foreground truncate">
                       {m.opponent ? `vs ${m.opponent}` : "Opponent TBD"}

@@ -2,7 +2,10 @@ import { useEffect, useState, useCallback } from "react";
 import { useParams, useLocation } from "wouter";
 import { ArrowLeft, Zap, ClipboardList } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { POS_CFG, PosBadge } from "@/components/PosBadge";
+import { PosBadge } from "@/components/PosBadge";
+import { SessionTypeBadge } from "@/components/Badges";
+import { useTheme } from "@/context/ThemeContext";
+import { HIGHLIGHT, ink, ordinal, posColor, type Mode } from "@/lib/viz";
 import { fetchTrainingSession, fetchSessionRPEWithPlayers } from "@/lib/queries";
 import type { TrainingSession, SessionRPE, Player, SessionType } from "@/lib/types";
 import {
@@ -10,32 +13,11 @@ import {
   ResponsiveContainer, Cell, ReferenceLine, LabelList,
 } from "recharts";
 
-// ── RPE color gradient (1=green → 10=red) ────────────────────────────────────
-const RPE_COLORS: Record<number, string> = {
-  1: "hsl(142,76%,45%)", 2: "hsl(116,60%,43%)", 3: "hsl(90,60%,40%)",
-  4: "hsl(60,80%,42%)",  5: "hsl(45,90%,48%)",  6: "hsl(30,90%,50%)",
-  7: "hsl(18,92%,50%)",  8: "hsl(8,92%,50%)",   9: "hsl(4,90%,45%)",
- 10: "hsl(0,88%,38%)",
-};
-function rpeColor(rpe: number): string {
-  return RPE_COLORS[Math.max(1, Math.min(10, Math.floor(rpe)))];
+// RPE 1→10 is an ordinal intensity scale — one hue, light to dark.
+function rpeColor(mode: Mode, rpe: number): string {
+  return ordinal(mode, 10, Math.max(1, Math.min(10, Math.floor(rpe))) - 1);
 }
 
-// ── Session type config ────────────────────────────────────────────────────────
-const SESSION_TYPE_CFG: Record<SessionType, { text: string; bg: string }> = {
-  Training: { text: "text-indigo-400", bg: "bg-indigo-500/15" },
-  Match:    { text: "text-amber-400",  bg: "bg-amber-500/15"  },
-  Gym:      { text: "text-emerald-400",bg: "bg-emerald-500/15"},
-  Recovery: { text: "text-slate-400",  bg: "bg-slate-500/15"  },
-};
-function SessionTypeBadge({ type }: { type: SessionType }) {
-  const cfg = SESSION_TYPE_CFG[type] ?? SESSION_TYPE_CFG.Training;
-  return (
-    <span className={cn("inline-flex items-center px-2 py-0.5 rounded text-xs font-medium", cfg.bg, cfg.text)}>
-      {type}
-    </span>
-  );
-}
 
 function formatDate(iso: string) {
   return new Date(iso + "T00:00:00").toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
@@ -46,6 +28,9 @@ type RpeRow = SessionRPE & { players: Player };
 export default function SessionDetail() {
   const { id } = useParams<{ id: string }>();
   const [, setLocation] = useLocation();
+  const { theme } = useTheme();
+  const mode: Mode = theme === "dark" ? "dark" : "light";
+  const INK = ink(mode);
 
   const [session, setSession] = useState<TrainingSession | null>(null);
   const [rpeRows, setRpeRows] = useState<RpeRow[]>([]);
@@ -104,7 +89,7 @@ export default function SessionDetail() {
       name: r.players?.name?.split(" ")[0] ?? "—",
       load: Math.round(r.load_au),
       rpe: r.rpe,
-      color: rpeColor(r.rpe),
+      color: rpeColor(mode, r.rpe),
     }));
 
   // Chart A — RPE distribution histogram
@@ -113,7 +98,7 @@ export default function SessionDetail() {
     return {
       rpe: rpeVal,
       count: rpeRows.filter((r) => Math.round(r.rpe) === rpeVal).length,
-      color: RPE_COLORS[rpeVal],
+      color: ordinal(mode, 10, rpeVal - 1),
     };
   });
 
@@ -124,8 +109,7 @@ export default function SessionDetail() {
       if (inPos.length === 0) return null;
       const avgL = Math.round(inPos.reduce((s, r) => s + r.load_au, 0) / inPos.length);
       const avgR = inPos.reduce((s, r) => s + r.rpe, 0) / inPos.length;
-      const cfg = POS_CFG[pos];
-      return { pos, avgLoad: avgL, avgRpe: parseFloat(avgR.toFixed(1)), color: cfg.color, count: inPos.length };
+      return { pos, avgLoad: avgL, avgRpe: parseFloat(avgR.toFixed(1)), color: posColor(mode, pos), count: inPos.length };
     })
     .filter(Boolean) as { pos: string; avgLoad: number; avgRpe: number; color: string; count: number }[];
 
@@ -180,15 +164,15 @@ export default function SessionDetail() {
           </div>
           <div>
             <div className="text-xs text-muted-foreground mb-0.5">Planned Load</div>
-            <div className="text-lg font-bold font-time text-amber-400">{planLoad} <span className="text-xs font-normal text-amber-400/60">AU</span></div>
+            <div className="text-lg font-bold font-time text-status-warn">{planLoad} <span className="text-xs font-normal text-muted-foreground">AU</span></div>
           </div>
         </div>
-        <div className="flex items-center justify-between bg-amber-400/10 border border-amber-400/20 rounded-lg px-4 py-2.5">
+        <div className="flex items-center justify-between bg-status-warn border border-status-warn rounded-lg px-4 py-2.5">
           <div className="flex items-center gap-2">
-            <Zap size={14} className="text-amber-400" />
-            <span className="text-xs text-amber-400/80 font-medium">Planned Load (AU)</span>
+            <Zap size={14} className="text-status-warn" />
+            <span className="text-xs text-muted-foreground font-medium">Planned Load (AU)</span>
           </div>
-          <span className="text-2xl font-bold text-amber-400 font-time">{planLoad}</span>
+          <span className="text-2xl font-bold text-status-warn font-time">{planLoad}</span>
         </div>
         {session.notes && (
           <p className="text-xs text-muted-foreground mt-3 border-t border-border pt-3">{session.notes}</p>
@@ -204,7 +188,7 @@ export default function SessionDetail() {
           </div>
           <div className="px-4 py-3">
             <div className="text-xs text-muted-foreground mb-0.5">Avg Load (AU)</div>
-            <div className="text-xl font-bold font-time text-emerald-400">{avgLoad ?? "—"}</div>
+            <div className="text-xl font-bold font-time text-status-good">{avgLoad ?? "—"}</div>
           </div>
           <div className="px-4 py-3">
             <div className="text-xs text-muted-foreground mb-0.5">Highest Load</div>
@@ -232,12 +216,12 @@ export default function SessionDetail() {
           </p>
           <ResponsiveContainer width="100%" height={180}>
             <BarChart data={histogramData} margin={{ top: 4, right: 8, bottom: 4, left: -20 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" vertical={false} />
-              <XAxis dataKey="rpe" tick={{ fill: "#9CA3AF", fontSize: 11 }} />
-              <YAxis allowDecimals={false} tick={{ fill: "#9CA3AF", fontSize: 10 }} />
+              <CartesianGrid strokeDasharray="3 3" stroke={INK.grid} vertical={false} />
+              <XAxis dataKey="rpe" tick={{ fill: INK.axis, fontSize: 11 }} />
+              <YAxis allowDecimals={false} tick={{ fill: INK.axis, fontSize: 10 }} />
               <Tooltip
-                contentStyle={{ background: "#111", border: "1px solid #222", borderRadius: 6 }}
-                labelStyle={{ color: "#fff", fontSize: 12 }}
+                contentStyle={{ background: INK.tooltipBg, border: `1px solid ${INK.tooltipBorder}`, borderRadius: 8 }}
+                labelStyle={{ color: INK.primary, fontSize: 12 }}
                 formatter={(v: number, _: string, entry: { payload?: { rpe?: number } }) => [
                   `${v} player${v !== 1 ? "s" : ""}`,
                   `RPE ${entry.payload?.rpe}`,
@@ -251,9 +235,9 @@ export default function SessionDetail() {
             </BarChart>
           </ResponsiveContainer>
           <div className="flex items-center justify-between mt-2 text-[11px]">
-            <span style={{ color: RPE_COLORS[1] }}>1 — Easy</span>
-            <span style={{ color: RPE_COLORS[5] }}>5 — Moderate</span>
-            <span style={{ color: RPE_COLORS[10] }}>10 — Max</span>
+            <span style={{ color: ordinal(mode, 10, 0) }}>1 — Easy</span>
+            <span style={{ color: ordinal(mode, 10, 4) }}>5 — Moderate</span>
+            <span style={{ color: ordinal(mode, 10, 9) }}>10 — Max</span>
           </div>
         </div>
       )}
@@ -275,12 +259,12 @@ export default function SessionDetail() {
           </p>
           <ResponsiveContainer width="100%" height={180}>
             <BarChart data={positionLoadData} margin={{ top: 4, right: 40, bottom: 4, left: 0 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" vertical={false} />
-              <XAxis dataKey="pos" tick={{ fill: "#9CA3AF", fontSize: 11 }} />
-              <YAxis tick={{ fill: "#9CA3AF", fontSize: 10 }} />
+              <CartesianGrid strokeDasharray="3 3" stroke={INK.grid} vertical={false} />
+              <XAxis dataKey="pos" tick={{ fill: INK.axis, fontSize: 11 }} />
+              <YAxis tick={{ fill: INK.axis, fontSize: 10 }} />
               <Tooltip
-                contentStyle={{ background: "#111", border: "1px solid #222", borderRadius: 6 }}
-                labelStyle={{ color: "#fff", fontSize: 12 }}
+                contentStyle={{ background: INK.tooltipBg, border: `1px solid ${INK.tooltipBorder}`, borderRadius: 8 }}
+                labelStyle={{ color: INK.primary, fontSize: 12 }}
                 formatter={(v: number, _: string, entry: { payload?: { avgRpe?: number; count?: number } }) => [
                   `${v} AU · avg RPE ${entry.payload?.avgRpe?.toFixed(1) ?? "?"} · ${entry.payload?.count} player${entry.payload?.count !== 1 ? "s" : ""}`,
                   "Avg Load",
@@ -288,15 +272,15 @@ export default function SessionDetail() {
               />
               <ReferenceLine
                 y={planLoad}
-                stroke="#fbbf24"
+                stroke={HIGHLIGHT}
                 strokeDasharray="5 3"
-                label={{ value: "Plan", position: "insideTopRight", fill: "#fbbf24", fontSize: 10 }}
+                label={{ value: "Plan", position: "insideTopRight", fill: HIGHLIGHT, fontSize: 10 }}
               />
               <Bar dataKey="avgLoad" radius={[4, 4, 0, 0]} maxBarSize={52}>
                 <LabelList
                   dataKey="avgLoad"
                   position="top"
-                  style={{ fill: "#9CA3AF", fontSize: 10 }}
+                  style={{ fill: INK.axis, fontSize: 10 }}
                 />
                 {positionLoadData.map((entry, i) => (
                   <Cell key={`pos-${i}`} fill={entry.color} />
@@ -350,9 +334,9 @@ export default function SessionDetail() {
                         <span className={cn(
                           "inline-block px-2 py-0.5 rounded-full text-[11px] font-medium",
                           variance > 0
-                            ? "bg-red-400/15 text-red-400"
+                            ? "bg-status-bad text-status-bad"
                             : variance < 0
-                              ? "bg-emerald-400/15 text-emerald-400"
+                              ? "bg-status-good text-status-good"
                               : "bg-muted text-muted-foreground"
                         )}>
                           {variance > 0 ? `+${variance}` : variance === 0 ? "—" : variance}
@@ -377,21 +361,21 @@ export default function SessionDetail() {
           </p>
           <ResponsiveContainer width="100%" height={Math.max(220, count * 28)}>
             <BarChart data={chartData} layout="vertical" margin={{ top: 4, right: 60, bottom: 4, left: 60 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" horizontal={false} />
+              <CartesianGrid strokeDasharray="3 3" stroke={INK.grid} horizontal={false} />
               <XAxis
                 type="number"
                 domain={[0, "dataMax + 50"]}
-                tick={{ fill: "#9CA3AF", fontSize: 10 }}
+                tick={{ fill: INK.axis, fontSize: 10 }}
               />
               <YAxis
                 type="category"
                 dataKey="name"
-                tick={{ fill: "#9CA3AF", fontSize: 11 }}
+                tick={{ fill: INK.axis, fontSize: 11 }}
                 width={56}
               />
               <Tooltip
-                contentStyle={{ background: "#111", border: "1px solid #222", borderRadius: 6 }}
-                labelStyle={{ color: "#fff", fontSize: 12 }}
+                contentStyle={{ background: INK.tooltipBg, border: `1px solid ${INK.tooltipBorder}`, borderRadius: 8 }}
+                labelStyle={{ color: INK.primary, fontSize: 12 }}
                 formatter={(v: number, _: string, entry: { payload?: { rpe?: number } }) => [
                   `${v} AU — RPE ${entry.payload?.rpe?.toFixed(1) ?? "?"}`,
                   "Load",
@@ -399,9 +383,9 @@ export default function SessionDetail() {
               />
               <ReferenceLine
                 x={planLoad}
-                stroke="#fbbf24"
+                stroke={HIGHLIGHT}
                 strokeDasharray="5 3"
-                label={{ value: "Plan", position: "right", fill: "#fbbf24", fontSize: 10 }}
+                label={{ value: "Plan", position: "right", fill: HIGHLIGHT, fontSize: 10 }}
               />
               <Bar dataKey="load" radius={[0, 4, 4, 0]} maxBarSize={20}>
                 <LabelList
@@ -419,7 +403,7 @@ export default function SessionDetail() {
           {/* RPE gradient legend */}
           <div className="flex h-2 rounded-full overflow-hidden mt-3 gap-px">
             {[1,2,3,4,5,6,7,8,9,10].map((n) => (
-              <div key={n} className="flex-1 h-full" style={{ background: RPE_COLORS[n] }} />
+              <div key={n} className="flex-1 h-full" style={{ background: ordinal(mode, 10, n - 1) }} />
             ))}
           </div>
           <div className="flex justify-between text-[10px] text-muted-foreground mt-1">

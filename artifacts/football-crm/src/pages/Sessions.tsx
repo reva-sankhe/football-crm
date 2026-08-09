@@ -4,20 +4,13 @@ import { Plus, CalendarDays, Clock, Zap } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
 import { fetchTrainingSessions, createTrainingSession } from "@/lib/queries";
-import { SESSION_TYPE_CFG, SESSION_TYPES, dayFromISO, todayISO } from "@/lib/attendance";
+import { SESSION_TYPES, dayFromISO, todayISO } from "@/lib/attendance";
+import { SessionTypeBadge } from "@/components/Badges";
 import { supabase } from "@/lib/supabase";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { TournamentsTab } from "@/components/tournaments/TournamentsTab";
 import type { TrainingSession, SessionType } from "@/lib/types";
 
-function SessionTypeBadge({ type }: { type: SessionType }) {
-  const cfg = SESSION_TYPE_CFG[type] ?? SESSION_TYPE_CFG.Training;
-  return (
-    <span className={cn("inline-flex items-center px-2 py-0.5 rounded text-xs font-medium", cfg.bg, cfg.text)}>
-      {type}
-    </span>
-  );
-}
 
 function formatDate(iso: string) {
   return new Date(iso + "T00:00:00").toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
@@ -148,12 +141,12 @@ function NewSessionModal({ onClose, onSaved }: NewSessionModalProps) {
           </div>
 
           {/* Planned Load AU */}
-          <div className="rounded-xl bg-amber-400/10 border border-amber-400/20 px-4 py-3 flex items-center justify-between">
+          <div className="rounded-xl bg-status-warn border border-status-warn px-4 py-3 flex items-center justify-between">
             <div className="flex items-center gap-2">
-              <Zap size={14} className="text-amber-400" />
-              <span className="text-xs text-amber-400/80 font-medium">Planned Load (AU)</span>
+              <Zap size={14} className="text-status-warn" />
+              <span className="text-xs text-muted-foreground font-medium">Planned Load (AU)</span>
             </div>
-            <span className="text-2xl font-bold text-amber-400 font-time">{plannedLoad}</span>
+            <span className="text-2xl font-bold text-status-warn font-time">{plannedLoad}</span>
           </div>
 
           {/* Notes */}
@@ -308,11 +301,11 @@ function TrainingTab() {
                 </div>
                 <div className="flex items-center gap-3 text-xs text-muted-foreground">
                   <span className="flex items-center gap-1"><Clock size={11} />{s.duration_mins} min</span>
-                  <span className="flex items-center gap-1 text-amber-400 font-bold font-time">
+                  <span className="flex items-center gap-1 text-status-warn font-bold font-time">
                     <Zap size={11} />{Math.round(s.planned_load_au)} AU planned
                   </span>
                   {avgLoads[s.id] != null && (
-                    <span className="text-emerald-400 font-time">{avgLoads[s.id]} AU avg</span>
+                    <span className="text-status-good font-time">{avgLoads[s.id]} AU avg</span>
                   )}
                   <span className="ml-auto text-muted-foreground/60">{loggedCounts[s.id] ?? 0} logged</span>
                 </div>
@@ -346,8 +339,8 @@ function TrainingTab() {
                     <td className="px-4 py-3 text-muted-foreground font-time text-xs">{formatDate(s.date)}</td>
                     <td className="px-4 py-3"><SessionTypeBadge type={s.session_type} /></td>
                     <td className="px-4 py-3 text-right text-muted-foreground font-time">{s.duration_mins} min</td>
-                    <td className="px-4 py-3 text-right font-bold text-amber-400 font-time">{Math.round(s.planned_load_au)}</td>
-                    <td className="px-4 py-3 text-right font-time text-emerald-400">
+                    <td className="px-4 py-3 text-right font-bold text-status-warn font-time">{Math.round(s.planned_load_au)}</td>
+                    <td className="px-4 py-3 text-right font-time text-status-good">
                       {avgLoads[s.id] != null ? avgLoads[s.id] : <span className="text-muted-foreground/40">—</span>}
                     </td>
                     <td className="px-4 py-3 text-right text-muted-foreground font-time">{loggedCounts[s.id] ?? 0}</td>

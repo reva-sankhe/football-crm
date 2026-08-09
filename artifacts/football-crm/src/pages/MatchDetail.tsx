@@ -17,6 +17,7 @@ import {
 import { MATCH_STAGES, RESULT_CFG, STAGE_CFG, matchResult } from "@/lib/tournaments";
 import { formatDateLong } from "@/lib/attendance";
 import { PosBadge } from "@/components/PosBadge";
+import { StageBadge } from "@/components/Badges";
 import type {
   MatchStage, MatchStatInput, MatchWithSession, Player,
 } from "@/lib/types";
@@ -232,9 +233,7 @@ export default function MatchDetail() {
         <div className="flex items-start justify-between gap-3 flex-wrap">
           <div>
             <div className="flex items-center gap-2 mb-1">
-              <span className={cn("px-2 py-0.5 rounded text-[11px] font-medium border", cfg.bg, cfg.text, cfg.border)}>
-                {cfg.label}
-              </span>
+              <StageBadge stage={match.stage} />
               {result && (
                 <span className={cn("w-6 h-6 rounded-md flex items-center justify-center text-[11px] font-bold", RESULT_CFG[result].bg, RESULT_CFG[result].text)}>
                   {result}
@@ -322,11 +321,11 @@ export default function MatchDetail() {
         {/* Totals */}
         <div className={cn("px-4 py-2 flex flex-wrap gap-3 text-[11px] border-b", isDark ? "border-white/[0.06]" : "border-slate-100")}>
           <span className="text-muted-foreground">Played <span className="font-time text-foreground">{totals.played}</span></span>
-          <span className="text-muted-foreground">Goals <span className="font-time text-emerald-400">{totals.goals}</span></span>
-          <span className="text-muted-foreground">Assists <span className="font-time text-blue-400">{totals.assists}</span></span>
+          <span className="text-muted-foreground">Goals <span className="font-time text-status-good">{totals.goals}</span></span>
+          <span className="text-muted-foreground">Assists <span className="font-time text-foreground">{totals.assists}</span></span>
           <span className="text-muted-foreground">Minutes <span className="font-time text-foreground">{totals.minutes}</span></span>
           {totals.injured > 0 && (
-            <span className="text-orange-400 flex items-center gap-1"><Activity size={10} />{totals.injured} injured</span>
+            <span className="text-status-warn flex items-center gap-1"><Activity size={10} />{totals.injured} injured</span>
           )}
         </div>
 
@@ -377,7 +376,7 @@ export default function MatchDetail() {
                         className={cn(
                           "w-7 h-7 rounded-lg border flex items-center justify-center transition-colors shrink-0",
                           row.injured
-                            ? "bg-orange-500/20 border-orange-500/40 text-orange-400"
+                            ? "bg-status-warn border-status-warn text-status-warn"
                             : isDark ? "border-white/10 text-slate-600 hover:text-slate-400" : "border-slate-200 text-slate-400 hover:text-slate-600",
                         )}
                       >
@@ -391,7 +390,7 @@ export default function MatchDetail() {
                         value={row.injury_note ?? ""}
                         onChange={(e) => patch(p.id, { injury_note: e.target.value || null })}
                         placeholder="Injury note — e.g. hamstring, 62'"
-                        className="w-full sm:col-span-7 mt-1 bg-muted border border-orange-500/30 rounded-lg px-2.5 py-1.5 text-xs text-foreground placeholder:text-muted-foreground/40 focus:outline-none focus:ring-1 focus:ring-orange-500/40"
+                        className="w-full sm:col-span-7 mt-1 bg-muted border border-status-warn rounded-lg px-2.5 py-1.5 text-xs text-foreground placeholder:text-muted-foreground/40 focus:outline-none focus:ring-1 focus:ring-orange-500/40"
                       />
                     )}
                   </div>

@@ -46,19 +46,18 @@ export type Team = "Sharks" | "Wildcats";
 export interface MasTier {
   label: string;
   color: string;
-  bgColor: string;
   min: number;
   max: number;
 }
 
 export const MAS_TIERS: MasTier[] = [
-  { label: "World Record", color: "#f59e0b", bgColor: "bg-amber-500", min: 4.5, max: Infinity },
-  { label: "Elite Pro",    color: "#8b5cf6", bgColor: "bg-violet-500", min: 4.3, max: 4.5 },
-  { label: "Outstanding",  color: "#3b82f6", bgColor: "bg-blue-500",   min: 4.1, max: 4.3 },
-  { label: "Very Good",    color: "#10b981", bgColor: "bg-emerald-500", min: 3.9, max: 4.1 },
-  { label: "Good",         color: "#22c55e", bgColor: "bg-green-500",  min: 3.7, max: 3.9 },
-  { label: "Average",      color: "#f97316", bgColor: "bg-orange-500", min: 3.5, max: 3.7 },
-  { label: "Below Average",color: "#ef4444", bgColor: "bg-red-500",    min: 0,   max: 3.5 },
+  { label: "World Record", color: "#0d366b", min: 4.5, max: Infinity },
+  { label: "Elite Pro",    color: "#184f95", min: 4.3, max: 4.5 },
+  { label: "Outstanding",  color: "#256abf", min: 4.1, max: 4.3 },
+  { label: "Very Good",    color: "#3987e5", min: 3.9, max: 4.1 },
+  { label: "Good",         color: "#5598e7", min: 3.7, max: 3.9 },
+  { label: "Average",      color: "#86b6ef", min: 3.5, max: 3.7 },
+  { label: "Below Average",color: "#b7d3f6", min: 0,   max: 3.5 },
 ];
 
 export function getMasTier(mas: number): MasTier {
@@ -71,7 +70,6 @@ export function getMasTier(mas: number): MasTier {
 export interface BroncoTier {
   label: string;
   color: string;
-  bgColor: string;
   minMins: number;
   maxMins: number;
   displayRange: string;
@@ -81,13 +79,13 @@ export interface BroncoTier {
 const M = (mins: number, secs: number) => mins + secs / 60;
 
 export const BRONCO_TIERS: BroncoTier[] = [
-  { label: "World Record",       color: "#f59e0b", bgColor: "bg-amber-500",   minMins: 0,          maxMins: M(4,26), displayRange: "Under 4:26", description: "Top 1% of professional athletes" },
-  { label: "Elite Professional", color: "#8b5cf6", bgColor: "bg-violet-500",  minMins: M(4,26),    maxMins: M(4,36), displayRange: "4:26–4:36",  description: "International and top-tier professional players" },
-  { label: "Outstanding",        color: "#3b82f6", bgColor: "bg-blue-500",    minMins: M(4,36),    maxMins: M(4,46), displayRange: "4:36–4:46",  description: "High-level competitive athletes" },
-  { label: "Very Good",          color: "#10b981", bgColor: "bg-emerald-500", minMins: M(4,46),    maxMins: M(4,56), displayRange: "4:46–4:56",  description: "Competitive club/college level" },
-  { label: "Good",               color: "#22c55e", bgColor: "bg-green-500",   minMins: M(4,56),    maxMins: M(5, 6), displayRange: "4:56–5:06",  description: "Above average, suitable for competition" },
-  { label: "Average",            color: "#f97316", bgColor: "bg-orange-500",  minMins: M(5, 6),    maxMins: M(5,26), displayRange: "5:06–5:26",  description: "Average fitness for team sports" },
-  { label: "Below Average",      color: "#ef4444", bgColor: "bg-red-500",     minMins: M(5,26),    maxMins: Infinity, displayRange: "Above 5:26", description: "Needs improvement" },
+  { label: "World Record",       color: "#0d366b", minMins: 0,          maxMins: M(4,26), displayRange: "Under 4:26", description: "Top 1% of professional athletes" },
+  { label: "Elite Professional", color: "#184f95", minMins: M(4,26),    maxMins: M(4,36), displayRange: "4:26–4:36",  description: "International and top-tier professional players" },
+  { label: "Outstanding",        color: "#256abf", minMins: M(4,36),    maxMins: M(4,46), displayRange: "4:36–4:46",  description: "High-level competitive athletes" },
+  { label: "Very Good",          color: "#3987e5", minMins: M(4,46),    maxMins: M(4,56), displayRange: "4:46–4:56",  description: "Competitive club/college level" },
+  { label: "Good",               color: "#5598e7", minMins: M(4,56),    maxMins: M(5, 6), displayRange: "4:56–5:06",  description: "Above average, suitable for competition" },
+  { label: "Average",            color: "#86b6ef", minMins: M(5, 6),    maxMins: M(5,26), displayRange: "5:06–5:26",  description: "Average fitness for team sports" },
+  { label: "Below Average",      color: "#b7d3f6", minMins: M(5,26),    maxMins: Infinity, displayRange: "Above 5:26", description: "Needs improvement" },
 ];
 
 export function getBroncoTier(broncoMins: number): BroncoTier {

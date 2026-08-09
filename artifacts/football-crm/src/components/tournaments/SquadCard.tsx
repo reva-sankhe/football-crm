@@ -131,21 +131,21 @@ export function SquadCard({ squad, players, onChanged }: SquadCardProps) {
               className={cn(
                 "px-2 py-0.5 rounded-full text-[11px] font-medium font-time",
                 overLimit
-                  ? "bg-amber-500/20 text-amber-400"
+                  ? "bg-muted text-muted-foreground"
                   : isDark ? "bg-white/8 text-muted-foreground" : "bg-slate-100 text-slate-500",
               )}
             >
               {selected.size}{squad.size_limit != null ? `/${squad.size_limit}` : ""} players
             </span>
             {overLimit && (
-              <span className="text-[11px] text-amber-400">over the {squad.size_limit}-player limit</span>
+              <span className="text-[11px] text-status-warn">over the {squad.size_limit}-player limit</span>
             )}
 
             <div className="ml-auto flex items-center gap-1">
               <button
                 onClick={handleDelete}
                 title="Delete squad"
-                className="w-7 h-7 flex items-center justify-center rounded-lg text-muted-foreground hover:text-red-400 transition-colors"
+                className="w-7 h-7 flex items-center justify-center rounded-lg text-muted-foreground hover:text-status-bad transition-colors"
               >
                 <Trash2 size={13} />
               </button>

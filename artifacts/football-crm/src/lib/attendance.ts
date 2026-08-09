@@ -1,12 +1,13 @@
 import { CheckCircle2, XCircle, Clock, Activity } from "lucide-react";
 import type { AttendanceStatus, SessionType } from "./types";
+import { STATUS, STATUS_TEXT } from "./viz";
 
 // ── Session type styling ──────────────────────────────────────────────────────
-export const SESSION_TYPE_CFG: Record<SessionType, { text: string; bg: string; dot: string; border: string }> = {
-  Training: { text: "text-indigo-400",  bg: "bg-indigo-500/15",  dot: "bg-indigo-500",  border: "border-indigo-500/30" },
-  Match:    { text: "text-amber-400",   bg: "bg-amber-500/15",   dot: "bg-amber-500",   border: "border-amber-500/30"  },
-  Gym:      { text: "text-emerald-400", bg: "bg-emerald-500/15", dot: "bg-emerald-500", border: "border-emerald-500/30"},
-  Recovery: { text: "text-slate-400",   bg: "bg-slate-500/15",   dot: "bg-slate-400",   border: "border-slate-500/30"  },
+export const SESSION_TYPE_CFG: Record<SessionType, { dot: string }> = {
+  Training: { dot: "bg-slate-400" },
+  Match:    { dot: "bg-indigo-500" },
+  Gym:      { dot: "bg-slate-500" },
+  Recovery: { dot: "bg-slate-300 dark:bg-slate-600" },
 };
 
 export const SESSION_TYPES: SessionType[] = ["Training", "Match", "Gym", "Recovery"];
@@ -38,9 +39,16 @@ export function countsAsAttended(status: AttendanceStatus | null | undefined): b
 
 /** Percentage bands, matching the 75% threshold the Dashboard alerts on. */
 export function attendancePctColor(pct: number): string {
-  if (pct >= 85) return "text-emerald-400";
-  if (pct >= 75) return "text-amber-400";
-  return "text-red-400";
+  if (pct >= 85) return STATUS_TEXT.good;
+  if (pct >= 75) return STATUS_TEXT.warning;
+  return STATUS_TEXT.critical;
+}
+
+/** Same bands as a raw hex, for chart marks. */
+export function attendancePctFill(pct: number): string {
+  if (pct >= 85) return STATUS.good;
+  if (pct >= 75) return STATUS.warning;
+  return STATUS.critical;
 }
 
 // ── Date helpers ──────────────────────────────────────────────────────────────

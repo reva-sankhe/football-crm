@@ -2,18 +2,17 @@ import {
   Bar, BarChart, CartesianGrid, Cell, Line, LineChart, ReferenceLine, XAxis, YAxis,
 } from "recharts";
 import { formatBronco } from "@/lib/utils";
-import { formatDateLong } from "@/lib/attendance";
+import { attendancePctFill, formatDateLong } from "@/lib/attendance";
+import { HIGHLIGHT, ink } from "@/lib/viz";
 import { formatDateRange } from "@/lib/tournaments";
 import { ACWR_CONFIG, type PlayerReport } from "@/lib/report";
 
+// Reports always print on white, so they pin the light ink set.
+const RINK = ink("light");
+
 const logoSrc = `${import.meta.env.BASE_URL}bg-logo.png`.replace(/\/\//g, "/");
 
-/** Attendance threshold colours — the one scale carried into print. */
-function pctFill(pct: number): string {
-  if (pct >= 85) return "#059669";
-  if (pct >= 75) return "#d97706";
-  return "#dc2626";
-}
+
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
@@ -26,18 +25,39 @@ function Section({ title, children }: { title: string; children: React.ReactNode
   );
 }
 
+/** Sprint times print to 2dp, or an em dash when never recorded. */
+function secs(v: number | null): string {
+  return v !== null ? `${v.toFixed(2)}s` : "—";
+}
+
 function Empty({ children }: { children: React.ReactNode }) {
   return <p className="text-[10px] text-slate-400 italic py-1">{children}</p>;
 }
 
-function Stat({ label, value, sub, color }: { label: string; value: string | number; sub?: string; color?: string }) {
+function Stat({ label, value, valueNote, sub, color }: {
+  label: string;
+  value: string | number;
+  /** Sits inline after the value, small — e.g. the month a test was taken. */
+  valueNote?: string;
+  sub?: string;
+  color?: string;
+}) {
   return (
     <div>
       <div className="text-[8px] font-bold uppercase tracking-[0.12em] text-slate-500">{label}</div>
-      <div className="text-xl font-bold leading-tight" style={{ color: color ?? "#0f172a" }}>{value}</div>
+      <div className="flex items-baseline gap-1">
+        <span className="text-xl font-bold leading-tight" style={{ color: color ?? RINK.primary }}>{value}</span>
+        {valueNote && <span className="text-[9px] text-slate-500">{valueNote}</span>}
+      </div>
       {sub && <div className="text-[9px] text-slate-500 leading-tight">{sub}</div>}
     </div>
   );
+}
+
+/** "Mar 26" — the month a test was taken. */
+function monthYear(iso: string | null): string | null {
+  if (!iso) return null;
+  return new Date(iso + "T00:00:00").toLocaleDateString("en-GB", { month: "short", year: "2-digit" });
 }
 
 export function ReportPage({ report, generatedAt }: { report: PlayerReport; generatedAt: string }) {
@@ -77,11 +97,16 @@ export function ReportPage({ report, generatedAt }: { report: PlayerReport; gene
           label="Attendance"
           value={attendance.pct !== null ? `${attendance.pct}%` : "—"}
           sub={attendance.total > 0 ? `${attendance.attended}/${attendance.total} sessions` : "No sessions"}
-          color={attendance.pct !== null ? pctFill(attendance.pct) : undefined}
+          color={attendance.pct !== null ? attendancePctFill(attendance.pct) : undefined}
         />
         <Stat label="Goals" value={matches.goals} sub={matches.assists > 0 ? `${matches.assists} assists` : undefined} />
         <Stat label="Appearances" value={matches.appearances} sub={matches.callUps > 0 ? `${matches.callUps} call-ups` : undefined} />
-        <Stat label="Best Bronco" value={formatBronco(fitness.bestBronco)} sub={fitness.tier?.label} />
+        <Stat
+          label="Latest Bronco"
+          value={formatBronco(fitness.latestBronco)}
+          valueNote={monthYear(fitness.latestBroncoDate) ?? undefined}
+          sub={fitness.teamBand?.label}
+        />
       </div>
 
       {/* ── Attendance ────────────────────────────────────────────────────── */}
@@ -101,12 +126,12 @@ export function ReportPage({ report, generatedAt }: { report: PlayerReport; gene
               }))}
               margin={{ top: 4, right: 4, bottom: 0, left: -22 }}
             >
-              <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" vertical={false} />
-              <XAxis dataKey="label" tick={{ fill: "#64748b", fontSize: 9 }} axisLine={false} tickLine={false} />
-              <YAxis domain={[0, 100]} tickFormatter={(v) => `${v}%`} tick={{ fill: "#64748b", fontSize: 9 }} axisLine={false} tickLine={false} />
-              <ReferenceLine y={75} stroke="#94a3b8" strokeDasharray="4 4" />
+              <CartesianGrid strokeDasharray="3 3" stroke={RINK.grid} vertical={false} />
+              <XAxis dataKey="label" tick={{ fill: RINK.axis, fontSize: 9 }} axisLine={false} tickLine={false} />
+              <YAxis domain={[0, 100]} tickFormatter={(v) => `${v}%`} tick={{ fill: RINK.axis, fontSize: 9 }} axisLine={false} tickLine={false} />
+              <ReferenceLine y={75} stroke={RINK.muted} strokeDasharray="4 4" />
               <Bar dataKey="pct" radius={[2, 2, 0, 0]} maxBarSize={22} isAnimationActive={false}>
-                {attendance.monthly.map((m, i) => <Cell key={i} fill={pctFill(m.pct)} />)}
+                {attendance.monthly.map((m, i) => <Cell key={i} fill={attendancePctFill(m.pct)} />)}
               </Bar>
             </BarChart>
 
@@ -119,7 +144,7 @@ export function ReportPage({ report, generatedAt }: { report: PlayerReport; gene
                         {new Date(m.month + "-01T00:00:00").toLocaleDateString("en-GB", { month: "long", year: "numeric" })}
                       </td>
                       <td className="py-0.5 text-right text-slate-500">{m.attended}/{m.total}</td>
-                      <td className="py-0.5 text-right font-bold w-10" style={{ color: pctFill(m.pct) }}>{m.pct}%</td>
+                      <td className="py-0.5 text-right font-bold w-10" style={{ color: attendancePctFill(m.pct) }}>{m.pct}%</td>
                     </tr>
                   ))}
                 </tbody>
@@ -199,13 +224,13 @@ export function ReportPage({ report, generatedAt }: { report: PlayerReport; gene
                 </tr>
                 <tr className="border-b border-slate-100">
                   <td className="py-0.5">10m sprint</td>
-                  <td className="py-0.5 text-right font-semibold">{fitness.bestTen ? `${fitness.bestTen.toFixed(2)}s` : "—"}</td>
-                  <td className="py-0.5 text-right text-slate-600">—</td>
+                  <td className="py-0.5 text-right font-semibold">{secs(fitness.bestTen)}</td>
+                  <td className="py-0.5 text-right text-slate-600">{secs(fitness.latestTen)}</td>
                 </tr>
                 <tr>
                   <td className="py-0.5">20m sprint</td>
-                  <td className="py-0.5 text-right font-semibold">{fitness.bestTwenty ? `${fitness.bestTwenty.toFixed(2)}s` : "—"}</td>
-                  <td className="py-0.5 text-right text-slate-600">—</td>
+                  <td className="py-0.5 text-right font-semibold">{secs(fitness.bestTwenty)}</td>
+                  <td className="py-0.5 text-right text-slate-600">{secs(fitness.latestTwenty)}</td>
                 </tr>
               </tbody>
             </table>
@@ -225,10 +250,10 @@ export function ReportPage({ report, generatedAt }: { report: PlayerReport; gene
                   data={fitness.series}
                   margin={{ top: 4, right: 8, bottom: 0, left: -8 }}
                 >
-                  <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-                  <XAxis dataKey="label" tick={{ fill: "#64748b", fontSize: 8 }} />
-                  <YAxis tickFormatter={(v) => formatBronco(v)} domain={["auto", "auto"]} tick={{ fill: "#64748b", fontSize: 8 }} />
-                  <Line type="monotone" dataKey="mins" stroke="#4f46e5" strokeWidth={2} dot={{ fill: "#4f46e5", r: 3 }} isAnimationActive={false} />
+                  <CartesianGrid strokeDasharray="3 3" stroke={RINK.grid} />
+                  <XAxis dataKey="label" tick={{ fill: RINK.axis, fontSize: 8 }} />
+                  <YAxis tickFormatter={(v) => formatBronco(v)} domain={["auto", "auto"]} tick={{ fill: RINK.axis, fontSize: 8 }} />
+                  <Line type="monotone" dataKey="mins" stroke={HIGHLIGHT} strokeWidth={2} dot={{ fill: HIGHLIGHT, r: 3 }} isAnimationActive={false} />
                 </LineChart>
               ) : (
                 <p className="text-[9px] text-slate-400 italic">Not enough tests to chart a trend.</p>
@@ -244,7 +269,13 @@ export function ReportPage({ report, generatedAt }: { report: PlayerReport; gene
           <Empty>No training load logged in this period.</Empty>
         ) : (
           <div className="grid grid-cols-4 gap-3">
-            <Stat label="Total load" value={`${load.totalAu} AU`} sub={`${load.sessionCount} sessions`} />
+            <Stat
+              label="Total load"
+              value={`${load.totalAu} AU`}
+              sub={load.plannedAu > 0
+                ? `${load.sessionCount} sessions · ${load.plannedAu} AU set`
+                : `${load.sessionCount} sessions`}
+            />
             <Stat
               label="ACWR"
               value={load.acwr !== null ? load.acwr.toFixed(2) : "—"}

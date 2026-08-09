@@ -99,7 +99,7 @@ export function SessionStrip({
               <div
                 className={cn(
                   "mt-1.5 text-[10px] font-medium font-time",
-                  taken ? "text-emerald-400" : "text-muted-foreground/50",
+                  taken ? "text-status-good" : "text-muted-foreground/50",
                 )}
               >
                 {taken ? `${summary.present}/${rosterSize}` : "not taken"}
@@ -209,7 +209,7 @@ function NewSessionForm({
         />
         <p className="text-[10px] text-muted-foreground mt-1">
           {duplicate ? (
-            <span className="text-amber-500">A session already exists on this date</span>
+            <span className="text-status-warn">A session already exists on this date</span>
           ) : (
             dayFromISO(form.date)
           )}
@@ -229,7 +229,7 @@ function NewSessionForm({
                 onClick={() => setForm({ ...form, session_type: t })}
                 className={cn(
                   "px-1 py-1.5 rounded-lg text-[10px] font-medium border transition-colors",
-                  active ? cn(cfg.bg, cfg.text, cfg.border) : "border-border text-muted-foreground hover:text-foreground",
+                  active ? "border-indigo-500/40 bg-indigo-500/10 text-indigo-400" : "border-border text-muted-foreground hover:text-foreground",
                 )}
               >
                 {t}
@@ -268,11 +268,11 @@ function NewSessionForm({
         </div>
       </div>
 
-      <div className="flex items-center justify-between rounded-lg bg-amber-400/10 border border-amber-400/20 px-3 py-2">
-        <span className="flex items-center gap-1.5 text-[11px] text-amber-400/80 font-medium">
+      <div className="flex items-center justify-between rounded-lg bg-status-warn border border-status-warn px-3 py-2">
+        <span className="flex items-center gap-1.5 text-[11px] text-muted-foreground font-medium">
           <Zap size={11} /> Planned Load
         </span>
-        <span className="text-sm font-bold text-amber-400 font-time">{plannedLoad} AU</span>
+        <span className="text-sm font-bold text-status-warn font-time">{plannedLoad} AU</span>
       </div>
 
       <div className="flex gap-2">

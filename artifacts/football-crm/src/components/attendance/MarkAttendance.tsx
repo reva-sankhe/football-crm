@@ -11,6 +11,7 @@ import {
   Zap,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { SessionTypeBadge } from "@/components/Badges";
 import { useTheme } from "@/context/ThemeContext";
 import { useToast } from "@/hooks/use-toast";
 import { bulkUpsertAttendance, fetchAttendanceBySession } from "@/lib/queries";
@@ -203,15 +204,13 @@ export function MarkAttendance({
     <div className="space-y-3">
       {/* ── Session summary ─────────────────────────────────────────────────── */}
       <div className="bg-card border border-border rounded-xl px-4 py-3 flex flex-wrap items-center gap-x-4 gap-y-2">
-        <span className={cn("inline-flex items-center px-2 py-0.5 rounded text-xs font-medium", typeCfg.bg, typeCfg.text)}>
-          {session.session_type}
-        </span>
+        <SessionTypeBadge type={session.session_type} />
         <span className="text-sm font-medium text-foreground">
           {formatDateLong(session.date)}
         </span>
         <span className="text-xs text-muted-foreground">{session.day}</span>
         <span className="text-xs text-muted-foreground font-time">{session.duration_mins} min</span>
-        <span className="text-xs text-amber-400 font-time flex items-center gap-1">
+        <span className="text-xs text-status-warn font-time flex items-center gap-1">
           <Zap size={10} />{Math.round(session.planned_load_au)} AU
         </span>
         <button
@@ -251,7 +250,7 @@ export function MarkAttendance({
           <button
             onClick={() => setAll("Present")}
             disabled={loading}
-            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium bg-emerald-500/15 text-emerald-400 hover:bg-emerald-500/25 disabled:opacity-50 transition-colors"
+            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium bg-status-good text-status-good hover:bg-status-good disabled:opacity-50 transition-colors"
           >
             <CheckCheck size={12} /> All present
           </button>
@@ -326,7 +325,7 @@ export function MarkAttendance({
                     "px-3 py-2.5 min-h-[52px] flex items-center gap-3 cursor-pointer select-none transition-colors",
                     "focus:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-primary",
                     isPresent
-                      ? "bg-emerald-500/[0.07]"
+                      ? "bg-status-good/[0.07]"
                       : isDark ? "hover:bg-white/[0.03]" : "hover:bg-slate-50",
                   )}
                   data-testid={`attendance-row-${player.id}`}
@@ -336,7 +335,7 @@ export function MarkAttendance({
                     className={cn(
                       "w-5 h-5 shrink-0 rounded-md border flex items-center justify-center transition-all",
                       isPresent
-                        ? "bg-emerald-500 border-emerald-500 text-white"
+                        ? "bg-[#0ca30c] border-[#0ca30c] text-white"
                         : isException
                           ? cn("border-transparent", cfg.activeBg, cfg.activeColor)
                           : isDark ? "border-white/20" : "border-slate-300",
@@ -419,10 +418,10 @@ export function MarkAttendance({
             )}
           >
             <div className="flex-1 min-w-0 flex flex-wrap items-baseline gap-x-3 gap-y-0.5 text-xs">
-              <span className="text-emerald-400 font-medium font-time">{counts.Present} present</span>
-              <span className="text-red-400 font-time">{counts.Absent} absent</span>
-              {counts.Late > 0 && <span className="text-amber-400 font-time">{counts.Late} late</span>}
-              {counts.Injured > 0 && <span className="text-orange-400 font-time">{counts.Injured} injured</span>}
+              <span className="text-status-good font-medium font-time">{counts.Present} present</span>
+              <span className="text-status-bad font-time">{counts.Absent} absent</span>
+              {counts.Late > 0 && <span className="text-status-warn font-time">{counts.Late} late</span>}
+              {counts.Injured > 0 && <span className="text-status-warn font-time">{counts.Injured} injured</span>}
               <span className="text-muted-foreground/70">
                 {dirty ? "Unsaved changes" : loading ? "Loading…" : "All changes saved"}
               </span>

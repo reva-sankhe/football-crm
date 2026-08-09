@@ -1,6 +1,7 @@
 import { cn } from "@/lib/utils";
 import { useTheme } from "@/context/ThemeContext";
-import { attendancePctColor } from "@/lib/attendance";
+import { attendancePctColor, attendancePctFill } from "@/lib/attendance";
+import { ink } from "@/lib/viz";
 import {
   Bar, BarChart, CartesianGrid, Cell, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from "recharts";
@@ -12,20 +13,14 @@ export interface MonthlyAttendance {
   pct: number;
 }
 
-/** Bar fill mirrors attendancePctColor's thresholds — the one scale on this card. */
-function pctFill(pct: number): string {
-  if (pct >= 85) return "#34d399";
-  if (pct >= 75) return "#fbbf24";
-  return "#f87171";
-}
-
 export function AttendanceCard({ monthly }: { monthly: MonthlyAttendance[] }) {
   const { theme } = useTheme();
   const isDark = theme === "dark";
-  const chartGrid = isDark ? "rgba(255,255,255,0.05)" : "rgba(0,0,0,0.07)";
-  const chartAxis = isDark ? "#6b7280" : "#9ca3af";
-  const chartTooltipBg = isDark ? "#0f172a" : "#ffffff";
-  const chartTooltipBorder = isDark ? "#1e293b" : "#e2e8f0";
+  const INK = ink(isDark ? "dark" : "light");
+  const chartGrid = INK.grid;
+  const chartAxis = INK.axis;
+  const chartTooltipBg = INK.tooltipBg;
+  const chartTooltipBorder = INK.tooltipBorder;
 
   const currentMonth = new Date().toISOString().slice(0, 7);
 
@@ -56,7 +51,7 @@ export function AttendanceCard({ monthly }: { monthly: MonthlyAttendance[] }) {
               <YAxis domain={[0, 100]} tickFormatter={(v) => `${v}%`} tick={{ fill: chartAxis, fontSize: 10 }} axisLine={false} tickLine={false} />
               <Tooltip
                 contentStyle={{ background: chartTooltipBg, border: `1px solid ${chartTooltipBorder}`, borderRadius: 8, fontSize: 12 }}
-                labelStyle={{ color: isDark ? "#f1f5f9" : "#0f172a" }}
+                labelStyle={{ color: INK.primary }}
                 cursor={{ fill: isDark ? "rgba(255,255,255,0.04)" : "rgba(0,0,0,0.04)" }}
                 formatter={(_v: unknown, _n: unknown, props: { payload?: { pct: number; attended: number; total: number } }) => [
                   `${props.payload?.attended ?? 0}/${props.payload?.total ?? 0} sessions (${props.payload?.pct ?? 0}%)`,
@@ -66,7 +61,7 @@ export function AttendanceCard({ monthly }: { monthly: MonthlyAttendance[] }) {
               <ReferenceLine y={75} stroke={chartAxis} strokeDasharray="4 4" strokeWidth={1} />
               <Bar dataKey="pct" radius={[3, 3, 0, 0]} maxBarSize={20}>
                 {chartData.map((entry, idx) => (
-                  <Cell key={idx} fill={pctFill(entry.pct)} fillOpacity={0.85} />
+                  <Cell key={idx} fill={attendancePctFill(entry.pct)} fillOpacity={0.85} />
                 ))}
               </Bar>
             </BarChart>

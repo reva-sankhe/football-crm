@@ -1,22 +1,20 @@
 import type { Match, MatchStage } from "./types";
+import { STATUS_TEXT } from "./viz";
 
 // ── Match stage styling ───────────────────────────────────────────────────────
 export interface StageCfg {
   label: string;
   short: string;
-  text: string;
-  bg: string;
-  border: string;
 }
 
 export const STAGE_CFG: Record<MatchStage, StageCfg> = {
-  "Group Stage":   { label: "Group Stage",   short: "GRP", text: "text-slate-400",   bg: "bg-slate-500/15",   border: "border-slate-500/30"   },
-  "Round of 16":   { label: "Round of 16",   short: "R16", text: "text-sky-400",     bg: "bg-sky-500/15",     border: "border-sky-500/30"     },
-  "Quarter Final": { label: "Quarter Final", short: "QF",  text: "text-blue-400",    bg: "bg-blue-500/15",    border: "border-blue-500/30"    },
-  "Semi Final":    { label: "Semi Final",    short: "SF",  text: "text-violet-400",  bg: "bg-violet-500/15",  border: "border-violet-500/30"  },
-  "Third Place":   { label: "Third Place",   short: "3rd", text: "text-orange-400",  bg: "bg-orange-500/15",  border: "border-orange-500/30"  },
-  "Final":         { label: "Final",         short: "F",   text: "text-amber-400",   bg: "bg-amber-500/15",   border: "border-amber-500/30"   },
-  "Friendly":      { label: "Friendly",      short: "FR",  text: "text-emerald-400", bg: "bg-emerald-500/15", border: "border-emerald-500/30" },
+  "Group Stage":   { label: "Group Stage",   short: "GRP" },
+  "Round of 16":   { label: "Round of 16",   short: "R16" },
+  "Quarter Final": { label: "Quarter Final", short: "QF"  },
+  "Semi Final":    { label: "Semi Final",    short: "SF"  },
+  "Third Place":   { label: "Third Place",   short: "3rd" },
+  "Final":         { label: "Final",         short: "F"   },
+  "Friendly":      { label: "Friendly",      short: "FR"  },
 };
 
 /** Bracket order — also the order the stage dropdown offers. */
@@ -34,9 +32,9 @@ export const MATCH_STAGES: MatchStage[] = [
 export type MatchResult = "W" | "D" | "L";
 
 export const RESULT_CFG: Record<MatchResult, { label: string; text: string; bg: string }> = {
-  W: { label: "Win",  text: "text-emerald-400", bg: "bg-emerald-500/20" },
-  D: { label: "Draw", text: "text-amber-400",   bg: "bg-amber-500/20"   },
-  L: { label: "Loss", text: "text-red-400",     bg: "bg-red-500/20"     },
+  W: { label: "Win",  text: STATUS_TEXT.good,     bg: "bg-[#0ca30c]/15" },
+  D: { label: "Draw", text: "text-muted-foreground", bg: "bg-muted"     },
+  L: { label: "Loss", text: STATUS_TEXT.critical, bg: "bg-[#d03b3b]/15" },
 };
 
 /** null when the score hasn't been entered yet — a fixture, not a result. */

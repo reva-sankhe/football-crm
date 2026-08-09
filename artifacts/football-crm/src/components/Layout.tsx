@@ -152,7 +152,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
         <div className={cn("h-px mb-3", isDark ? "bg-white/6" : "bg-slate-200")} />
         <div className={cn("flex items-center gap-2", compact && "justify-center")}>
           <div
-            className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse shrink-0"
+            className="w-1.5 h-1.5 rounded-full bg-status-good animate-pulse shrink-0"
             title={compact ? "BG CRM · v1.0" : undefined}
           />
           {!compact && (

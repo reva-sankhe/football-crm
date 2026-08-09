@@ -113,7 +113,7 @@ export default function PlayerReports() {
             <RefreshCw size={20} className="animate-spin" />
           </div>
         ) : error ? (
-          <p className="text-center py-24 text-sm text-red-600">Failed to load report data: {error}</p>
+          <p className="text-center py-24 text-sm text-status-bad">Failed to load report data: {error}</p>
         ) : reports.length === 0 ? (
           <p className="text-center py-24 text-sm text-slate-500">
             No players matched this report. Go back and select at least one.

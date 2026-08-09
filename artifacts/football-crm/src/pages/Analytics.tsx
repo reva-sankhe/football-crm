@@ -14,14 +14,15 @@ import {
 } from "recharts";
 import { cn } from "@/lib/utils";
 import { useTheme } from "@/context/ThemeContext";
-import { POS_CFG, PosBadge, getPos } from "@/components/PosBadge";
+import { PosBadge } from "@/components/PosBadge";
+import { HIGHLIGHT, ageColor, ink, ordinal, posColor, series, type Mode } from "@/lib/viz";
 
 // ── Change badge ───────────────────────────────────────────────────────────
 function ChangeBadge({ diffSecs }: { diffSecs: number | null }) {
   if (diffSecs === null) return <span className="text-xs text-muted-foreground font-time">—</span>;
-  if (Math.abs(diffSecs) <= 3) return <span className="inline-block px-2 py-0.5 rounded-full text-[11px] font-time bg-amber-400/15 text-amber-400">—</span>;
-  if (diffSecs > 0) return <span className="inline-block px-2 py-0.5 rounded-full text-[11px] font-time bg-emerald-400/15 text-emerald-400">− {diffSecs}s</span>;
-  return <span className="inline-block px-2 py-0.5 rounded-full text-[11px] font-time bg-red-400/15 text-red-400">+ {Math.abs(diffSecs)}s</span>;
+  if (Math.abs(diffSecs) <= 3) return <span className="inline-block px-2 py-0.5 rounded-full text-[11px] font-time bg-muted text-muted-foreground">—</span>;
+  if (diffSecs > 0) return <span className="inline-block px-2 py-0.5 rounded-full text-[11px] font-time bg-status-good text-status-good">− {diffSecs}s</span>;
+  return <span className="inline-block px-2 py-0.5 rounded-full text-[11px] font-time bg-status-bad text-status-bad">+ {Math.abs(diffSecs)}s</span>;
 }
 
 // ── Bar row (CSS-based, no Recharts) ──────────────────────────────────────
@@ -130,7 +131,10 @@ export default function Analytics() {
   const [players, setPlayers] = useState<Player[]>([]);
   const [loading, setLoading] = useState(true);
   const [typeFilter, setTypeFilter] = useState<string>("all");
-  const [compareIds, setCompareIds] = useState<string[]>([]);
+  // Fixed slots (not a splice-able list) so deselecting one player never
+  // repaints the survivors — colour follows the entity, never its rank.
+  const [compareSlots, setCompareSlots] = useState<(string | null)[]>([null, null, null, null, null]);
+  const compareIds = useMemo(() => compareSlots.filter(Boolean) as string[], [compareSlots]);
   const [rankGroup, setRankGroup] = useState<"all" | "position" | "age">("all");
   const [ovSessionIds, setOvSessionIds] = useState<string[] | null>(null); // null = all
   const [ovDropdownOpen, setOvDropdownOpen] = useState(false);
@@ -244,10 +248,12 @@ export default function Analytics() {
   const positions = useMemo(() => ["Forward", "Midfielder", "Defender", "Goalkeeper"], []);
   const ageRanges = useMemo(() => ["U18", "18-24", "25+"], []);
 
-  const chartGrid = isDark ? "rgba(255,255,255,0.05)" : "rgba(0,0,0,0.07)";
-  const chartAxis = isDark ? "#6b7280" : "#9ca3af";
-  const chartTooltipBg = isDark ? "#0f172a" : "#ffffff";
-  const chartTooltipBorder = isDark ? "#1e293b" : "#e2e8f0";
+  const mode: Mode = isDark ? "dark" : "light";
+  const INK = ink(mode);
+  const chartGrid = INK.grid;
+  const chartAxis = INK.axis;
+  const chartTooltipBg = INK.tooltipBg;
+  const chartTooltipBorder = INK.tooltipBorder;
 
   // ── Training Load tab data ───────────────────────────────────────────────
   const teamRpeData = useMemo(
@@ -387,8 +393,8 @@ export default function Analytics() {
         <MetricCard label="Latest test" value={latestResults.length} sub={latestSession?.test_name ?? "—"} />
         <MetricCard label="Avg bronco" value={formatBronco(latestAvg)} sub="latest session" />
         <MetricCard label="Comparable" value={comparable.length} sub="2+ sessions" />
-        <MetricCard label="Improved" value={improved} sub={`of ${comparable.length}`} valueColor="text-emerald-400" />
-        <MetricCard label="Declined" value={declined} sub={`of ${comparable.length}`} valueColor="text-red-400" />
+        <MetricCard label="Improved" value={improved} sub={`of ${comparable.length}`} valueColor="text-status-good" />
+        <MetricCard label="Declined" value={declined} sub={`of ${comparable.length}`} valueColor="text-status-bad" />
       </div>
 
       {/* Underline tabs */}
@@ -439,7 +445,7 @@ export default function Analytics() {
                     <div className="h-8 w-48 bg-muted rounded animate-pulse" />
                   ) : (
                     <div className="text-2xl font-bold text-foreground">
-                      <span className="text-emerald-400">{aboveTarget}</span>
+                      <span className="text-status-good">{aboveTarget}</span>
                       <span className="text-muted-foreground font-normal text-lg"> of {players.length} at target</span>
                     </div>
                   )}
@@ -448,9 +454,9 @@ export default function Analytics() {
                 {!loading && trendDelta !== null && (
                   <div className={cn(
                     "flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-sm font-semibold font-time",
-                    trendDelta > 3 ? "bg-emerald-400/10 text-emerald-400" :
-                    trendDelta < -3 ? "bg-red-400/10 text-red-400" :
-                    "bg-amber-400/10 text-amber-400"
+                    trendDelta > 3 ? "bg-status-good text-status-good" :
+                    trendDelta < -3 ? "bg-status-bad text-status-bad" :
+                    "bg-muted text-muted-foreground"
                   )}>
                     {trendDelta > 3 ? "−" : trendDelta < -3 ? "+" : "—"}
                     {" "}{Math.abs(trendDelta)}s avg since first session
@@ -513,8 +519,8 @@ export default function Analytics() {
                     <AreaChart data={avgOverTime} margin={{ top: 4, right: 8, bottom: 4, left: 0 }}>
                       <defs>
                         <linearGradient id="trendGrad" x1="0" y1="0" x2="0" y2="1">
-                          <stop offset="5%" stopColor="#6366f1" stopOpacity={0.2} />
-                          <stop offset="95%" stopColor="#6366f1" stopOpacity={0} />
+                          <stop offset="5%" stopColor={HIGHLIGHT} stopOpacity={0.2} />
+                          <stop offset="95%" stopColor={HIGHLIGHT} stopOpacity={0} />
                         </linearGradient>
                       </defs>
                       <CartesianGrid strokeDasharray="3 3" stroke={chartGrid} />
@@ -524,7 +530,7 @@ export default function Analytics() {
                         contentStyle={{ background: chartTooltipBg, border: `1px solid ${chartTooltipBorder}`, borderRadius: 8 }}
                         formatter={(v: number) => [formatBronco(v), "Team avg"]}
                       />
-                      <Area type="monotone" dataKey="avg" stroke="#6366f1" strokeWidth={2} fill="url(#trendGrad)" dot={{ fill: "#6366f1", r: 3 }} activeDot={{ r: 5 }} />
+                      <Area type="monotone" dataKey="avg" stroke={HIGHLIGHT} strokeWidth={2} fill="url(#trendGrad)" dot={{ fill: HIGHLIGHT, r: 3 }} activeDot={{ r: 5 }} />
                     </AreaChart>
                   </ResponsiveContainer>
                 )}
@@ -605,7 +611,7 @@ export default function Analytics() {
               const data = positions.map((pos) => {
                 const prs = latestResults.filter((r) => r.players?.primary_position === pos && r.bronco_mins !== null);
                 const avg = prs.length ? prs.reduce((a, r) => a + r.bronco_mins!, 0) / prs.length : null;
-                return { pos, avg, color: getPos(pos).color };
+                return { pos, avg, color: posColor(mode, pos) };
               }).filter((x) => x.avg !== null);
               if (!data.length) return <div className="h-[200px] flex items-center justify-center text-sm text-muted-foreground">No data for latest session</div>;
               return (
@@ -627,7 +633,7 @@ export default function Analytics() {
           {/* Per-position cards */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             {positions.map((pos) => {
-              const cfg = getPos(pos);
+              const cfg = { color: posColor(mode, pos), label: pos };
               const inPos = playerComparisons.filter((x) => x.player.primary_position === pos);
               const withLatest = inPos.filter((x) => x.latest !== null);
               const avgLatest = withLatest.length ? withLatest.reduce((a, x) => a + x.latest!.bronco_mins, 0) / withLatest.length : null;
@@ -660,7 +666,7 @@ export default function Analytics() {
                           bronco={latest!.bronco_mins}
                           maxBronco={maxBronco}
                           color={cfg.color}
-                          prefix={diffSecs !== null && diffSecs > 3 ? <span className="text-emerald-400 text-[10px]">−</span> : diffSecs !== null && diffSecs < -3 ? <span className="text-red-400 text-[10px]">+</span> : undefined}
+                          prefix={diffSecs !== null && diffSecs > 3 ? <span className="text-status-good text-[10px]">−</span> : diffSecs !== null && diffSecs < -3 ? <span className="text-status-bad text-[10px]">+</span> : undefined}
                         />
                       ))}
                   </div>
@@ -677,11 +683,10 @@ export default function Analytics() {
           <div className="bg-card border border-border rounded-2xl p-5">
             <div className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground mb-4">Avg bronco by age group (latest session)</div>
             {loading ? <ChartSkeleton height={200} /> : (() => {
-              const AGE_COLORS: Record<string, string> = { "U18": "#f87171", "18-24": "#60a5fa", "25+": "#34d399" };
               const data = ageRanges.map((r) => {
                 const prs = latestResults.filter((x) => x.players?.age_range === r && x.bronco_mins !== null);
                 const avg = prs.length ? prs.reduce((a, x) => a + x.bronco_mins!, 0) / prs.length : null;
-                return { range: r, avg, color: AGE_COLORS[r] };
+                return { range: r, avg, color: ageColor(mode, r) };
               }).filter((x) => x.avg !== null);
               if (!data.length) return <div className="h-[200px] flex items-center justify-center text-sm text-muted-foreground">No data for latest session</div>;
               return (
@@ -703,8 +708,7 @@ export default function Analytics() {
           {/* Per-age-group cards */}
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
             {ageRanges.map((range) => {
-              const AGE_COLORS: Record<string, string> = { "U18": "#f87171", "18-24": "#60a5fa", "25+": "#34d399" };
-              const color = AGE_COLORS[range] ?? "#818cf8";
+              const color = ageColor(mode, range);
               const inRange = playerComparisons.filter((x) => x.player.age_range === range);
               const withLatest = inRange.filter((x) => x.latest !== null);
               const comparable2 = inRange.filter((x) => x.diffSecs !== null);
@@ -729,7 +733,7 @@ export default function Analytics() {
                     </div>
                     <div>
                       <div className="text-[10px] text-muted-foreground uppercase tracking-widest mb-1">Improved</div>
-                      <div className="text-lg font-bold font-time text-emerald-400">{improvedInRange}</div>
+                      <div className="text-lg font-bold font-time text-status-good">{improvedInRange}</div>
                     </div>
                   </div>
                   <div className="space-y-0.5">
@@ -742,7 +746,7 @@ export default function Analytics() {
                           bronco={latest!.bronco_mins}
                           maxBronco={maxBronco}
                           color={color}
-                          prefix={diffSecs !== null && diffSecs > 3 ? <span className="text-emerald-400 text-[10px]">−</span> : diffSecs !== null && diffSecs < -3 ? <span className="text-red-400 text-[10px]">+</span> : undefined}
+                          prefix={diffSecs !== null && diffSecs > 3 ? <span className="text-status-good text-[10px]">−</span> : diffSecs !== null && diffSecs < -3 ? <span className="text-status-bad text-[10px]">+</span> : undefined}
                         />
                       ))}
                   </div>
@@ -767,17 +771,19 @@ export default function Analytics() {
         const pickable = playerComparisons.filter((x) => x.latest !== null);
 
         const togglePlayer = (id: string) => {
-          setCompareIds((prev) =>
-            prev.includes(id) ? prev.filter((x) => x !== id) : prev.length < 5 ? [...prev, id] : prev
-          );
+          setCompareSlots((prev) => {
+            const at = prev.indexOf(id);
+            if (at !== -1) { const n = [...prev]; n[at] = null; return n; }
+            const free = prev.indexOf(null);
+            if (free === -1) return prev;
+            const n = [...prev]; n[free] = id; return n;
+          });
         };
+        const slotOf = (id: string) => compareSlots.indexOf(id);
 
         const selected = compareIds
           .map((id) => playerComparisons.find((x) => x.player.id === id))
           .filter(Boolean) as typeof playerComparisons;
-
-        // Palette for selected players
-        const COMPARE_COLORS = ["#818cf8", "#34d399", "#f87171", "#fbbf24", "#60a5fa"];
 
         // For chart: all sessions chronologically, with bronco per selected player
         const sessionLabels = chronoSessions.map((s) => s.test_name);
@@ -796,8 +802,6 @@ export default function Analytics() {
             {(() => {
               const POS_ORDER = ["Forward", "Midfielder", "Defender", "Goalkeeper"];
               const AGE_ORDER = ["U18", "18-24", "25+"];
-              const POS_COLORS: Record<string, string> = { Forward: "#f87171", Midfielder: "#60a5fa", Defender: "#818cf8", Goalkeeper: "#fbbf24" };
-              const AGE_COLORS: Record<string, string> = { "U18": "#f87171", "18-24": "#60a5fa", "25+": "#34d399" };
               const groups = rankGroup === "position" ? POS_ORDER : rankGroup === "age" ? AGE_ORDER : ["All"];
 
               // Build scatter data — for "all", everyone sits in one column with jitter
@@ -817,7 +821,7 @@ export default function Analytics() {
                     };
                   })
                 : groups.flatMap((g) => {
-                    const GROUP_COLORS = rankGroup === "position" ? POS_COLORS : AGE_COLORS;
+                    const groupColor = (g: string) => rankGroup === "position" ? posColor(mode, g) : ageColor(mode, g);
                     const inGroup = ranked.filter((d) =>
                       (rankGroup === "position" ? d.player.primary_position : d.player.age_range) === g
                     );
@@ -830,7 +834,7 @@ export default function Analytics() {
                         name: d.player.name,
                         initials: d.player.name.split(" ").map((w) => w[0]).join("").slice(0, 2).toUpperCase(),
                         tier: getBroncoTier(d.bronco!),
-                        color: GROUP_COLORS[g] ?? "#818cf8",
+                        color: groupColor(g),
                         diffSecs: playerComparisons.find((x) => x.player.id === d.player.id)?.diffSecs ?? null,
                         percentile: d.percentile,
                       };
@@ -877,7 +881,7 @@ export default function Analytics() {
                     <div style={{ color: d.tier.color }} className="font-medium">{d.tier.label}</div>
                     <div className="text-muted-foreground mt-1 font-time">{formatBronco(d.y)} · {d.percentile}th pct</div>
                     {d.diffSecs !== null && (
-                      <div className={cn("mt-0.5 font-time", d.diffSecs > 3 ? "text-emerald-400" : d.diffSecs < -3 ? "text-red-400" : "text-amber-400")}>
+                      <div className={cn("mt-0.5 font-time", d.diffSecs > 3 ? "text-status-good" : d.diffSecs < -3 ? "text-status-bad" : "text-status-warn")}>
                         {d.diffSecs > 3 ? `− ${d.diffSecs}s` : d.diffSecs < -3 ? `+ ${Math.abs(d.diffSecs)}s` : "— unchanged"}
                       </div>
                     )}
@@ -934,28 +938,28 @@ export default function Analytics() {
                           {yQ1 !== null && (
                             <ReferenceLine
                               y={yQ1}
-                              stroke="#a78bfa"
+                              stroke={INK.muted}
                               strokeDasharray="4 3"
                               strokeWidth={1.5}
-                              label={{ value: `Q1 ${formatBronco(yQ1)}`, position: "insideTopRight", fill: "#a78bfa", fontSize: 9, fontWeight: 600 }}
+                              label={{ value: `Q1 ${formatBronco(yQ1)}`, position: "insideTopRight", fill: INK.muted, fontSize: 9, fontWeight: 600 }}
                             />
                           )}
                           {yQ3 !== null && (
                             <ReferenceLine
                               y={yQ3}
-                              stroke="#a78bfa"
+                              stroke={INK.muted}
                               strokeDasharray="4 3"
                               strokeWidth={1.5}
-                              label={{ value: `Q3 ${formatBronco(yQ3)}`, position: "insideTopRight", fill: "#a78bfa", fontSize: 9, fontWeight: 600 }}
+                              label={{ value: `Q3 ${formatBronco(yQ3)}`, position: "insideTopRight", fill: INK.muted, fontSize: 9, fontWeight: 600 }}
                             />
                           )}
                           {yAvg !== null && (
                             <ReferenceLine
                               y={yAvg}
-                              stroke="#fbbf24"
+                              stroke={HIGHLIGHT}
                               strokeDasharray="5 3"
                               strokeWidth={1.5}
-                              label={{ value: `Avg ${formatBronco(yAvg)}`, position: "insideTopRight", fill: "#fbbf24", fontSize: 9, fontWeight: 600 }}
+                              label={{ value: `Avg ${formatBronco(yAvg)}`, position: "insideTopRight", fill: HIGHLIGHT, fontSize: 9, fontWeight: 600 }}
                             />
                           )}
                           <Scatter data={scatterData} shape={<CustomDot />} isAnimationActive={false} />
@@ -971,10 +975,10 @@ export default function Analytics() {
                               </div>
                             ))
                           : groups.map((g) => {
-                              const GROUP_COLORS = rankGroup === "position" ? POS_COLORS : AGE_COLORS;
+                              const groupColor = (g: string) => rankGroup === "position" ? posColor(mode, g) : ageColor(mode, g);
                               return (
                                 <div key={g} className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                                  <div className="w-2.5 h-2.5 rounded-full" style={{ background: GROUP_COLORS[g] }} />
+                                  <div className="w-2.5 h-2.5 rounded-full" style={{ background: groupColor(g) }} />
                                   {g}
                                 </div>
                               );
@@ -982,13 +986,13 @@ export default function Analytics() {
                         }
                         {yQ1 !== null && yQ3 !== null && (
                           <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                            <div className="w-4 h-[2px] rounded-full bg-violet-400" />
+                            <div className="w-4 h-[2px] rounded-full bg-muted-foreground" />
                             Q1 {formatBronco(yQ1)} · Q3 {formatBronco(yQ3)}
                           </div>
                         )}
                         {yAvg !== null && (
                           <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                            <div className="w-4 h-[2px] rounded-full bg-amber-400" />
+                            <div className="w-4 h-[2px] rounded-full bg-muted-foreground" />
                             Avg {formatBronco(yAvg)}
                           </div>
                         )}
@@ -1011,8 +1015,8 @@ export default function Analytics() {
                     .sort((a, b) => a.player.name.localeCompare(b.player.name))
                     .map(({ player, latest }) => {
                       const isSelected = compareIds.includes(player.id);
-                      const colorIdx = compareIds.indexOf(player.id);
-                      const color = isSelected ? COMPARE_COLORS[colorIdx] : undefined;
+                      const colorIdx = slotOf(player.id);
+                      const color = isSelected ? series(mode, colorIdx) : undefined;
                       return (
                         <button
                           key={player.id}
@@ -1044,7 +1048,7 @@ export default function Analytics() {
                 {/* Side-by-side stat cards */}
                 <div className="grid gap-4" style={{ gridTemplateColumns: `repeat(${selected.length}, minmax(0, 1fr))` }}>
                   {selected.map((pc, i) => {
-                    const color = COMPARE_COLORS[i];
+                    const color = series(mode, slotOf(selected[i].player.id));
                     const tier = pc.latest ? getBroncoTier(pc.latest.bronco_mins) : null;
                     const rankedEntry = ranked.find((r) => r.player.id === pc.player.id);
                     return (
@@ -1054,7 +1058,7 @@ export default function Analytics() {
                           <span className="font-semibold text-foreground text-sm">{pc.player.name}</span>
                           <button
                             onClick={() => togglePlayer(pc.player.id)}
-                            className="ml-auto text-muted-foreground hover:text-red-400 text-xs leading-none"
+                            className="ml-auto text-muted-foreground hover:text-status-bad text-xs leading-none"
                           >✕</button>
                         </div>
                         <div className="space-y-3">
@@ -1095,7 +1099,7 @@ export default function Analytics() {
                     <div className="flex flex-wrap gap-4 mb-4 mt-2">
                       {selected.map((pc, i) => (
                         <div key={pc.player.id} className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                          <div className="w-2.5 h-2.5 rounded-sm" style={{ background: COMPARE_COLORS[i] }} />
+                          <div className="w-2.5 h-2.5 rounded-sm" style={{ background: series(mode, slotOf(selected[i].player.id)) }} />
                           {pc.player.name}
                         </div>
                       ))}
@@ -1113,7 +1117,7 @@ export default function Analytics() {
                           }}
                         />
                         {selected.map((pc, i) => (
-                          <Bar key={pc.player.id} dataKey={pc.player.id} fill={COMPARE_COLORS[i]} radius={[3, 3, 0, 0]} maxBarSize={40} />
+                          <Bar key={pc.player.id} dataKey={pc.player.id} fill={series(mode, slotOf(selected[i].player.id))} radius={[3, 3, 0, 0]} maxBarSize={40} />
                         ))}
                       </BarChart>
                     </ResponsiveContainer>
@@ -1145,10 +1149,10 @@ export default function Analytics() {
         const q3 = calcQ(vals, 75);
 
         const BANDS = [
-          { key: "top",    label: "Top 25%",    description: "Fastest quartile",       color: "#34d399", targetLabel: null },
-          { key: "upper",  label: "Upper Mid",  description: "50–75th percentile",     color: "#60a5fa", targetLabel: "Top 25%" },
-          { key: "lower",  label: "Lower Mid",  description: "25–50th percentile",     color: "#fbbf24", targetLabel: "Upper Mid" },
-          { key: "bottom", label: "Bottom 25%", description: "Slowest quartile",       color: "#f87171", targetLabel: "Lower Mid" },
+          { key: "top",    label: "Top 25%",    description: "Fastest quartile",       color: ordinal(mode, 4, 0), targetLabel: null },
+          { key: "upper",  label: "Upper Mid",  description: "50–75th percentile",     color: ordinal(mode, 4, 1), targetLabel: "Top 25%" },
+          { key: "lower",  label: "Lower Mid",  description: "25–50th percentile",     color: ordinal(mode, 4, 2), targetLabel: "Upper Mid" },
+          { key: "bottom", label: "Bottom 25%", description: "Slowest quartile",       color: ordinal(mode, 4, 3), targetLabel: "Lower Mid" },
         ] as const;
 
         return (
@@ -1164,17 +1168,17 @@ export default function Analytics() {
               ) : (
                 <div className="grid grid-cols-3 divide-x divide-border border-t border-border">
                   <div className="px-5 py-4">
-                    <div className="text-[10px] font-semibold uppercase tracking-widest mb-1" style={{ color: "#34d399" }}>Q1 · Top boundary</div>
+                    <div className="text-[10px] font-semibold uppercase tracking-widest mb-1" style={{ color: ordinal(mode, 4, 0) }}>Q1 · Top boundary</div>
                     <div className="text-2xl font-bold font-time text-foreground">{formatBronco(q1)}</div>
                     <div className="text-[11px] text-muted-foreground mt-0.5">Beat this → Top 25%</div>
                   </div>
                   <div className="px-5 py-4">
-                    <div className="text-[10px] font-semibold uppercase tracking-widest mb-1" style={{ color: "#60a5fa" }}>Median · Mid boundary</div>
+                    <div className="text-[10px] font-semibold uppercase tracking-widest mb-1" style={{ color: ordinal(mode, 4, 1) }}>Median · Mid boundary</div>
                     <div className="text-2xl font-bold font-time text-foreground">{formatBronco(q2!)}</div>
                     <div className="text-[11px] text-muted-foreground mt-0.5">Beat this → Upper Mid</div>
                   </div>
                   <div className="px-5 py-4">
-                    <div className="text-[10px] font-semibold uppercase tracking-widest mb-1" style={{ color: "#fbbf24" }}>Q3 · Lower boundary</div>
+                    <div className="text-[10px] font-semibold uppercase tracking-widest mb-1" style={{ color: ordinal(mode, 4, 2) }}>Q3 · Lower boundary</div>
                     <div className="text-2xl font-bold font-time text-foreground">{formatBronco(q3!)}</div>
                     <div className="text-[11px] text-muted-foreground mt-0.5">Beat this → Lower Mid</div>
                   </div>
@@ -1281,8 +1285,6 @@ export default function Analytics() {
             ) : (() => {
               const POS_ORDER = ["Forward", "Midfielder", "Defender", "Goalkeeper"];
               const AGE_ORDER = ["U18", "18-24", "25+"];
-              const POS_COLORS: Record<string, string> = { Forward: "#f87171", Midfielder: "#60a5fa", Defender: "#818cf8", Goalkeeper: "#fbbf24" };
-              const AGE_COLORS: Record<string, string> = { "U18": "#f87171", "18-24": "#60a5fa", "25+": "#34d399" };
               const groups = loadDistRankGroup === "position" ? POS_ORDER : loadDistRankGroup === "age" ? AGE_ORDER : ["All"];
 
               const scatterData = loadDistRankGroup === "all"
@@ -1293,14 +1295,14 @@ export default function Analytics() {
                       y: d.avgLoad,
                       name: d.player.name,
                       initials: d.player.name.split(" ").map((w: string) => w[0]).join("").slice(0, 2).toUpperCase(),
-                      color: POS_COLORS[d.player.primary_position ?? ""] ?? "#9ca3af",
+                      color: posColor(mode, d.player.primary_position),
                       position: d.player.primary_position ?? "—",
                       ageRange: d.player.age_range ?? "—",
                       sessions: d.sessions,
                     };
                   })
                 : groups.flatMap((g) => {
-                    const GROUP_COLORS = loadDistRankGroup === "position" ? POS_COLORS : AGE_COLORS;
+                    const groupColor = (g: string) => loadDistRankGroup === "position" ? posColor(mode, g) : ageColor(mode, g);
                     const inGroup = loadDistributionData.filter((d) =>
                       loadDistRankGroup === "position" ? d.player.primary_position === g : d.player.age_range === g
                     );
@@ -1311,7 +1313,7 @@ export default function Analytics() {
                         y: d.avgLoad,
                         name: d.player.name,
                         initials: d.player.name.split(" ").map((w: string) => w[0]).join("").slice(0, 2).toUpperCase(),
-                        color: GROUP_COLORS[g] ?? "#818cf8",
+                        color: groupColor(g),
                         position: d.player.primary_position ?? "—",
                         ageRange: d.player.age_range ?? "—",
                         sessions: d.sessions,
@@ -1382,10 +1384,10 @@ export default function Analytics() {
                       {yAvg !== null && (
                         <ReferenceLine
                           y={yAvg}
-                          stroke="#fbbf24"
+                          stroke={HIGHLIGHT}
                           strokeDasharray="5 3"
                           strokeWidth={1.5}
-                          label={{ value: `Avg ${Math.round(yAvg)} AU`, position: "insideTopRight", fill: "#fbbf24", fontSize: 9, fontWeight: 600 }}
+                          label={{ value: `Avg ${Math.round(yAvg)} AU`, position: "insideTopRight", fill: HIGHLIGHT, fontSize: 9, fontWeight: 600 }}
                         />
                       )}
                       <Scatter data={scatterData} shape={<LoadDot />} isAnimationActive={false} />
@@ -1395,19 +1397,17 @@ export default function Analytics() {
                     {(loadDistRankGroup === "all" ? POS_ORDER : groups)
                       .filter((g) => scatterData.some((d) => loadDistRankGroup === "all" ? d.position === g : loadDistRankGroup === "position" ? d.position === g : d.ageRange === g))
                       .map((g) => {
-                        const color = loadDistRankGroup === "age"
-                          ? ({ "U18": "#f87171", "18-24": "#60a5fa", "25+": "#34d399" } as Record<string, string>)[g]
-                          : ({ Forward: "#f87171", Midfielder: "#60a5fa", Defender: "#818cf8", Goalkeeper: "#fbbf24" } as Record<string, string>)[g];
+                        const color = loadDistRankGroup === "age" ? ageColor(mode, g) : posColor(mode, g);
                         return (
                           <div key={g} className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                            <div className="w-2.5 h-2.5 rounded-full" style={{ background: color ?? "#9ca3af" }} />
+                            <div className="w-2.5 h-2.5 rounded-full" style={{ background: color }} />
                             {g}
                           </div>
                         );
                       })}
                     {yAvg !== null && (
                       <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                        <div className="w-4 h-[2px] rounded-full bg-amber-400" />
+                        <div className="w-4 h-[2px] rounded-full bg-muted-foreground" />
                         Avg {Math.round(yAvg)} AU
                       </div>
                     )}
@@ -1430,8 +1430,8 @@ export default function Analytics() {
                 <AreaChart data={weeklyLoadData} margin={{ top: 4, right: 8, bottom: 4, left: 0 }}>
                   <defs>
                     <linearGradient id="loadGrad" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="#818cf8" stopOpacity={0.25} />
-                      <stop offset="95%" stopColor="#818cf8" stopOpacity={0} />
+                      <stop offset="5%" stopColor={HIGHLIGHT} stopOpacity={0.25} />
+                      <stop offset="95%" stopColor={HIGHLIGHT} stopOpacity={0} />
                     </linearGradient>
                   </defs>
                   <CartesianGrid strokeDasharray="3 3" stroke={chartGrid} />
@@ -1441,7 +1441,7 @@ export default function Analytics() {
                     contentStyle={{ background: chartTooltipBg, border: `1px solid ${chartTooltipBorder}`, borderRadius: 8 }}
                     formatter={(v: number) => [`${v} AU`, "Team Load"]}
                   />
-                  <Area type="monotone" dataKey="totalLoad" stroke="#818cf8" strokeWidth={2} fill="url(#loadGrad)" dot={{ fill: "#818cf8", r: 3 }} />
+                  <Area type="monotone" dataKey="totalLoad" stroke={HIGHLIGHT} strokeWidth={2} fill="url(#loadGrad)" dot={{ fill: HIGHLIGHT, r: 3 }} />
                 </AreaChart>
               </ResponsiveContainer>
             )}

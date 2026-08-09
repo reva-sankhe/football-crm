@@ -11,7 +11,7 @@ import {
 import { cn } from "@/lib/utils";
 import { useTheme } from "@/context/ThemeContext";
 import { useToast } from "@/hooks/use-toast";
-import { SESSION_TYPE_CFG } from "@/lib/attendance";
+import { SessionTypeBadge } from "@/components/Badges";
 import {
   bulkUpsertAttendance,
   createTrainingSession,
@@ -296,9 +296,9 @@ export function ImportAttendanceSheet({
                     importStep === step
                       ? "bg-indigo-500 text-white"
                       : importStep === "preview" && step === "upload"
-                        ? "bg-emerald-500/20 text-emerald-400"
+                        ? "bg-status-good text-status-good"
                         : importStep === "done"
-                          ? "bg-emerald-500/20 text-emerald-400"
+                          ? "bg-status-good text-status-good"
                           : isDark ? "bg-white/10 text-slate-500" : "bg-slate-100 text-slate-400",
                   )}
                 >
@@ -379,13 +379,13 @@ export function ImportAttendanceSheet({
                 isDark ? "bg-white/[0.03] border border-white/[0.06]" : "bg-slate-50 border border-slate-100",
               )}>
                 <p className="font-medium text-foreground flex items-center gap-1.5">
-                  <AlertCircle size={11} className="text-amber-400" /> Expected format
+                  <AlertCircle size={11} className="text-status-warn" /> Expected format
                 </p>
                 <p className="text-muted-foreground">
                   Columns: <code className="text-indigo-400">id, code, NAME, 4/1, 4/3, …, Present, Absent, …</code>
                 </p>
                 <p className="text-muted-foreground">
-                  Statuses: <code className="text-emerald-400">P</code> = Present · <code className="text-red-400">A</code> = Absent · <code className="text-orange-400">I</code> = Injured
+                  Statuses: <code className="text-status-good">P</code> = Present · <code className="text-status-bad">A</code> = Absent · <code className="text-status-warn">I</code> = Injured
                 </p>
               </div>
             </div>
@@ -426,23 +426,17 @@ export function ImportAttendanceSheet({
                       className={cn(
                         "flex items-center justify-between px-3 py-1.5 rounded-lg text-xs",
                         md.session
-                          ? isDark ? "bg-emerald-500/10 border border-emerald-500/20" : "bg-emerald-50 border border-emerald-100"
-                          : isDark ? "bg-amber-500/10 border border-amber-500/20" : "bg-amber-50 border border-amber-100",
+                          ? isDark ? "bg-status-good border border-status-good" : "bg-status-good border border-status-good"
+                          : isDark ? "bg-status-warn border border-status-warn" : "bg-status-warn border border-status-warn",
                       )}
                     >
-                      <span className={md.session ? "text-foreground" : "text-amber-500"}>
+                      <span className={md.session ? "text-foreground" : "text-status-warn"}>
                         {md.isoDate || md.col}
                       </span>
                       {md.session ? (
-                        <span className={cn(
-                          "px-1.5 py-0.5 rounded text-[10px] font-medium",
-                          SESSION_TYPE_CFG[md.session.session_type].bg,
-                          SESSION_TYPE_CFG[md.session.session_type].text,
-                        )}>
-                          {md.session.session_type}
-                        </span>
+                        <SessionTypeBadge type={md.session.session_type} className="text-[10px] px-1.5" />
                       ) : (
-                        <span className="text-amber-500 text-[10px] font-medium">will be created</span>
+                        <span className="text-status-warn text-[10px] font-medium">will be created</span>
                       )}
                     </div>
                   ))}
@@ -457,10 +451,10 @@ export function ImportAttendanceSheet({
                 {importPreview.matchedPlayers.some(p => !p.player) && (
                   <div className={cn(
                     "flex items-start gap-2 px-3 py-2 rounded-lg text-xs mb-2",
-                    isDark ? "bg-amber-500/10 border border-amber-500/20" : "bg-amber-50 border border-amber-200",
+                    isDark ? "bg-status-warn border border-status-warn" : "bg-status-warn border border-status-warn",
                   )}>
-                    <AlertCircle size={12} className="text-amber-500 mt-0.5 shrink-0" />
-                    <span className="text-amber-600 dark:text-amber-400">
+                    <AlertCircle size={12} className="text-status-warn mt-0.5 shrink-0" />
+                    <span className="text-status-warn dark:text-status-warn">
                       {importPreview.matchedPlayers.filter(p => !p.player).length} new player{importPreview.matchedPlayers.filter(p => !p.player).length > 1 ? "s" : ""} will be added to the Sharks roster on import.
                     </span>
                   </div>
@@ -473,14 +467,14 @@ export function ImportAttendanceSheet({
                         "flex items-center justify-between px-3 py-1.5 rounded-lg text-xs",
                         mp.player
                           ? isDark ? "bg-white/[0.03] border border-white/[0.06]" : "bg-white border border-slate-100"
-                          : isDark ? "bg-amber-500/10 border border-amber-500/20" : "bg-amber-50 border border-amber-100",
+                          : isDark ? "bg-status-warn border border-status-warn" : "bg-status-warn border border-status-warn",
                       )}
                     >
-                      <span className={mp.player ? "text-foreground" : "text-amber-500"}>{mp.csvName}</span>
+                      <span className={mp.player ? "text-foreground" : "text-status-warn"}>{mp.csvName}</span>
                       {mp.player ? (
                         <span className="text-muted-foreground text-[10px]">matched</span>
                       ) : (
-                        <span className="text-amber-500 text-[10px] font-medium">will be added</span>
+                        <span className="text-status-warn text-[10px] font-medium">will be added</span>
                       )}
                     </div>
                   ))}
@@ -497,7 +491,7 @@ export function ImportAttendanceSheet({
                   <span className="text-indigo-400">{importPreview.matchedDates.filter(d => d.isoDate).length}</span> sessions
                 </p>
                 {(importPreview.matchedDates.some(d => !d.session && d.isoDate) || importPreview.matchedPlayers.some(p => !p.player)) && (
-                  <p className="text-xs text-amber-500">
+                  <p className="text-xs text-status-warn">
                     {[
                       importPreview.matchedDates.filter(d => !d.session && d.isoDate).length > 0 && `${importPreview.matchedDates.filter(d => !d.session && d.isoDate).length} new session${importPreview.matchedDates.filter(d => !d.session && d.isoDate).length > 1 ? "s" : ""} will be created`,
                       importPreview.matchedPlayers.filter(p => !p.player).length > 0 && `${importPreview.matchedPlayers.filter(p => !p.player).length} new player${importPreview.matchedPlayers.filter(p => !p.player).length > 1 ? "s" : ""} will be added to the roster`,
@@ -533,8 +527,8 @@ export function ImportAttendanceSheet({
           {/* ── Step 3: Done ── */}
           {importStep === "done" && (
             <div className="flex flex-col items-center justify-center py-8 gap-4 text-center">
-              <div className="w-12 h-12 rounded-full bg-emerald-500/20 flex items-center justify-center">
-                <CheckCheck size={22} className="text-emerald-400" />
+              <div className="w-12 h-12 rounded-full bg-status-good flex items-center justify-center">
+                <CheckCheck size={22} className="text-status-good" />
               </div>
               <div>
                 <p className="text-base font-semibold text-foreground">Import complete!</p>

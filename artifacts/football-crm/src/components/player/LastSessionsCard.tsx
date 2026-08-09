@@ -57,7 +57,7 @@ export function LastSessionsCard({ sessions, attendance, count = 3 }: LastSessio
                   <span
                     className={cn(
                       "px-2 py-0.5 rounded-full text-[11px] font-medium shrink-0",
-                      attended ? "bg-emerald-500/15 text-emerald-400" : "bg-red-500/15 text-red-400",
+                      attended ? "bg-status-good text-status-good" : "bg-status-bad text-status-bad",
                     )}
                   >
                     {status}

@@ -7,6 +7,9 @@ import {
   fetchAllAttendanceStats, fetchAllResults, fetchTrainingSessions,
 } from "@/lib/queries";
 import { cn, formatBronco } from "@/lib/utils";
+import { STATUS } from "@/lib/viz";
+import { PosBadge } from "@/components/PosBadge";
+import { SessionTypeBadge } from "@/components/Badges";
 import {
   type Player, type TestResult, type TestSession,
   type TrainingSession, type SessionRPE, type SessionAttendance,
@@ -15,20 +18,6 @@ import { AlertTriangle, CheckCircle2, Activity, Calendar, Dumbbell, ChevronDown,
 
 // ── Constants ────────────────────────────────────────────────────────────────
 const BENCHMARK_MINS = 5 + 6 / 60;
-
-const POS_COLORS: Record<string, { color: string; bg: string }> = {
-  Goalkeeper: { color: "#fbbf24", bg: "bg-amber-400/10" },
-  Defender:   { color: "#818cf8", bg: "bg-indigo-400/10" },
-  Midfielder: { color: "#60a5fa", bg: "bg-blue-400/10" },
-  Forward:    { color: "#f87171", bg: "bg-red-400/10" },
-};
-
-const SESSION_TYPE_CFG: Record<string, { color: string; bg: string }> = {
-  Training: { color: "#818cf8", bg: "bg-indigo-500/10" },
-  Match:    { color: "#fbbf24", bg: "bg-amber-500/10"  },
-  Gym:      { color: "#34d399", bg: "bg-emerald-500/10"},
-  Recovery: { color: "#94a3b8", bg: "bg-slate-500/10"  },
-};
 
 // ── Alert types ──────────────────────────────────────────────────────────────
 type AlertSeverity = "danger" | "warning" | "info";
@@ -46,9 +35,9 @@ interface AlertItem {
 
 // Severity used only for per-alert colour coding within sections
 const SEV_COLOR: Record<AlertSeverity, string> = {
-  danger:  "#f87171",
-  warning: "#fbbf24",
-  info:    "#60a5fa",
+  danger:  STATUS.critical,
+  warning: STATUS.warning,
+  info:    STATUS.serious,
 };
 
 // The 4 functional sections — each maps to one area a coach can act on
@@ -57,29 +46,29 @@ const CAT_CFG: Record<AlertCategory, { label: string; description: string; color
     label: "Injury Risk",
     description: "Players whose recent training load has spiked beyond what their body is adapted to. The acute:chronic workload ratio (ACWR) compares this week's load against a 4-week rolling average — above 1.3 is the recognised caution zone, above 1.5 is high risk.",
     metricNote: "ACWR = this week's load ÷ average weekly load over 28 days",
-    color: "#f87171",
-    dimBg: "bg-red-400/[0.04]",
+    color: "inherit",
+    dimBg: "bg-muted/30",
   },
   recovery: {
     label: "Recovery Concern",
     description: "Players who are consistently reporting sessions as harder than planned. When a player's actual RPE is regularly above the session's planned RPE, it signals they may not be recovering adequately between sessions — or that planned intensity is beyond their current capacity.",
     metricNote: "RPE gap = player's actual rating minus the session's planned RPE",
-    color: "#fb923c",
-    dimBg: "bg-orange-400/[0.04]",
+    color: "inherit",
+    dimBg: "bg-muted/30",
   },
   attendance: {
     label: "Attendance",
     description: "Players below the 75% monthly attendance threshold. Consistent absence disrupts fitness development, reduces cohesion in set-piece and tactical work, and makes it harder to fairly assess match readiness.",
     metricNote: "Minimum required: 75% of logged sessions per month",
-    color: "#a78bfa",
-    dimBg: "bg-violet-400/[0.04]",
+    color: "inherit",
+    dimBg: "bg-muted/30",
   },
   fitness: {
     label: "Fitness & Testing",
     description: "Players with a notable bronco time decline since their last test, or who haven't been tested in 60+ days. Without regular testing you can't track fitness trends, spot fatigue-related decline early, or make informed decisions about match minutes.",
     metricNote: "Bronco test recommended every 4–8 weeks",
-    color: "#60a5fa",
-    dimBg: "bg-blue-400/[0.04]",
+    color: "inherit",
+    dimBg: "bg-muted/30",
   },
 };
 
@@ -348,13 +337,13 @@ export default function Dashboard() {
             <div className="p-5">
               <div className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground mb-1.5">Alerts</div>
               {alerts.length === 0 ? (
-                <><div className="text-xl font-bold text-emerald-400">All clear</div><div className="text-[11px] text-muted-foreground mt-1">No issues flagged</div></>
+                <><div className="text-xl font-bold text-status-good">All clear</div><div className="text-[11px] text-muted-foreground mt-1">No issues flagged</div></>
               ) : (
                 <>
                   <div className="flex items-baseline gap-1.5 flex-wrap">
-                    {dangerCount  > 0 && <span className="text-2xl font-bold text-red-400">{dangerCount}</span>}
-                    {warningCount > 0 && <span className={cn("font-bold text-amber-400", dangerCount > 0 ? "text-lg" : "text-2xl")}>{warningCount}</span>}
-                    {infoCount    > 0 && <span className={cn("font-bold text-blue-400",  dangerCount + warningCount > 0 ? "text-base" : "text-2xl")}>{infoCount}</span>}
+                    {dangerCount  > 0 && <span className="text-2xl font-bold text-status-bad">{dangerCount}</span>}
+                    {warningCount > 0 && <span className={cn("font-bold text-status-warn", dangerCount > 0 ? "text-lg" : "text-2xl")}>{warningCount}</span>}
+                    {infoCount    > 0 && <span className={cn("font-bold text-foreground",  dangerCount + warningCount > 0 ? "text-base" : "text-2xl")}>{infoCount}</span>}
                   </div>
                   <div className="text-[11px] text-muted-foreground mt-1">
                     {[dangerCount > 0 && `${dangerCount} danger`, warningCount > 0 && `${warningCount} caution`, infoCount > 0 && `${infoCount} info`].filter(Boolean).join(" · ")}
@@ -365,7 +354,7 @@ export default function Dashboard() {
             <div className="p-5">
               <div className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground mb-1.5">Attendance this month</div>
               {monthlyAttPct !== null ? (
-                <><div className={cn("text-2xl font-bold font-time", monthlyAttPct >= 75 ? "text-emerald-400" : "text-amber-400")}>{monthlyAttPct}%</div><div className="text-[11px] text-muted-foreground mt-1">Team avg · target ≥75%</div></>
+                <><div className={cn("text-2xl font-bold font-time", monthlyAttPct >= 75 ? "text-status-good" : "text-status-warn")}>{monthlyAttPct}%</div><div className="text-[11px] text-muted-foreground mt-1">Team avg · target ≥75%</div></>
               ) : (
                 <><div className="text-2xl font-bold text-muted-foreground">—</div><div className="text-[11px] text-muted-foreground mt-1">No attendance logged yet</div></>
               )}
@@ -373,7 +362,7 @@ export default function Dashboard() {
             <div className="p-5">
               <div className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground mb-1.5">At benchmark</div>
               {testedCount > 0 ? (
-                <><div className="text-2xl font-bold text-foreground"><span className="text-emerald-400">{atBenchmark}</span><span className="text-muted-foreground font-normal text-lg"> / {testedCount}</span></div><div className="text-[11px] text-muted-foreground mt-1">Good tier · latest session</div></>
+                <><div className="text-2xl font-bold text-foreground"><span className="text-status-good">{atBenchmark}</span><span className="text-muted-foreground font-normal text-lg"> / {testedCount}</span></div><div className="text-[11px] text-muted-foreground mt-1">Good tier · latest session</div></>
               ) : (
                 <><div className="text-2xl font-bold text-muted-foreground">—</div><div className="text-[11px] text-muted-foreground mt-1">No bronco data yet</div></>
               )}
@@ -389,24 +378,24 @@ export default function Dashboard() {
           <div className="px-5 py-3.5 border-b border-border flex items-center justify-between">
             <div className="flex items-center gap-2">
               {alerts.length > 0
-                ? <AlertTriangle size={14} className={dangerCount > 0 ? "text-red-400" : "text-amber-400"} />
-                : <CheckCircle2 size={14} className="text-emerald-400" />}
+                ? <AlertTriangle size={14} className={dangerCount > 0 ? "text-status-bad" : "text-status-warn"} />
+                : <CheckCircle2 size={14} className="text-status-good" />}
               <span className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">
                 {alerts.length > 0 ? "Player alerts" : "Squad status"}
               </span>
             </div>
             {alerts.length > 0 && (
               <div className="flex gap-1.5 flex-wrap justify-end">
-                {dangerCount  > 0 && <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-red-400/10   text-red-400">{dangerCount} urgent</span>}
-                {warningCount > 0 && <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-amber-400/10 text-amber-400">{warningCount} monitor</span>}
-                {infoCount    > 0 && <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-blue-400/10  text-blue-400">{infoCount} info</span>}
+                {dangerCount  > 0 && <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-status-bad   text-status-bad">{dangerCount} urgent</span>}
+                {warningCount > 0 && <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-muted text-muted-foreground">{warningCount} monitor</span>}
+                {infoCount    > 0 && <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-muted  text-foreground">{infoCount} info</span>}
               </div>
             )}
           </div>
 
           {alerts.length === 0 ? (
             <div className="px-5 py-5 flex items-center gap-3">
-              <CheckCircle2 size={18} className="text-emerald-400 flex-shrink-0" />
+              <CheckCircle2 size={18} className="text-status-good flex-shrink-0" />
               <div>
                 <div className="text-sm font-medium text-foreground">All clear</div>
                 <div className="text-xs text-muted-foreground mt-0.5">No concerns flagged for {team} right now</div>
@@ -434,8 +423,8 @@ export default function Dashboard() {
                         : <ChevronRight size={13} className="text-muted-foreground flex-shrink-0" />}
                       <span className="text-sm font-semibold" style={{ color: cfg.color }}>{cfg.label}</span>
                       <div className="flex gap-1.5">
-                        {urgentCount  > 0 && <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-red-400/10   text-red-400">{urgentCount} urgent</span>}
-                        {monitorCount > 0 && <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-amber-400/10 text-amber-400">{monitorCount} monitor</span>}
+                        {urgentCount  > 0 && <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-status-bad   text-status-bad">{urgentCount} urgent</span>}
+                        {monitorCount > 0 && <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-muted text-muted-foreground">{monitorCount} monitor</span>}
                       </div>
                       <span className="ml-auto text-[11px] text-muted-foreground">{groups.length} player{groups.length !== 1 ? "s" : ""}</span>
                     </button>
@@ -450,15 +439,10 @@ export default function Dashboard() {
                         {/* Player cards */}
                         <div className="divide-y divide-border/40">
                           {groups.map(({ player, items }) => {
-                            const pc = POS_COLORS[player.primary_position ?? ""];
                             return (
                               <div key={player.id} className="px-5 py-3.5">
                                 <div className="flex items-center gap-2 mb-3">
-                                  {pc && (
-                                    <span className={cn("text-[10px] font-bold px-1.5 py-0.5 rounded", pc.bg)} style={{ color: pc.color }}>
-                                      {player.primary_position?.slice(0, 3).toUpperCase()}
-                                    </span>
-                                  )}
+                                  <PosBadge pos={player.primary_position} className="h-5 px-1" />
                                   <span className="text-sm font-semibold text-foreground">{player.name}</span>
                                 </div>
                                 <div className="space-y-3.5">
@@ -507,16 +491,10 @@ export default function Dashboard() {
               {upcoming.map((s) => {
                 const dateObj  = new Date(s.date + "T00:00:00");
                 const dayLabel = dateObj.toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" });
-                const cfg      = SESSION_TYPE_CFG[s.session_type] ?? SESSION_TYPE_CFG.Training;
                 return (
                   <div key={s.id} className="flex items-center gap-4 px-5 py-3">
                     <div className="min-w-[96px] text-xs font-medium text-foreground font-time">{dayLabel}</div>
-                    <span className="text-xs font-semibold px-2 py-0.5 rounded" style={{ backgroundColor: cfg.bg.replace("bg-", ""), color: cfg.color }}>
-                      <span className="inline-flex items-center gap-1">
-                        <span className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ background: cfg.color }} />
-                        {s.session_type}
-                      </span>
-                    </span>
+                    <SessionTypeBadge type={s.session_type} />
                     <div className="flex items-center gap-3 ml-auto text-[11px] text-muted-foreground">
                       <span className="font-time">{s.duration_mins} min</span>
                       {s.planned_rpe > 0 && <span>RPE {s.planned_rpe}</span>}

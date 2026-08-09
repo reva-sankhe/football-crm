@@ -367,3 +367,25 @@ html.dark .nav-glow {
 
   html, body { background: #fff !important; }
 }
+
+/* ── Status utilities ────────────────────────────────────────────────────────
+   The four reserved status roles. Kept as real utilities (rather than arbitrary
+   values sprinkled through components) so light and dark each get a step that
+   is legible on its own surface. Always pair with an icon or label — a status
+   colour must never carry meaning alone. */
+@layer utilities {
+  .text-status-good { color: #0a8a0a; }
+  .text-status-warn { color: #b07d00; }
+  .text-status-bad  { color: #c23434; }
+  .dark .text-status-good { color: #35c035; }
+  .dark .text-status-warn { color: #fab219; }
+  .dark .text-status-bad  { color: #e46060; }
+
+  .bg-status-good { background-color: color-mix(in srgb, #0ca30c 14%, transparent); }
+  .bg-status-warn { background-color: color-mix(in srgb, #fab219 16%, transparent); }
+  .bg-status-bad  { background-color: color-mix(in srgb, #d03b3b 14%, transparent); }
+
+  .border-status-good { border-color: color-mix(in srgb, #0ca30c 34%, transparent); }
+  .border-status-warn { border-color: color-mix(in srgb, #fab219 36%, transparent); }
+  .border-status-bad  { border-color: color-mix(in srgb, #d03b3b 34%, transparent); }
+}

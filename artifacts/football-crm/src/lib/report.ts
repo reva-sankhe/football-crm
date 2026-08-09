@@ -1,4 +1,5 @@
 import { countsAsAttended } from "./attendance";
+import { STATUS, ordinal, type Mode } from "./viz";
 import { sumStats, type Totals } from "./tournaments";
 import { getBroncoTier, type BroncoTier } from "./types";
 import type {
@@ -14,6 +15,7 @@ export interface ReportRange {
 
 type ResultRow = TestResult & {
   test_sessions?: { test_date: string; test_name: string; type: string | null } | null;
+  players?: { team?: string | null } | null;
 };
 type RpeRow = SessionRPE & { sessions?: TrainingSession | null };
 type AttendanceRow = Pick<SessionAttendance, "player_id" | "session_id" | "status">;
@@ -60,23 +62,62 @@ export interface PlayerReport {
     tested: number;
     bestBronco: number | null;
     latestBronco: number | null;
+    /** Test date of the latest recorded bronco, for the "Mar 26" sub-line. */
+    latestBroncoDate: string | null;
+    teamBand: TeamBand | null;
     bestMas: number | null;
     latestMas: number | null;
     bestTen: number | null;
+    latestTen: number | null;
     bestTwenty: number | null;
+    latestTwenty: number | null;
     tier: BroncoTier | null;
     series: { label: string; mins: number }[];
   };
   load: {
     totalAu: number;
+    /** Sum of the planned ("set") load for those same sessions. */
+    plannedAu: number;
     sessionCount: number;
   } & AcwrResult;
 }
 
+// ── Team band ─────────────────────────────────────────────────────────────────
+export interface TeamBand {
+  label: string;
+  color: string;
+}
+
+const BAND_LABELS = ["Top 25%", "Upper Mid", "Lower Mid", "Bottom 25%"] as const;
+
+/**
+ * Where a bronco time sits against the squad's latest times. Shared by the
+ * player profile and the printed report so the two can never disagree; the
+ * report passes "light" because it always prints on white.
+ */
+export function teamBandFor(
+  bronco: number | null | undefined,
+  squadBroncos: number[],
+  mode: Mode,
+): TeamBand | null {
+  if (bronco == null || squadBroncos.length === 0) return null;
+  const sorted = [...squadBroncos].sort((a, b) => a - b);
+  const q = (p: number) => {
+    const idx = (p / 100) * (sorted.length - 1);
+    const lo = Math.floor(idx), hi = Math.ceil(idx);
+    return sorted[lo] + (idx - lo) * ((sorted[hi] ?? sorted[lo]) - sorted[lo]);
+  };
+  // Lower is faster, so quartile 1 is the top band.
+  const i = bronco <= q(25) ? 0 : bronco <= q(50) ? 1 : bronco <= q(75) ? 2 : 3;
+  return { label: BAND_LABELS[i], color: ordinal(mode, 4, i) };
+}
+
 // ── Range helpers ─────────────────────────────────────────────────────────────
 function inRange(date: string | null | undefined, range: ReportRange | null): boolean {
-  if (!date) return false;
+  // An all-time report keeps rows whose joined date failed to load — dropping
+  // them would silently under-count tests and matches.
   if (!range) return true;
+  if (!date) return false;
   return date >= range.from && date <= range.to;
 }
 
@@ -86,11 +127,11 @@ function isoOf(d: Date): string {
 
 // ── ACWR ──────────────────────────────────────────────────────────────────────
 export const ACWR_CONFIG: Record<AcwrResult["status"], { label: string; color: string; desc: string }> = {
-  safe:    { label: "Safe Zone",       color: "#34d399", desc: "Optimal training load balance." },
-  caution: { label: "Caution",         color: "#fbbf24", desc: "High load — monitor recovery closely." },
-  danger:  { label: "High Risk",       color: "#f87171", desc: "Injury risk elevated. Consider reducing load." },
-  low:     { label: "Underloaded",     color: "#94a3b8", desc: "Below baseline — may indicate detraining." },
-  unknown: { label: "Not enough data", color: "#94a3b8", desc: "Need 28 days of session data to calculate." },
+  safe:    { label: "Safe Zone",       color: STATUS.good,     desc: "Optimal training load balance." },
+  caution: { label: "Caution",         color: STATUS.warning,  desc: "High load — monitor recovery closely." },
+  danger:  { label: "High Risk",       color: STATUS.critical, desc: "Injury risk elevated. Consider reducing load." },
+  low:     { label: "Underloaded",     color: "#94a3b8",       desc: "Below baseline — may indicate detraining." },
+  unknown: { label: "Not enough data", color: "#94a3b8",       desc: "Need 28 days of session data to calculate." },
 };
 
 /**
@@ -169,23 +210,72 @@ export function buildPlayerReport(
   const chronological = [...playerResults].sort((a, b) =>
     (a.test_sessions?.test_date ?? "").localeCompare(b.test_sessions?.test_date ?? ""),
   );
-  const latest = chronological[chronological.length - 1];
 
-  const best = (field: keyof TestResult, higherIsBetter = false) =>
+  /** Best across every named trial — sprints are recorded as two attempts. */
+  const best = (fields: (keyof TestResult)[], higherIsBetter = false) =>
     playerResults.reduce<number | null>((acc, r) => {
-      const v = r[field] as number | null;
-      if (v === null || v === undefined) return acc;
-      if (acc === null) return v;
-      return higherIsBetter ? Math.max(acc, v) : Math.min(acc, v);
+      for (const f of fields) {
+        const v = r[f] as number | null;
+        if (v === null || v === undefined) continue;
+        acc = acc === null ? v : higherIsBetter ? Math.max(acc, v) : Math.min(acc, v);
+      }
+      return acc;
     }, null);
 
-  const bestBronco = best("bronco_mins");
+  /**
+   * Latest *recorded* value, not the value on the latest test. A session that
+   * only ran sprints must not blank out a bronco time measured the month before.
+   */
+  const latestOf = (fields: (keyof TestResult)[], higherIsBetter = false) => {
+    for (let i = chronological.length - 1; i >= 0; i--) {
+      const r = chronological[i];
+      let v: number | null = null;
+      for (const f of fields) {
+        const x = r[f] as number | null;
+        if (x === null || x === undefined) continue;
+        v = v === null ? x : higherIsBetter ? Math.max(v, x) : Math.min(v, x);
+      }
+      if (v !== null) return v;
+    }
+    return null;
+  };
+
+  const bestBronco = best(["bronco_mins"]);
+  const latestBroncoRow = [...chronological].reverse().find((r) => r.bronco_mins !== null) ?? null;
+  const latestBronco = latestBroncoRow?.bronco_mins ?? null;
+
+  // Squad context for the band: every team-mate's most recent bronco, unscoped
+  // by the report range so a short period still ranks against the full squad.
+  const squadLatest = new Map<string, { date: string; mins: number }>();
+  for (const r of data.results) {
+    if (r.bronco_mins === null || r.players?.team !== player.team) continue;
+    const date = r.test_sessions?.test_date ?? "";
+    const held = squadLatest.get(r.player_id);
+    if (!held || date > held.date) squadLatest.set(r.player_id, { date, mins: r.bronco_mins });
+  }
+  const teamBand = teamBandFor(
+    latestBronco,
+    Array.from(squadLatest.values(), (v) => v.mins),
+    "light",
+  );
 
   // ── Load ────────────────────────────────────────────────────────────────
   const playerRpe = data.rpe.filter((r) => r.player_id === player.id);
   const scopedRpe = playerRpe.filter((r) => inRange(r.sessions?.date, range));
-  // ACWR needs the full history (its 28-day window may reach before the range)
-  const acwr = computeAcwr(playerRpe, range ? new Date(range.to + "T00:00:00") : undefined);
+  // ACWR needs the full history (its 28-day window may reach before the range).
+  // An all-time report anchors to the last session on record rather than today,
+  // so a report printed weeks after the last session doesn't read 0.00 for the
+  // whole squad. The printed "as at" date keeps that honest either way.
+  const lastSessionDate = data.sessions.reduce<string | null>(
+    (max, s) => (s.date && (max === null || s.date > max) ? s.date : max),
+    null,
+  );
+  const anchor = range
+    ? new Date(range.to + "T00:00:00")
+    : lastSessionDate
+      ? new Date(lastSessionDate + "T00:00:00")
+      : undefined;
+  const acwr = computeAcwr(playerRpe, anchor);
 
   return {
     player,
@@ -207,12 +297,17 @@ export function buildPlayerReport(
     fitness: {
       tested: playerResults.length,
       bestBronco,
-      latestBronco: latest?.bronco_mins ?? null,
-      bestMas: best("mas_ms", true),
-      latestMas: latest?.mas_ms ?? null,
-      bestTen: best("ten_m_1"),
-      bestTwenty: best("twenty_m_1"),
-      tier: bestBronco !== null ? getBroncoTier(bestBronco) : null,
+      latestBronco,
+      latestBroncoDate: latestBroncoRow?.test_sessions?.test_date ?? null,
+      teamBand,
+      bestMas: best(["mas_ms"], true),
+      latestMas: latestOf(["mas_ms"], true),
+      bestTen: best(["ten_m_1", "ten_m_2"]),
+      latestTen: latestOf(["ten_m_1", "ten_m_2"]),
+      bestTwenty: best(["twenty_m_1", "twenty_m_2"]),
+      latestTwenty: latestOf(["twenty_m_1", "twenty_m_2"]),
+      // Describes the number the report leads with, so it follows the latest test
+      tier: latestBronco !== null ? getBroncoTier(latestBronco) : null,
       series: chronological
         .filter((r) => r.bronco_mins !== null)
         .map((r) => ({
@@ -222,6 +317,7 @@ export function buildPlayerReport(
     },
     load: {
       totalAu: Math.round(scopedRpe.reduce((s, r) => s + r.load_au, 0)),
+      plannedAu: Math.round(scopedRpe.reduce((s, r) => s + (r.sessions?.planned_load_au ?? 0), 0)),
       sessionCount: scopedRpe.length,
       ...acwr,
     },

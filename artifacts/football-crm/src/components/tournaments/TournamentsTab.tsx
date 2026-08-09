@@ -78,8 +78,8 @@ export function TournamentsTab() {
                 data-testid={`card-tournament-${t.id}`}
               >
                 <div className="flex items-start gap-2.5">
-                  <div className="w-9 h-9 rounded-lg bg-amber-500/15 flex items-center justify-center shrink-0">
-                    <Trophy size={16} className="text-amber-400" />
+                  <div className="w-9 h-9 rounded-lg bg-status-warn flex items-center justify-center shrink-0">
+                    <Trophy size={16} className="text-status-warn" />
                   </div>
                   <div className="min-w-0 flex-1">
                     <div className="text-sm font-semibold text-foreground truncate">{t.name}</div>

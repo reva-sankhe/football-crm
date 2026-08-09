@@ -16,8 +16,8 @@ import type { TrainingSession, Player, SessionType } from "@/lib/types";
 // ── Session type config ────────────────────────────────────────────────────────
 const SESSION_TYPE_CFG: Record<SessionType, { text: string; bg: string }> = {
   Training: { text: "text-indigo-400", bg: "bg-indigo-500/15" },
-  Match:    { text: "text-amber-400",  bg: "bg-amber-500/15"  },
-  Gym:      { text: "text-emerald-400",bg: "bg-emerald-500/15"},
+  Match:    { text: "text-status-warn",  bg: "bg-status-warn"  },
+  Gym:      { text: "text-status-good",bg: "bg-status-good"},
   Recovery: { text: "text-slate-400",  bg: "bg-slate-500/15"  },
 };
 
@@ -213,12 +213,12 @@ export default function SessionRPE() {
             <div className="text-xs text-muted-foreground mt-1">{session.duration_mins} min</div>
           </div>
         </div>
-        <div className="flex items-center justify-between bg-amber-400/10 border border-amber-400/20 rounded-lg px-3 py-2">
+        <div className="flex items-center justify-between bg-status-warn border border-status-warn rounded-lg px-3 py-2">
           <div className="flex items-center gap-1.5">
-            <Zap size={13} className="text-amber-400" />
-            <span className="text-xs text-amber-400/80">Planned Load (AU)</span>
+            <Zap size={13} className="text-status-warn" />
+            <span className="text-xs text-muted-foreground">Planned Load (AU)</span>
           </div>
-          <span className="text-xl font-bold text-amber-400 font-time">{Math.round(session.planned_load_au)}</span>
+          <span className="text-xl font-bold text-status-warn font-time">{Math.round(session.planned_load_au)}</span>
         </div>
       </div>
 
@@ -239,7 +239,7 @@ export default function SessionRPE() {
           />
         </div>
         {allLogged && (
-          <p className="text-xs text-emerald-400 mt-2 font-medium">All players logged for this session</p>
+          <p className="text-xs text-status-good mt-2 font-medium">All players logged for this session</p>
         )}
       </div>
 
@@ -372,7 +372,7 @@ export default function SessionRPE() {
           <div className="text-xs text-muted-foreground mb-1">Load (AU)</div>
           <div className={cn(
             "text-4xl font-bold font-time transition-all duration-200",
-            loadAU != null ? "text-amber-400" : "text-muted-foreground/30"
+            loadAU != null ? "text-status-warn" : "text-muted-foreground/30"
           )}>
             {loadAU != null ? loadAU : "—"}
           </div>

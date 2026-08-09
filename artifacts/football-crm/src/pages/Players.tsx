@@ -1,14 +1,14 @@
-import { useEffect, useState, useCallback } from "react";
-import { Link } from "wouter";
+import { useEffect, useRef, useState, useCallback } from "react";
+import { useLocation } from "wouter";
 import { useTeam } from "@/context/TeamContext";
-import { TeamSwitcher } from "@/components/TeamSwitcher";
 import { TableSkeleton } from "@/components/Skeleton";
 import { EmptyState } from "@/components/EmptyState";
-import { fetchPlayers, createPlayer, fetchTrainingSessions } from "@/lib/queries";
+import { fetchPlayers, createPlayer, updatePlayer, fetchTrainingSessions } from "@/lib/queries";
 import { ReportOptionsModal } from "@/components/report/ReportOptionsModal";
-import { calcAgeRange, positionColor, ageRangeColor, cn } from "@/lib/utils";
+import { calcAgeRange, cn } from "@/lib/utils";
+import { PosBadge } from "@/components/PosBadge";
 import type { Player } from "@/lib/types";
-import { Users, Plus, Search, ChevronRight, Check, FileText, X } from "lucide-react";
+import { Users, Plus, Search, Check, FileText, X, Pencil, SlidersHorizontal } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 
 const PRIMARY_POSITIONS = ["Goalkeeper", "Defender", "Midfielder", "Forward"];
@@ -192,8 +192,142 @@ function AddPlayerModal({ onClose, onSaved }: { onClose: () => void; onSaved: ()
   );
 }
 
+/** The four fields worth changing without leaving the roster table. */
+function QuickEditModal({
+  player,
+  onClose,
+  onSaved,
+}: {
+  player: Player;
+  onClose: () => void;
+  onSaved: (updated: Player) => void;
+}) {
+  const { toast } = useToast();
+  const [saving, setSaving] = useState(false);
+  const [form, setForm] = useState({
+    name: player.name,
+    primary_position: player.primary_position,
+    age_range: player.age_range ?? "",
+    is_active: player.is_active,
+  });
+
+  const selectCls = "w-full bg-muted border border-border rounded-md px-3 py-1.5 text-sm text-foreground";
+
+  const save = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!form.name.trim()) {
+      toast({ title: "Player name is required", variant: "destructive" });
+      return;
+    }
+    setSaving(true);
+    try {
+      const updated = await updatePlayer(player.id, {
+        name: form.name.trim(),
+        primary_position: form.primary_position,
+        age_range: (form.age_range || null) as Player["age_range"],
+        is_active: form.is_active,
+      });
+      toast({ title: "Player updated" });
+      onSaved(updated);
+      onClose();
+    } catch (err: unknown) {
+      toast({ title: "Failed to update", description: String(err), variant: "destructive" });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-background/80 backdrop-blur-sm" data-testid="quick-edit-modal">
+      <div className="bg-card border border-border rounded-xl w-full max-w-sm shadow-xl">
+        <div className="px-5 py-4 border-b border-border flex items-center justify-between">
+          <h2 className="text-sm font-semibold text-foreground">Quick edit</h2>
+          <button onClick={onClose} className="text-muted-foreground hover:text-foreground text-lg leading-none">&times;</button>
+        </div>
+        <form onSubmit={save} className="px-5 py-4 space-y-3">
+          <div>
+            <label className="block text-xs text-muted-foreground mb-1">Name</label>
+            <input
+              autoFocus
+              value={form.name}
+              onChange={(e) => setForm({ ...form, name: e.target.value })}
+              className="w-full bg-muted border border-border rounded-md px-3 py-1.5 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+              data-testid="quick-edit-name"
+            />
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs text-muted-foreground mb-1">Position</label>
+              <select
+                value={form.primary_position}
+                onChange={(e) => setForm({ ...form, primary_position: e.target.value })}
+                className={selectCls}
+                data-testid="quick-edit-position"
+              >
+                {PRIMARY_POSITIONS.map((p) => <option key={p} value={p}>{p}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="block text-xs text-muted-foreground mb-1">Age group</label>
+              <select
+                value={form.age_range}
+                onChange={(e) => setForm({ ...form, age_range: e.target.value })}
+                className={selectCls}
+                data-testid="quick-edit-age"
+              >
+                <option value="">— None —</option>
+                {AGE_RANGES.map((a) => <option key={a} value={a}>{a}</option>)}
+              </select>
+            </div>
+          </div>
+          <div>
+            <label className="block text-xs text-muted-foreground mb-1">Status</label>
+            <div className="flex gap-2">
+              {[true, false].map((active) => (
+                <button
+                  key={String(active)}
+                  type="button"
+                  onClick={() => setForm({ ...form, is_active: active })}
+                  className={cn(
+                    "flex-1 flex items-center justify-center gap-2 px-3 py-1.5 rounded-md border text-sm transition-colors",
+                    form.is_active === active
+                      ? "border-indigo-500/50 bg-indigo-500/10 text-foreground"
+                      : "border-border text-muted-foreground hover:text-foreground",
+                  )}
+                  data-testid={`quick-edit-status-${active ? "active" : "inactive"}`}
+                >
+                  <span className={cn("w-1.5 h-1.5 rounded-full", active ? "bg-emerald-500" : "bg-muted-foreground/50")} />
+                  {active ? "Active" : "Inactive"}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="flex gap-2 pt-2">
+            <button
+              type="button"
+              onClick={onClose}
+              className="flex-1 px-4 py-2 text-sm rounded-md border border-border text-muted-foreground hover:text-foreground transition-colors"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={saving}
+              className="flex-1 px-4 py-2 text-sm rounded-xl btn-primary text-white font-semibold disabled:opacity-60"
+              data-testid="button-save-quick-edit"
+            >
+              {saving ? "Saving…" : "Save"}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
 export default function Players() {
   const { team } = useTeam();
+  const [, navigate] = useLocation();
   const [players, setPlayers] = useState<Player[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
@@ -201,9 +335,12 @@ export default function Players() {
   const [filterAge, setFilterAge] = useState("");
   const [filterActive, setFilterActive] = useState<"all" | "active" | "inactive">("active");
   const [showAdd, setShowAdd] = useState(false);
+  const [editPlayer, setEditPlayer] = useState<Player | null>(null);
+  const [showFilters, setShowFilters] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [showReport, setShowReport] = useState(false);
   const [sessionDates, setSessionDates] = useState<Date[]>([]);
+  const filterRef = useRef<HTMLDivElement>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -224,8 +361,23 @@ export default function Players() {
 
   useEffect(() => { load(); }, [load]);
 
+  // Dismiss the filter popover on an outside click or Escape
+  useEffect(() => {
+    if (!showFilters) return;
+    const onDown = (e: MouseEvent) => {
+      if (!filterRef.current?.contains(e.target as Node)) setShowFilters(false);
+    };
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setShowFilters(false); };
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [showFilters]);
+
   const filtered = players.filter((p) => {
-    if (search && !p.name.toLowerCase().includes(search.toLowerCase()) && !p.code.toLowerCase().includes(search.toLowerCase())) return false;
+    if (search && !p.name.toLowerCase().includes(search.toLowerCase())) return false;
     if (filterPos && p.primary_position !== filterPos && p.secondary_position !== filterPos) return false;
     if (filterAge && p.age_range !== filterAge) return false;
     if (filterActive === "active" && !p.is_active) return false;
@@ -253,72 +405,135 @@ export default function Players() {
       return next;
     });
 
+  const activeFilterCount =
+    (filterPos ? 1 : 0) + (filterAge ? 1 : 0) + (filterActive !== "active" ? 1 : 0);
+
+  // One height and one shape for every control on the bar
+  const iconBtn = "h-9 w-9 flex items-center justify-center rounded-lg border transition-colors shrink-0";
+  const selectCls = "w-full bg-muted border border-border rounded-md px-2.5 py-1.5 text-sm text-foreground";
+
   return (
     <div className="space-y-5">
-      <div className="flex items-center justify-between flex-wrap gap-3">
-        <p className="text-sm text-muted-foreground">{players.filter((p) => p.is_active).length} active players</p>
-        <div className="flex items-center gap-2">
-          <TeamSwitcher />
-          <button
-            onClick={() => setShowReport(true)}
-            className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg border border-border text-muted-foreground hover:text-foreground text-sm font-medium transition-colors"
-            data-testid="button-download-report"
-          >
-            <FileText size={13} />
-            {selected.size > 0 ? `Report (${selected.size})` : "Report active"}
-          </button>
-          <button
-            onClick={() => setShowAdd(true)}
-            className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg border border-indigo-500/50 text-indigo-400 dark:text-indigo-400 text-sm font-medium hover:bg-indigo-500/10 transition-colors"
-            data-testid="button-add-player"
-          >
-            <Plus size={13} />
-            Add Player
-          </button>
-        </div>
-      </div>
-
-      {/* Filters */}
-      <div className="flex flex-wrap gap-2">
-        <div className="relative">
-          <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
+      {/* Toolbar */}
+      <div className="flex items-center gap-2">
+        <div className="relative flex-1 max-w-sm">
+          <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none" />
           <input
             type="search"
-            placeholder="Search name or code…"
+            placeholder="Search name…"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            className="pl-8 pr-3 py-1.5 bg-muted border border-border rounded-md text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary w-48"
+            className="w-full h-9 pl-9 pr-3 bg-muted border border-border rounded-lg text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary"
             data-testid="input-search-players"
           />
         </div>
-        <select
-          value={filterPos}
-          onChange={(e) => setFilterPos(e.target.value)}
-          className="bg-muted border border-border rounded-md px-3 py-1.5 text-sm text-foreground"
-          data-testid="select-filter-position"
+
+        <div className="relative" ref={filterRef}>
+          <button
+            onClick={() => setShowFilters((v) => !v)}
+            aria-label="Filters"
+            aria-expanded={showFilters}
+            title="Filters"
+            className={cn(
+              iconBtn,
+              showFilters || activeFilterCount > 0
+                ? "border-indigo-500/50 text-indigo-400 bg-indigo-500/10"
+                : "border-border text-muted-foreground hover:text-foreground",
+            )}
+            data-testid="button-filters"
+          >
+            <SlidersHorizontal size={15} />
+            {activeFilterCount > 0 && (
+              <span className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-indigo-600 text-white text-[9px] font-bold flex items-center justify-center">
+                {activeFilterCount}
+              </span>
+            )}
+          </button>
+
+          {showFilters && (
+            <div className="absolute right-0 top-11 z-20 w-56 bg-card border border-border rounded-xl shadow-xl p-3 space-y-3" data-testid="filter-panel">
+              <div>
+                <label className="block text-xs text-muted-foreground mb-1">Position</label>
+                <select
+                  value={filterPos}
+                  onChange={(e) => setFilterPos(e.target.value)}
+                  className={selectCls}
+                  data-testid="select-filter-position"
+                >
+                  <option value="">All positions</option>
+                  {PRIMARY_POSITIONS.map((p) => <option key={p} value={p}>{p}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs text-muted-foreground mb-1">Age group</label>
+                <select
+                  value={filterAge}
+                  onChange={(e) => setFilterAge(e.target.value)}
+                  className={selectCls}
+                  data-testid="select-filter-age"
+                >
+                  <option value="">All ages</option>
+                  {AGE_RANGES.map((a) => <option key={a} value={a}>{a}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs text-muted-foreground mb-1">Status</label>
+                <select
+                  value={filterActive}
+                  onChange={(e) => setFilterActive(e.target.value as typeof filterActive)}
+                  className={selectCls}
+                  data-testid="select-filter-active"
+                >
+                  <option value="active">Active</option>
+                  <option value="inactive">Inactive</option>
+                  <option value="all">All</option>
+                </select>
+              </div>
+              {activeFilterCount > 0 && (
+                <button
+                  onClick={() => { setFilterPos(""); setFilterAge(""); setFilterActive("active"); }}
+                  className="w-full text-xs text-muted-foreground hover:text-foreground transition-colors pt-1"
+                >
+                  Reset filters
+                </button>
+              )}
+            </div>
+          )}
+        </div>
+
+        <button
+          onClick={() => setShowReport(true)}
+          aria-label={selected.size > 0 ? `Download report (${selected.size} selected)` : "Download report"}
+          title={selected.size > 0 ? `Download report (${selected.size} selected)` : "Download report"}
+          className={cn(iconBtn, "relative border-border text-muted-foreground hover:text-foreground")}
+          data-testid="button-download-report"
         >
-          <option value="">All positions</option>
-          {PRIMARY_POSITIONS.map((p) => <option key={p} value={p}>{p}</option>)}
-        </select>
-        <select
-          value={filterAge}
-          onChange={(e) => setFilterAge(e.target.value)}
-          className="bg-muted border border-border rounded-md px-3 py-1.5 text-sm text-foreground"
-          data-testid="select-filter-age"
+          <FileText size={15} />
+          {selected.size > 0 && (
+            <span className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-indigo-600 text-white text-[9px] font-bold flex items-center justify-center">
+              {selected.size}
+            </span>
+          )}
+        </button>
+
+        <button
+          onClick={() => setShowAdd(true)}
+          aria-label="Add player"
+          title="Add player"
+          className={cn(iconBtn, "border-indigo-500/50 text-indigo-400 hover:bg-indigo-500/10")}
+          data-testid="button-add-player"
         >
-          <option value="">All ages</option>
-          {AGE_RANGES.map((a) => <option key={a} value={a}>{a}</option>)}
-        </select>
-        <select
-          value={filterActive}
-          onChange={(e) => setFilterActive(e.target.value as typeof filterActive)}
-          className="bg-muted border border-border rounded-md px-3 py-1.5 text-sm text-foreground"
-          data-testid="select-filter-active"
+          <Plus size={16} />
+        </button>
+
+        {/* Counts what the table is actually showing, so it tracks the filters */}
+        <span
+          title={`${filtered.length} player${filtered.length !== 1 ? "s" : ""} shown`}
+          className="h-9 px-3 flex items-center rounded-lg border border-border bg-muted/40 text-sm font-time font-medium text-muted-foreground shrink-0"
+          data-testid="text-player-count"
         >
-          <option value="active">Active</option>
-          <option value="inactive">Inactive</option>
-          <option value="all">All</option>
-        </select>
+          {loading ? "—" : filtered.length}
+        </span>
       </div>
 
       {/* Selection bar */}
@@ -345,7 +560,7 @@ export default function Players() {
       {/* Table */}
       <div className="bg-card border border-border rounded-2xl overflow-hidden">
         {loading ? (
-          <div className="p-4"><TableSkeleton rows={8} cols={5} /></div>
+          <div className="p-4"><TableSkeleton rows={8} cols={4} /></div>
         ) : filtered.length === 0 ? (
           <EmptyState icon={Users} title="No players found" description="Try adjusting your filters or add a player" />
         ) : (
@@ -367,27 +582,26 @@ export default function Players() {
                       {allFilteredSelected && <Check size={11} />}
                     </button>
                   </th>
-                  <th className="px-4 py-2.5 text-left font-medium">Code</th>
-                  <th className="px-4 py-2.5 text-left font-medium">Name</th>
-                  <th className="px-4 py-2.5 text-left font-medium">Position</th>
-                  <th className="px-4 py-2.5 text-left font-medium">Age Group</th>
-                  <th className="px-4 py-2.5 text-left font-medium">Status</th>
-                  <th className="px-4 py-2.5 text-left font-medium w-8"></th>
+                  <th className="px-2 py-2.5 text-left font-medium">Name</th>
+                  <th className="px-2 py-2.5 text-left font-medium">Position</th>
+                  <th className="px-2 py-2.5 text-left font-medium">Age Group</th>
+                  <th className="px-2 py-2.5 text-left font-medium w-8"></th>
                 </tr>
               </thead>
               <tbody>
                 {filtered.map((p) => (
                   <tr
                     key={p.id}
+                    onClick={() => navigate(`/players/${p.id}`)}
                     className={cn(
-                      "border-b border-border/50 transition-colors",
+                      "border-b border-border/50 transition-colors cursor-pointer",
                       selected.has(p.id) ? "bg-indigo-500/[0.07]" : "hover:bg-muted/30",
                     )}
                     data-testid={`row-player-${p.id}`}
                   >
                     <td className="pl-4 pr-1 py-2.5">
                       <button
-                        onClick={() => toggleOne(p.id)}
+                        onClick={(e) => { e.stopPropagation(); toggleOne(p.id); }}
                         aria-label={`Select ${p.name}`}
                         className={cn(
                           "w-4 h-4 rounded border flex items-center justify-center transition-colors",
@@ -398,33 +612,36 @@ export default function Players() {
                         {selected.has(p.id) && <Check size={11} />}
                       </button>
                     </td>
-                    <td className="px-4 py-2.5 font-time text-muted-foreground text-xs">{p.code}</td>
-                    <td className="px-4 py-2.5 font-medium text-foreground">{p.name}</td>
-                    <td className="px-4 py-2.5">
-                      <span className={cn("font-semibold text-xs", positionColor(p.primary_position))}>{p.primary_position}</span>
-                      {p.secondary_position && (
-                        <span className="text-xs text-muted-foreground ml-1">/ {p.secondary_position}</span>
-                      )}
-                    </td>
-                    <td className="px-4 py-2.5">
-                      <span className={cn("text-xs font-medium", ageRangeColor(p.age_range))}>{p.age_range ?? "—"}</span>
-                    </td>
-                    <td className="px-4 py-2.5">
-                      <span className={cn(
-                        "inline-flex px-2 py-0.5 rounded text-xs font-medium",
-                        p.is_active ? "bg-emerald-500/15 text-emerald-400" : "bg-muted text-muted-foreground"
-                      )}>
-                        {p.is_active ? "Active" : "Inactive"}
+                    <td className="px-2 py-2.5 font-medium text-foreground">
+                      <span className="flex items-center gap-2">
+                        <span
+                          aria-hidden
+                          title={p.is_active ? "Active" : "Inactive"}
+                          className={cn(
+                            "w-1.5 h-1.5 rounded-full shrink-0",
+                            p.is_active ? "bg-emerald-500" : "bg-muted-foreground/50",
+                          )}
+                        />
+                        {p.name}
+                        <span className="sr-only">{p.is_active ? "Active" : "Inactive"}</span>
                       </span>
                     </td>
-                    <td className="px-4 py-2.5 text-right">
-                      <Link
-                        href={`/players/${p.id}`}
-                        className="text-muted-foreground hover:text-primary transition-colors"
-                        data-testid={`link-player-${p.id}`}
+                    <td className="px-2 py-2.5">
+                      <PosBadge pos={p.primary_position} className="h-5 px-1" />
+                    </td>
+                    <td className="px-2 py-2.5">
+                      <span className="text-xs text-muted-foreground">{p.age_range ?? "—"}</span>
+                    </td>
+                    <td className="px-2 py-2.5 text-right">
+                      <button
+                        onClick={(e) => { e.stopPropagation(); setEditPlayer(p); }}
+                        aria-label={`Quick edit ${p.name}`}
+                        title="Quick edit"
+                        className="p-1 rounded text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+                        data-testid={`button-edit-player-${p.id}`}
                       >
-                        <ChevronRight size={14} />
-                      </Link>
+                        <Pencil size={13} />
+                      </button>
                     </td>
                   </tr>
                 ))}
@@ -435,6 +652,15 @@ export default function Players() {
       </div>
 
       {showAdd && <AddPlayerModal onClose={() => setShowAdd(false)} onSaved={load} />}
+
+      {editPlayer && (
+        <QuickEditModal
+          player={editPlayer}
+          onClose={() => setEditPlayer(null)}
+          // Patch in place so the row updates without refetching the roster
+          onSaved={(updated) => setPlayers((prev) => prev.map((p) => (p.id === updated.id ? updated : p)))}
+        />
+      )}
 
       {showReport && (
         <ReportOptionsModal

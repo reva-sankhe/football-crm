@@ -6,7 +6,7 @@ import {
 } from "@/lib/queries";
 import { formatBronco, cn } from "@/lib/utils";
 import { attendancePctColor, countsAsAttended } from "@/lib/attendance";
-import { ACWR_CONFIG, computeAcwr } from "@/lib/report";
+import { ACWR_CONFIG, computeAcwr, teamBandFor } from "@/lib/report";
 import { ChartSkeleton, Skeleton } from "@/components/Skeleton";
 import { EmptyState } from "@/components/EmptyState";
 import { PlayerTournamentStats } from "@/components/tournaments/PlayerTournamentStats";
@@ -20,6 +20,7 @@ import {
 import { ArrowLeft, Edit, Save, X, Timer, Dumbbell } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useTheme } from "@/context/ThemeContext";
+import { HIGHLIGHT, ink, type Mode } from "@/lib/viz";
 
 const PRIMARY_POSITIONS = ["Goalkeeper", "Defender", "Midfielder", "Forward"];
 const SECONDARY_POSITIONS: Record<string, string[]> = {
@@ -38,14 +39,30 @@ function SectionLabel({ children }: { children: React.ReactNode }) {
   );
 }
 
-function SnapshotTile({ label, value, sub, valueColor }: { label: string; value: string | number; sub?: string; valueColor?: string }) {
+function SnapshotTile({ label, value, valueNote, sub, valueColor }: {
+  label: string;
+  value: string | number;
+  /** Sits inline after the value, small — e.g. the month a test was taken. */
+  valueNote?: string;
+  sub?: string;
+  valueColor?: string;
+}) {
   return (
     <div>
       <div className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground mb-1">{label}</div>
-      <div className={cn("text-2xl font-bold font-time leading-none", valueColor ?? "text-foreground")}>{value}</div>
+      <div className="flex items-baseline gap-1.5">
+        <span className={cn("text-2xl font-bold font-time leading-none", valueColor ?? "text-foreground")}>{value}</span>
+        {valueNote && <span className="text-[11px] text-muted-foreground">{valueNote}</span>}
+      </div>
       {sub && <div className="text-[11px] text-muted-foreground mt-1">{sub}</div>}
     </div>
   );
+}
+
+/** "Mar 26" — the month a test was taken, for the snapshot sub-line. */
+function monthYear(iso: string | null | undefined): string | null {
+  if (!iso) return null;
+  return new Date(iso + "T00:00:00").toLocaleDateString("en-GB", { month: "short", year: "2-digit" });
 }
 
 export default function PlayerDetail() {
@@ -67,12 +84,17 @@ export default function PlayerDetail() {
   const [playerAttendance, setPlayerAttendance] = useState<(SessionAttendance & { sessions: { id: string; date: string; session_type: string } })[]>([]);
   const [matchStats, setMatchStats] = useState<PlayerMatchStat[]>([]);
 
-  // Theme-aware chart colours, matching the pattern in Analytics.tsx
-  const chartGrid = isDark ? "rgba(255,255,255,0.05)" : "rgba(0,0,0,0.07)";
-  const chartAxis = isDark ? "#6b7280" : "#9ca3af";
-  const chartTooltipBg = isDark ? "#0f172a" : "#ffffff";
-  const chartTooltipBorder = isDark ? "#1e293b" : "#e2e8f0";
-  const chartLabel = isDark ? "#f1f5f9" : "#0f172a";
+  const mode: Mode = isDark ? "dark" : "light";
+  const INK = ink(mode);
+  const chartGrid = INK.grid;
+  const chartAxis = INK.axis;
+  const chartTooltipBg = INK.tooltipBg;
+  const chartTooltipBorder = INK.tooltipBorder;
+  const chartLabel = INK.primary;
+  // Planned load is a reference line, not a peer of actual load — it wears a
+  // stronger step of the same grey as the rolling average, and is told apart
+  // from it by weight and the dash pattern rather than by hue.
+  const PLANNED_INK = INK.secondary;
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -93,24 +115,21 @@ export default function PlayerDetail() {
       setAllSessions(sessions);
       setMatchStats(mStats);
 
+      // "Latest" means the most recent *test date*. Rows imported in one batch
+      // share a created_at, so insertion order can't be trusted to rank them.
+      const byTestDateDesc = <T extends { test_sessions?: { test_date: string } | null }>(rows: T[]) =>
+        [...rows].sort((a, b) => (b.test_sessions?.test_date ?? "").localeCompare(a.test_sessions?.test_date ?? ""));
+
       const teamLatest = new Map<string, number>();
-      for (const r of (allRs as (TestResult & { players?: { team: string } })[]).filter(r => r.players?.team === p?.team && r.bronco_mins !== null)) {
+      const teamRows = (allRs as (TestResult & { players?: { team: string }; test_sessions?: { test_date: string } | null })[])
+        .filter(r => r.players?.team === p?.team && r.bronco_mins !== null);
+      for (const r of byTestDateDesc(teamRows)) {
         if (!teamLatest.has(r.player_id)) teamLatest.set(r.player_id, r.bronco_mins!);
       }
-      const sortedBronco = Array.from(teamLatest.values()).sort((a, b) => a - b);
-      const playerBronco = (rs as TestResult[])[0]?.bronco_mins;
-      if (playerBronco != null && sortedBronco.length > 0) {
-        const calcQ = (arr: number[], p: number) => {
-          const idx = (p / 100) * (arr.length - 1);
-          const lo = Math.floor(idx), hi = Math.ceil(idx);
-          return arr[lo] + (idx - lo) * ((arr[hi] ?? arr[lo]) - arr[lo]);
-        };
-        const q1 = calcQ(sortedBronco, 25), q2 = calcQ(sortedBronco, 50), q3 = calcQ(sortedBronco, 75);
-        if (playerBronco <= q1)      setTeamBand({ label: "Top 25%",    color: "#34d399" });
-        else if (playerBronco <= q2) setTeamBand({ label: "Upper Mid",  color: "#60a5fa" });
-        else if (playerBronco <= q3) setTeamBand({ label: "Lower Mid",  color: "#fbbf24" });
-        else                         setTeamBand({ label: "Bottom 25%", color: "#f87171" });
-      }
+      const playerBronco = byTestDateDesc(
+        (rs as (TestResult & { test_sessions?: { test_date: string } | null })[]).filter(r => r.bronco_mins !== null),
+      )[0]?.bronco_mins;
+      setTeamBand(teamBandFor(playerBronco, Array.from(teamLatest.values()), mode));
     } finally {
       setLoading(false);
     }
@@ -135,10 +154,14 @@ export default function PlayerDetail() {
     }
   };
 
-  const latestResult = results[0];
+  // Ordered oldest → newest by test date; the query orders by created_at, which
+  // ties across a bulk import and so can't rank tests on its own.
+  const chronoResults = [...results].sort((a, b) =>
+    (a.test_sessions?.test_date ?? "").localeCompare(b.test_sessions?.test_date ?? ""),
+  );
+  const latestResult = chronoResults[chronoResults.length - 1];
 
-  const broncoChartData = [...results]
-    .sort((a, b) => (a.test_sessions?.test_date ?? "").localeCompare(b.test_sessions?.test_date ?? ""))
+  const broncoChartData = chronoResults
     .map((r) => ({
       date: r.test_sessions?.test_date ?? "",
       session: r.test_sessions?.test_name ?? "",
@@ -154,6 +177,8 @@ export default function PlayerDetail() {
         ? new Date(r.sessions.date + "T00:00:00").toLocaleDateString("en-GB", { day: "numeric", month: "short" })
         : "—",
       load: Math.round(r.load_au),
+      // What the session was planned for, so over/under-shooting is visible
+      planned: r.sessions?.planned_load_au != null ? Math.round(r.sessions.planned_load_au) : null,
       rpe: r.rpe,
     }));
 
@@ -187,16 +212,32 @@ export default function PlayerDetail() {
   }, [allSessions, attendedIds]);
 
   // ── Snapshot ──────────────────────────────────────────────────────────────
+  const attendedSessions = allSessions.filter((s) => attendedIds.has(s.id)).length;
   const overallAttendancePct = allSessions.length > 0
-    ? Math.round((allSessions.filter((s) => attendedIds.has(s.id)).length / allSessions.length) * 100)
+    ? Math.round((attendedSessions / allSessions.length) * 100)
     : null;
 
-  const matchTotals = useMemo(() => sumStats(matchStats), [matchStats]);
+  // The headline number is this month — the season total sits underneath it.
+  const thisMonth = new Date().toISOString().slice(0, 7);
+  const currentMonth = monthlyAttendance.find((m) => m.month === thisMonth) ?? null;
+  const monthLabel = new Date(thisMonth + "-01T00:00:00").toLocaleDateString("en-GB", { month: "short" });
+
+  // Goals and appearances are labelled "this year", so they are scoped to it
+  const thisYear = String(new Date().getFullYear());
+  const yearMatchStats = useMemo(
+    () => matchStats.filter((m) => (m.matches?.sessions?.date ?? "").startsWith(thisYear)),
+    [matchStats, thisYear],
+  );
+  const matchTotals = useMemo(() => sumStats(yearMatchStats), [yearMatchStats]);
 
   const bestBronco = results.reduce<number | null>(
     (best, r) => (r.bronco_mins !== null && (best === null || r.bronco_mins < best) ? r.bronco_mins : best),
     null,
   );
+
+  // Latest recorded bronco — not necessarily the latest test, which may have
+  // measured only sprints.
+  const latestBroncoRow = [...chronoResults].reverse().find((r) => r.bronco_mins !== null) ?? null;
 
   if (loading) {
     return (
@@ -298,14 +339,19 @@ export default function PlayerDetail() {
         {/* Snapshot — attendance is the only value carrying colour */}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 pt-4 mt-4 border-t border-border">
           <SnapshotTile
-            label="Attendance"
-            value={overallAttendancePct !== null ? `${overallAttendancePct}%` : "—"}
-            sub={allSessions.length > 0 ? `${allSessions.filter((s) => attendedIds.has(s.id)).length}/${allSessions.length} sessions` : undefined}
-            valueColor={overallAttendancePct !== null ? attendancePctColor(overallAttendancePct) : undefined}
+            label={`${monthLabel} Attendance`}
+            value={currentMonth ? `${currentMonth.pct}%` : "—"}
+            sub={overallAttendancePct !== null ? `${overallAttendancePct}% overall` : undefined}
+            valueColor={currentMonth ? attendancePctColor(currentMonth.pct) : undefined}
           />
-          <SnapshotTile label="Goals" value={matchTotals.goals} sub={matchTotals.assists > 0 ? `${matchTotals.assists} assists` : undefined} />
-          <SnapshotTile label="Appearances" value={matchTotals.appearances} sub={matchStats.length > 0 ? `${matchStats.length} call-ups` : undefined} />
-          <SnapshotTile label="Best Bronco" value={formatBronco(bestBronco)} sub={latestResult?.bronco_mins != null ? `Latest ${formatBronco(latestResult.bronco_mins)}` : undefined} />
+          <SnapshotTile label="Goals" value={matchTotals.goals} sub="This year" />
+          <SnapshotTile label="Appearances" value={matchTotals.appearances} sub="This year" />
+          <SnapshotTile
+            label="Latest Bronco"
+            value={formatBronco(latestBroncoRow?.bronco_mins ?? null)}
+            valueNote={monthYear(latestBroncoRow?.test_sessions?.test_date) ?? undefined}
+            sub={teamBand?.label}
+          />
         </div>
       </div>
 
@@ -343,7 +389,7 @@ export default function PlayerDetail() {
                     labelStyle={{ color: chartLabel, fontSize: 12 }}
                     formatter={(v: number) => [formatBronco(v), "Bronco"]}
                   />
-                  <Line type="monotone" dataKey="mins" stroke="#6366f1" strokeWidth={2} dot={{ fill: "#6366f1", r: 4 }} connectNulls />
+                  <Line type="monotone" dataKey="mins" stroke={HIGHLIGHT} strokeWidth={2} dot={{ fill: HIGHLIGHT, r: 4 }} connectNulls />
                 </LineChart>
               </ResponsiveContainer>
 
@@ -351,9 +397,9 @@ export default function PlayerDetail() {
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 pt-4 mt-2 border-t border-border">
                 {[
                   { label: "Bronco",    best: formatBronco(bestBronco), latest: formatBronco(latestResult?.bronco_mins) },
-                  { label: "MAS (m/s)",  best: fmtBest(results, "mas_ms", true),     latest: fmtVal(latestResult?.mas_ms) },
-                  { label: "10m Sprint", best: fmtBest(results, "ten_m_1", false, "s"),    latest: fmtVal(latestResult?.ten_m_1, "s") },
-                  { label: "20m Sprint", best: fmtBest(results, "twenty_m_1", false, "s"), latest: fmtVal(latestResult?.twenty_m_1, "s") },
+                  { label: "MAS (m/s)",  best: fmtBest(results, ["mas_ms"], true),     latest: fmtVal(latestResult?.mas_ms) },
+                  { label: "10m Sprint", best: fmtBest(results, ["ten_m_1", "ten_m_2"], false, "s"),       latest: fmtTrials(latestResult, ["ten_m_1", "ten_m_2"], "s") },
+                  { label: "20m Sprint", best: fmtBest(results, ["twenty_m_1", "twenty_m_2"], false, "s"), latest: fmtTrials(latestResult, ["twenty_m_1", "twenty_m_2"], "s") },
                 ].map(({ label, best, latest }) => (
                   <div key={label}>
                     <div className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground mb-1">{label}</div>
@@ -363,14 +409,6 @@ export default function PlayerDetail() {
                 ))}
               </div>
 
-              {teamBand && (
-                <div className="flex items-center gap-2 mt-4">
-                  <span className="text-xs text-muted-foreground">Team band:</span>
-                  <span className="inline-block px-2 py-0.5 rounded-full text-[11px] font-semibold" style={{ backgroundColor: teamBand.color + "20", color: teamBand.color }}>
-                    {teamBand.label}
-                  </span>
-                </div>
-              )}
             </>
           )}
         </div>
@@ -399,9 +437,9 @@ export default function PlayerDetail() {
               <p className="text-xs text-muted-foreground mb-3">{acwrCfg.desc}</p>
               <div className="flex h-1.5 rounded-full overflow-hidden gap-px mt-auto">
                 <div className="w-[10%] bg-slate-400/40" title="< 0.5 Underloaded" />
-                <div className="w-[60%] bg-emerald-400/50" title="0.5–1.3 Safe" />
-                <div className="w-[15%] bg-amber-400/50" title="1.3–1.5 Caution" />
-                <div className="w-[15%] bg-red-400/50" title="> 1.5 High risk" />
+                <div className="w-[60%] bg-status-good" title="0.5–1.3 Safe" />
+                <div className="w-[15%] bg-status-warn" title="1.3–1.5 Caution" />
+                <div className="w-[15%] bg-status-bad" title="> 1.5 High risk" />
               </div>
               <div className="flex justify-between text-[10px] text-muted-foreground mt-1">
                 <span>0.5</span><span>0.8</span><span>1.3</span><span>1.5</span><span>2.0+</span>
@@ -411,22 +449,39 @@ export default function PlayerDetail() {
             {/* Load trend */}
             {loadChartData.length > 0 && (
               <div className="bg-card border border-border rounded-2xl p-5 flex flex-col">
-                <div className="flex items-center justify-between mb-2">
+                <div className="flex items-center justify-between mb-1 gap-3 flex-wrap">
                   <h3 className="text-sm font-semibold text-foreground">Load Trend</h3>
-                  <span className="text-[11px] text-muted-foreground">{recentLoad.length} sessions</span>
+                  <div className="flex items-center gap-3 text-[10px] text-muted-foreground">
+                    <span className="flex items-center gap-1">
+                      <span className="w-3 h-0.5 rounded-full" style={{ background: HIGHLIGHT }} /> Actual
+                    </span>
+                    <span className="flex items-center gap-1">
+                      <span className="w-3 h-0.5 rounded-full" style={{ background: PLANNED_INK }} /> Set
+                    </span>
+                    <span className="flex items-center gap-1">
+                      <span className="w-3 border-t border-dashed" style={{ borderColor: chartAxis }} /> Avg
+                    </span>
+                    <span>{recentLoad.length} sessions</span>
+                  </div>
                 </div>
                 <div className="flex-1 min-h-0" style={{ minHeight: 150 }}>
                   <ResponsiveContainer width="100%" height="100%">
-                    <LineChart data={loadWithAvg} margin={{ top: 4, right: 8, bottom: 30, left: -8 }}>
+                    {/* Level date labels need no angled gutter, so the plot keeps
+                        the ~26px the rotated ticks used to reserve. */}
+                    <LineChart data={loadWithAvg} margin={{ top: 4, right: 8, bottom: 0, left: -12 }}>
                       <CartesianGrid strokeDasharray="3 3" stroke={chartGrid} vertical={false} />
-                      <XAxis dataKey="date" tick={{ fill: chartAxis, fontSize: 9 }} angle={-35} textAnchor="end" interval="preserveStartEnd" />
-                      <YAxis tick={{ fill: chartAxis, fontSize: 9 }} width={32} />
+                      <XAxis dataKey="date" tick={{ fill: chartAxis, fontSize: 9 }} tickLine={false} interval="preserveStartEnd" minTickGap={24} />
+                      <YAxis tick={{ fill: chartAxis, fontSize: 9 }} width={32} tickLine={false} axisLine={false} />
                       <Tooltip
                         contentStyle={{ background: chartTooltipBg, border: `1px solid ${chartTooltipBorder}`, borderRadius: 8 }}
                         labelStyle={{ color: chartLabel, fontSize: 12 }}
-                        formatter={(v: number, key: string) => [`${v} AU`, key === "rollingAvg" ? "Rolling avg (4)" : "Load"]}
+                        formatter={(v: number, key: string) => [
+                          `${v} AU`,
+                          key === "rollingAvg" ? "Rolling avg (4)" : key === "planned" ? "Set load" : "Actual load",
+                        ]}
                       />
-                      <Line type="monotone" dataKey="load" stroke="#6366f1" strokeWidth={2} dot={{ fill: "#6366f1", r: 2.5 }} />
+                      <Line type="monotone" dataKey="planned" stroke={PLANNED_INK} strokeWidth={1.5} dot={false} connectNulls />
+                      <Line type="monotone" dataKey="load" stroke={HIGHLIGHT} strokeWidth={2} dot={{ fill: HIGHLIGHT, r: 2.5 }} />
                       <Line type="monotone" dataKey="rollingAvg" stroke={chartAxis} strokeWidth={1.5} strokeDasharray="4 2" dot={false} />
                     </LineChart>
                   </ResponsiveContainer>
@@ -447,13 +502,30 @@ function fmtVal(v: number | null | undefined, suffix = ""): string {
   return v != null ? v.toFixed(2) + suffix : "—";
 }
 
-/** Best value for a numeric test field — higher is better only for MAS. */
-function fmtBest(rows: ResultRow[], field: keyof TestResult, higherIsBetter: boolean, suffix = ""): string {
+/**
+ * Best value across the named test fields — higher is better only for MAS.
+ * Sprints pass both trials, since either attempt can be the quicker one.
+ */
+function fmtBest(rows: ResultRow[], fields: (keyof TestResult)[], higherIsBetter: boolean, suffix = ""): string {
   const best = rows.reduce<number | null>((acc, r) => {
-    const v = r[field] as number | null;
-    if (v === null || v === undefined) return acc;
-    if (acc === null) return v;
-    return higherIsBetter ? Math.max(acc, v) : Math.min(acc, v);
+    for (const f of fields) {
+      const v = r[f] as number | null;
+      if (v === null || v === undefined) continue;
+      acc = acc === null ? v : higherIsBetter ? Math.max(acc, v) : Math.min(acc, v);
+    }
+    return acc;
   }, null);
   return best !== null ? best.toFixed(2) + suffix : "—";
+}
+
+/** Best of the trials recorded on one test — mirrors fmtBest for a single row. */
+function fmtTrials(row: ResultRow | undefined, fields: (keyof TestResult)[], suffix = ""): string {
+  if (!row) return "—";
+  let v: number | null = null;
+  for (const f of fields) {
+    const x = row[f] as number | null;
+    if (x === null || x === undefined) continue;
+    v = v === null ? x : Math.min(v, x);
+  }
+  return v !== null ? v.toFixed(2) + suffix : "—";
 }
