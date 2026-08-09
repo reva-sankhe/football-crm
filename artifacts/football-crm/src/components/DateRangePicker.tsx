@@ -1,11 +1,12 @@
 // @refresh reset
 import { useState } from "react";
 import type { DateRange } from "react-day-picker";
-import { CalendarDays, X } from "lucide-react";
+import { Calendar as CalendarIcon, CalendarDays, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useTheme } from "@/context/ThemeContext";
 import { formatDateRange } from "@/lib/tournaments";
 import { Calendar } from "@/components/ui/calendar";
+import { IconButton } from "@/components/Toolbar";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 
 /** Inclusive ISO date range. */
@@ -34,6 +35,8 @@ interface DateRangePickerProps {
   label?: string;
   align?: "start" | "center" | "end";
   className?: string;
+  /** Render as a square calendar icon, matching the other toolbar controls. */
+  iconOnly?: boolean;
 }
 
 export function DateRangePicker({
@@ -43,6 +46,7 @@ export function DateRangePicker({
   label = "Date range",
   align = "start",
   className,
+  iconOnly = false,
 }: DateRangePickerProps) {
   const { theme } = useTheme();
   const isDark = theme === "dark";
@@ -66,19 +70,30 @@ export function DateRangePicker({
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
-        <button
-          className={cn(
-            "flex items-center gap-1.5 px-2.5 h-8 rounded-lg text-xs font-medium border transition-colors",
-            value
-              ? "bg-indigo-500/15 text-indigo-400 border-indigo-500/30"
-              : isDark ? "border-white/10 text-muted-foreground hover:bg-white/5" : "border-slate-200 text-slate-500 hover:bg-slate-50",
-            className,
-          )}
-          data-testid="button-date-range"
-        >
-          <CalendarDays size={12} />
-          {value ? formatDateRange(value.from, value.to) : label}
-        </button>
+        {iconOnly ? (
+          <IconButton
+            label={value ? (formatDateRange(value.from, value.to) ?? label) : label}
+            active={!!value}
+            className={className}
+            data-testid="button-date-range"
+          >
+            <CalendarIcon size={15} />
+          </IconButton>
+        ) : (
+          <button
+            className={cn(
+              "flex items-center gap-1.5 px-2.5 h-8 rounded-lg text-xs font-medium border transition-colors",
+              value
+                ? "bg-indigo-500/15 text-indigo-400 border-indigo-500/30"
+                : isDark ? "border-white/10 text-muted-foreground hover:bg-white/5" : "border-slate-200 text-slate-500 hover:bg-slate-50",
+              className,
+            )}
+            data-testid="button-date-range"
+          >
+            <CalendarDays size={12} />
+            {value ? formatDateRange(value.from, value.to) : label}
+          </button>
+        )}
       </PopoverTrigger>
 
       <PopoverContent align={align} className="w-auto p-0">

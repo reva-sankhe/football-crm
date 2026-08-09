@@ -18,13 +18,15 @@ export interface AttendanceCfg {
   icon: React.ComponentType<{ size?: number; className?: string }>;
   activeColor: string;
   activeBg: string;
+  /** Border alone, for surfaces that carry state without a fill. */
+  activeBorder: string;
 }
 
 export const ATTENDANCE_CFG: Record<AttendanceStatus, AttendanceCfg> = {
-  Present: { label: "Present", short: "P", icon: CheckCircle2, activeColor: "text-emerald-400", activeBg: "bg-emerald-500/20 border-emerald-500/40" },
-  Absent:  { label: "Absent",  short: "A", icon: XCircle,      activeColor: "text-red-400",     activeBg: "bg-red-500/20 border-red-500/40"         },
-  Late:    { label: "Late",    short: "L", icon: Clock,        activeColor: "text-amber-400",   activeBg: "bg-amber-500/20 border-amber-500/40"     },
-  Injured: { label: "Injured", short: "I", icon: Activity,     activeColor: "text-orange-400",  activeBg: "bg-orange-500/20 border-orange-500/40"   },
+  Present: { label: "Present", short: "P", icon: CheckCircle2, activeColor: "text-emerald-400", activeBg: "bg-emerald-500/20 border-emerald-500/40", activeBorder: "border-emerald-500/40" },
+  Absent:  { label: "Absent",  short: "A", icon: XCircle,      activeColor: "text-red-400",     activeBg: "bg-red-500/20 border-red-500/40",         activeBorder: "border-red-500/40"     },
+  Late:    { label: "Late",    short: "L", icon: Clock,        activeColor: "text-amber-400",   activeBg: "bg-amber-500/20 border-amber-500/40",     activeBorder: "border-amber-500/40"   },
+  Injured: { label: "Injured", short: "I", icon: Activity,     activeColor: "text-orange-400",  activeBg: "bg-orange-500/20 border-orange-500/40",   activeBorder: "border-orange-500/40"  },
 };
 
 export const ATTENDANCE_STATUSES: AttendanceStatus[] = ["Present", "Absent", "Late", "Injured"];

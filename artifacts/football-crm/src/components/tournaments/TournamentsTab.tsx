@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "wouter";
-import { ArrowUpDown, CalendarRange, Check, MapPin, Search, SlidersHorizontal, Trophy } from "lucide-react";
+import { CalendarRange, Check, MapPin, SlidersHorizontal, Trophy } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
 import { AddButton } from "@/components/AddButton";
+import { CountPill, IconButton, SearchInput, TOOLBAR_MENU, TOOLBAR_SELECT } from "@/components/Toolbar";
 import { fetchMatchCountsByTournament, fetchTournaments } from "@/lib/queries";
 import { MATCH_FORMATS, formatDateRange } from "@/lib/tournaments";
 import { TournamentFormModal } from "@/components/tournaments/TournamentFormModal";
@@ -96,57 +97,56 @@ export function TournamentsTab() {
 
   const activeFilterCount = (filterFormat ? 1 : 0) + (filterYear ? 1 : 0);
 
-  // One height and one shape for every control on the bar — as on Players
-  const iconBtn = "h-9 w-9 flex items-center justify-center rounded-lg border transition-colors shrink-0";
-  const selectCls = "w-full bg-muted border border-border rounded-md px-2.5 py-1.5 text-sm text-foreground";
-  const menuCls = "absolute right-0 top-11 z-20 w-52 bg-card border border-border rounded-xl shadow-xl p-3";
-
   return (
     <div className="space-y-4">
       {/* Toolbar */}
       <div className="flex items-center gap-2" ref={barRef}>
-        <div className="relative flex-1 max-w-sm">
-          <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none" />
-          <input
-            type="search"
-            placeholder="Search tournaments…"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            className="w-full h-9 pl-9 pr-3 bg-muted border border-border rounded-lg text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary"
-            data-testid="input-search-tournaments"
-          />
-        </div>
+        <SearchInput
+          value={search}
+          onChange={setSearch}
+          placeholder="Search tournaments…"
+          className="flex-1 max-w-sm"
+          data-testid="input-search-tournaments"
+        />
 
         <div className="relative">
-          <button
+          <IconButton
+            label="Sort and filter"
             onClick={() => setOpenMenu((m) => (m === "filters" ? null : "filters"))}
-            aria-label="Filters"
+            active={openMenu === "filters" || activeFilterCount > 0 || sort !== "latest"}
+            badge={activeFilterCount}
             aria-expanded={openMenu === "filters"}
-            title="Filters"
-            className={cn(
-              iconBtn,
-              openMenu === "filters" || activeFilterCount > 0
-                ? "border-indigo-500/50 text-indigo-400 bg-indigo-500/10"
-                : "border-border text-muted-foreground hover:text-foreground",
-            )}
             data-testid="button-tournament-filters"
           >
             <SlidersHorizontal size={15} />
-            {activeFilterCount > 0 && (
-              <span className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-indigo-600 text-white text-[9px] font-bold flex items-center justify-center">
-                {activeFilterCount}
-              </span>
-            )}
-          </button>
+          </IconButton>
 
           {openMenu === "filters" && (
-            <div className={cn(menuCls, "space-y-3")} data-testid="tournament-filter-panel">
+            <div className={cn(TOOLBAR_MENU, "space-y-3")} data-testid="tournament-filter-panel">
               <div>
+                <div className="text-xs text-muted-foreground mb-1.5">Sort by</div>
+                {(Object.keys(SORT_LABELS) as SortKey[]).map((key) => (
+                  <button
+                    key={key}
+                    onClick={() => setSort(key)}
+                    className={cn(
+                      "w-full flex items-center gap-2 px-2 py-1.5 rounded-md text-sm transition-colors",
+                      sort === key ? "text-foreground bg-muted" : "text-muted-foreground hover:text-foreground hover:bg-muted/60",
+                    )}
+                    data-testid={`button-sort-${key}`}
+                  >
+                    <Check size={13} className={cn(sort === key ? "text-indigo-400" : "opacity-0")} />
+                    {SORT_LABELS[key]}
+                  </button>
+                ))}
+              </div>
+
+              <div className="pt-1 border-t border-border">
                 <label className="block text-xs text-muted-foreground mb-1">Format</label>
                 <select
                   value={filterFormat}
                   onChange={(e) => setFilterFormat(e.target.value)}
-                  className={selectCls}
+                  className={TOOLBAR_SELECT}
                   data-testid="select-filter-format"
                 >
                   <option value="">All formats</option>
@@ -158,7 +158,7 @@ export function TournamentsTab() {
                 <select
                   value={filterYear}
                   onChange={(e) => setFilterYear(e.target.value)}
-                  className={selectCls}
+                  className={TOOLBAR_SELECT}
                   data-testid="select-filter-year"
                 >
                   <option value="">All years</option>
@@ -177,53 +177,14 @@ export function TournamentsTab() {
           )}
         </div>
 
-        <div className="relative">
-          <button
-            onClick={() => setOpenMenu((m) => (m === "sort" ? null : "sort"))}
-            aria-label={`Sort by ${SORT_LABELS[sort]}`}
-            aria-expanded={openMenu === "sort"}
-            title={`Sort by ${SORT_LABELS[sort]}`}
-            className={cn(
-              iconBtn,
-              openMenu === "sort" || sort !== "latest"
-                ? "border-indigo-500/50 text-indigo-400 bg-indigo-500/10"
-                : "border-border text-muted-foreground hover:text-foreground",
-            )}
-            data-testid="button-tournament-sort"
-          >
-            <ArrowUpDown size={15} />
-          </button>
-
-          {openMenu === "sort" && (
-            <div className={menuCls} data-testid="tournament-sort-panel">
-              <div className="text-xs text-muted-foreground mb-1.5">Sort by</div>
-              {(Object.keys(SORT_LABELS) as SortKey[]).map((key) => (
-                <button
-                  key={key}
-                  onClick={() => { setSort(key); setOpenMenu(null); }}
-                  className={cn(
-                    "w-full flex items-center gap-2 px-2 py-1.5 rounded-md text-sm transition-colors",
-                    sort === key ? "text-foreground bg-muted" : "text-muted-foreground hover:text-foreground hover:bg-muted/60",
-                  )}
-                  data-testid={`button-sort-${key}`}
-                >
-                  <Check size={13} className={cn(sort === key ? "text-indigo-400" : "opacity-0")} />
-                  {SORT_LABELS[key]}
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
-
         <AddButton label="Add tournament" onClick={() => setShowNew(true)} data-testid="button-new-tournament" />
 
-        <span
+        <CountPill
           title={`${visible.length} tournament${visible.length !== 1 ? "s" : ""} shown`}
-          className="h-9 px-3 flex items-center rounded-lg border border-border bg-muted/40 text-sm font-time font-medium text-muted-foreground shrink-0"
           data-testid="text-tournament-count"
         >
           {loading ? "—" : visible.length}
-        </span>
+        </CountPill>
       </div>
 
       {loading ? (

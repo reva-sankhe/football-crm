@@ -8,19 +8,12 @@ import {
   Search,
   Users,
   X,
-  Zap,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { SessionTypeBadge } from "@/components/Badges";
 import { useTheme } from "@/context/ThemeContext";
 import { useToast } from "@/hooks/use-toast";
 import { bulkUpsertAttendance, fetchAttendanceBySession } from "@/lib/queries";
-import {
-  ATTENDANCE_CFG,
-  ATTENDANCE_STATUSES,
-  SESSION_TYPE_CFG,
-  formatDateLong,
-} from "@/lib/attendance";
+import { ATTENDANCE_CFG, ATTENDANCE_STATUSES } from "@/lib/attendance";
 import type { AttendanceStatus, Player, TrainingSession } from "@/lib/types";
 import {
   DropdownMenu,
@@ -30,6 +23,14 @@ import {
 } from "@/components/ui/dropdown-menu";
 
 export type AttendanceDraft = Record<string, AttendanceStatus>;
+
+/** Dot colours for the count line — a mark carries identity, the text stays ink. */
+const STATUS_DOT: Record<AttendanceStatus, string> = {
+  Present: "bg-[#0ca30c]",
+  Absent:  "bg-[#d03b3b]",
+  Late:    "bg-[#fab219]",
+  Injured: "bg-[#ec835a]",
+};
 
 /** Everyone starts Absent; existing rows override. */
 function buildDraft(players: Player[], rows: { player_id: string; status: AttendanceStatus }[]): AttendanceDraft {
@@ -198,139 +199,111 @@ export function MarkAttendance({
     );
   }
 
-  const typeCfg = SESSION_TYPE_CFG[session.session_type] ?? SESSION_TYPE_CFG.Training;
-
   return (
-    <div className="space-y-3">
-      {/* ── Session summary ─────────────────────────────────────────────────── */}
-      <div className="bg-card border border-border rounded-xl px-4 py-3 flex flex-wrap items-center gap-x-4 gap-y-2">
-        <SessionTypeBadge type={session.session_type} />
-        <span className="text-sm font-medium text-foreground">
-          {formatDateLong(session.date)}
-        </span>
-        <span className="text-xs text-muted-foreground">{session.day}</span>
-        <span className="text-xs text-muted-foreground font-time">{session.duration_mins} min</span>
-        <span className="text-xs text-status-warn font-time flex items-center gap-1">
-          <Zap size={10} />{Math.round(session.planned_load_au)} AU
-        </span>
-        <button
-          onClick={() => setLocation(`/sessions/${session.id}`)}
-          className="ml-auto flex items-center gap-1 text-xs text-indigo-400 hover:text-indigo-300 transition-colors"
-        >
-          Full details <ArrowRight size={12} />
-        </button>
-      </div>
-
-      {/* ── Roster ──────────────────────────────────────────────────────────── */}
-      <div className="bg-card border border-border rounded-xl overflow-hidden">
-        {/* Toolbar */}
-        <div className="px-3 py-2.5 border-b border-border flex flex-wrap items-center gap-2">
-          <div className="relative flex-1 min-w-[160px]">
-            <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground/60" />
-            <input
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder={`Search ${players.length} players…`}
-              className={cn(
-                "w-full pl-8 pr-7 py-1.5 rounded-lg text-sm bg-muted border border-border text-foreground",
-                "placeholder:text-muted-foreground/50 focus:outline-none focus:ring-1 focus:ring-primary",
-              )}
-            />
-            {search && (
-              <button
-                onClick={() => setSearch("")}
-                className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-                aria-label="Clear search"
-              >
-                <X size={13} />
-              </button>
-            )}
-          </div>
-
-          <button
-            onClick={() => setAll("Present")}
-            disabled={loading}
-            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium bg-status-good text-status-good hover:bg-status-good disabled:opacity-50 transition-colors"
-          >
-            <CheckCheck size={12} /> All present
-          </button>
-          <button
-            onClick={() => setAll("Absent")}
-            disabled={loading}
-            className={cn(
-              "px-2.5 py-1.5 rounded-lg text-xs font-medium border transition-colors disabled:opacity-50",
-              isDark ? "border-white/10 text-muted-foreground hover:bg-white/5" : "border-slate-200 text-slate-500 hover:bg-slate-50",
-            )}
-          >
-            Clear all
-          </button>
+    <div className="space-y-4">
+      {/* ── Toolbar — search and the running counts share one line ──────────── */}
+      <div className="flex items-center gap-3 flex-wrap">
+        <div className="relative w-48 shrink-0">
+          <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none" />
+          <input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search players…"
+            className="w-full h-9 pl-9 pr-8 bg-muted border border-border rounded-lg text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+            data-testid="input-search-attendance"
+          />
+          {search && (
+            <button
+              onClick={() => setSearch("")}
+              className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+              aria-label="Clear search"
+            >
+              <X size={13} />
+            </button>
+          )}
         </div>
 
-        {/* Count chips */}
-        <div className={cn("px-3 py-2 flex flex-wrap gap-1.5 border-b", isDark ? "border-white/[0.06]" : "border-slate-100")}>
+        <div className="flex items-center gap-3 text-[11px] text-muted-foreground">
           {ATTENDANCE_STATUSES.map((status) => {
             const cfg = ATTENDANCE_CFG[status];
-            const Icon = cfg.icon;
             const count = counts[status];
             return (
-              <div
-                key={status}
-                className={cn(
-                  "flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium border",
-                  count > 0
-                    ? cn(cfg.activeBg, cfg.activeColor)
-                    : isDark ? "border-white/10 text-muted-foreground" : "border-slate-200 text-muted-foreground",
-                )}
-              >
-                <Icon size={10} />
-                {count} {cfg.label}
-              </div>
+              <span key={status} className="flex items-center gap-1.5">
+                <span aria-hidden className={cn("w-1.5 h-1.5 rounded-full shrink-0", STATUS_DOT[status])} />
+                <span className={cn("font-time font-medium", count > 0 ? "text-foreground" : "text-muted-foreground")}>
+                  {count}
+                </span>
+                {cfg.label}
+              </span>
             );
           })}
         </div>
 
-        {/* Rows */}
-        {loading ? (
-          <div className="p-3 space-y-2">
-            {[...Array(8)].map((_, i) => (
-              <div key={i} className="h-12 bg-muted/30 rounded-lg animate-pulse" />
-            ))}
-          </div>
-        ) : visiblePlayers.length === 0 ? (
-          <div className="py-10 text-center text-sm text-muted-foreground">
-            No players match “{search}”
-          </div>
-        ) : (
-          <div className="divide-y divide-border/40">
-            {visiblePlayers.map((player) => {
-              const status = draft[player.id] ?? "Absent";
-              const cfg = ATTENDANCE_CFG[status];
-              const StatusIcon = cfg.icon;
-              const isException = status === "Late" || status === "Injured";
-              const isPresent = status === "Present";
+        <div className="ml-auto flex items-center gap-2">
+          <button
+            onClick={() => setAll("Present")}
+            disabled={loading}
+            className="flex items-center gap-1.5 h-9 px-3 rounded-lg border border-border text-xs font-medium text-muted-foreground hover:text-foreground disabled:opacity-50 transition-colors"
+          >
+            <CheckCheck size={13} /> All present
+          </button>
+          <button
+            onClick={() => setAll("Absent")}
+            disabled={loading}
+            className="h-9 px-3 rounded-lg border border-border text-xs font-medium text-muted-foreground hover:text-foreground disabled:opacity-50 transition-colors"
+          >
+            Clear all
+          </button>
+        </div>
+      </div>
 
-              return (
-                <div
-                  key={player.id}
-                  role="button"
-                  tabIndex={0}
-                  onClick={() => toggleRow(player.id)}
-                  onKeyDown={(e) => {
-                    if (e.key === " " || e.key === "Enter") {
-                      e.preventDefault();
-                      toggleRow(player.id);
-                    }
-                  }}
-                  className={cn(
-                    "px-3 py-2.5 min-h-[52px] flex items-center gap-3 cursor-pointer select-none transition-colors",
-                    "focus:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-primary",
-                    isPresent
-                      ? "bg-status-good/[0.07]"
-                      : isDark ? "hover:bg-white/[0.03]" : "hover:bg-slate-50",
-                  )}
-                  data-testid={`attendance-row-${player.id}`}
-                >
-                  {/* Checkbox */}
+      {/* ── Roster — one box per player, tap to toggle ──────────────────────── */}
+      {loading ? (
+        <div className="grid gap-2 grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
+          {[...Array(10)].map((_, i) => (
+            <div key={i} className="h-[68px] bg-muted/30 rounded-xl animate-pulse" />
+          ))}
+        </div>
+      ) : visiblePlayers.length === 0 ? (
+        <div className="bg-card border border-border rounded-2xl py-12 text-center text-sm text-muted-foreground">
+          No players match “{search}”
+        </div>
+      ) : (
+        <div className="grid gap-2 grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
+          {visiblePlayers.map((player) => {
+            const status = draft[player.id] ?? "Absent";
+            const cfg = ATTENDANCE_CFG[status];
+            const StatusIcon = cfg.icon;
+            const isException = status === "Late" || status === "Injured";
+            const isPresent = status === "Present";
+
+            return (
+              <div
+                key={player.id}
+                role="button"
+                tabIndex={0}
+                aria-pressed={isPresent}
+                onClick={() => toggleRow(player.id)}
+                onKeyDown={(e) => {
+                  if (e.key === " " || e.key === "Enter") {
+                    e.preventDefault();
+                    toggleRow(player.id);
+                  }
+                }}
+                className={cn(
+                  // State is carried by the check and the border, never a fill
+                  "rounded-xl border bg-card px-3 py-2.5 min-h-[46px] flex items-center",
+                  "cursor-pointer select-none transition-colors",
+                  "focus:outline-none focus-visible:ring-1 focus-visible:ring-primary",
+                  isPresent
+                    ? "border-status-good"
+                    : isException
+                      ? cfg.activeBorder
+                      : "border-border hover:bg-muted/40",
+                )}
+                data-testid={`attendance-box-${player.id}`}
+              >
+                <div className="flex items-center gap-2 w-full">
                   <div
                     className={cn(
                       "w-5 h-5 shrink-0 rounded-md border flex items-center justify-center transition-all",
@@ -345,40 +318,22 @@ export function MarkAttendance({
                     {isException && <StatusIcon size={11} />}
                   </div>
 
-                  {/* Player */}
-                  <div className="flex-1 min-w-0">
-                    <div className="text-sm font-medium text-foreground truncate">{player.name}</div>
-                    <div className="text-[11px] text-muted-foreground truncate">
-                      {player.primary_position || "—"}
-                    </div>
+                  <div className="min-w-0 flex-1">
+                    <div className="text-sm font-medium text-foreground truncate leading-tight">{player.name}</div>
+                    {isException && (
+                      <div className="text-[11px] text-muted-foreground truncate mt-0.5">{cfg.label}</div>
+                    )}
                   </div>
 
-                  {/* Status / exception menu */}
-                  <div onClick={(e) => e.stopPropagation()} className="shrink-0">
+                  {/* Late / injured live behind this, so a tap can stay a toggle */}
+                  <div onClick={(e) => e.stopPropagation()} className="shrink-0 -mr-1">
                     <DropdownMenu>
                       <DropdownMenuTrigger asChild>
                         <button
                           aria-label={`Set status for ${player.name}`}
-                          className={cn(
-                            "flex items-center gap-1 h-7 rounded-lg border text-[11px] font-medium transition-colors",
-                            isException
-                              ? cn("px-2", cfg.activeBg, cfg.activeColor)
-                              : cn(
-                                  "w-7 justify-center",
-                                  isDark
-                                    ? "border-white/10 text-slate-500 hover:border-white/25 hover:text-slate-300"
-                                    : "border-slate-200 text-slate-400 hover:border-slate-300 hover:text-slate-600",
-                                ),
-                          )}
+                          className="w-6 h-6 flex items-center justify-center rounded-md text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
                         >
-                          {isException ? (
-                            <>
-                              <StatusIcon size={11} />
-                              {cfg.label}
-                            </>
-                          ) : (
-                            <MoreHorizontal size={13} />
-                          )}
+                          <MoreHorizontal size={13} />
                         </button>
                       </DropdownMenuTrigger>
                       <DropdownMenuContent align="end" className="w-36">
@@ -400,42 +355,34 @@ export function MarkAttendance({
                     </DropdownMenu>
                   </div>
                 </div>
-              );
-            })}
-          </div>
-        )}
-      </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
 
       {/* ── Sticky save bar ─────────────────────────────────────────────────── */}
       {/* sticky (not fixed) so it tracks the content column whatever width the
           sidebar currently is */}
       <div className="sticky bottom-4 z-30">
-        <div>
-          <div
-            className={cn(
-              "flex items-center gap-3 rounded-xl border px-4 py-2.5 shadow-lg backdrop-blur",
-              isDark ? "bg-slate-900/90 border-white/10" : "bg-white/95 border-slate-200",
-            )}
+        <div
+          className={cn(
+            "flex items-center gap-3 rounded-xl border px-4 py-2.5 shadow-lg backdrop-blur",
+            isDark ? "bg-slate-900/90 border-white/10" : "bg-white/95 border-slate-200",
+          )}
+        >
+          <span className="flex-1 min-w-0 text-xs text-muted-foreground">
+            {dirty ? "Unsaved changes" : loading ? "Loading…" : "All changes saved"}
+          </span>
+          <button
+            onClick={handleSave}
+            disabled={!dirty || saving || loading}
+            className="shrink-0 flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-semibold bg-indigo-600 text-white hover:bg-indigo-500 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+            data-testid="button-save-attendance"
           >
-            <div className="flex-1 min-w-0 flex flex-wrap items-baseline gap-x-3 gap-y-0.5 text-xs">
-              <span className="text-status-good font-medium font-time">{counts.Present} present</span>
-              <span className="text-status-bad font-time">{counts.Absent} absent</span>
-              {counts.Late > 0 && <span className="text-status-warn font-time">{counts.Late} late</span>}
-              {counts.Injured > 0 && <span className="text-status-warn font-time">{counts.Injured} injured</span>}
-              <span className="text-muted-foreground/70">
-                {dirty ? "Unsaved changes" : loading ? "Loading…" : "All changes saved"}
-              </span>
-            </div>
-            <button
-              onClick={handleSave}
-              disabled={!dirty || saving || loading}
-              className="shrink-0 flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-semibold bg-indigo-600 text-white hover:bg-indigo-500 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-              data-testid="button-save-attendance"
-            >
-              {saving && <RefreshCw size={13} className="animate-spin" />}
-              {saving ? "Saving…" : "Save attendance"}
-            </button>
-          </div>
+            {saving && <RefreshCw size={13} className="animate-spin" />}
+            {saving ? "Saving…" : "Save attendance"}
+          </button>
         </div>
       </div>
     </div>

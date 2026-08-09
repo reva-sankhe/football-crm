@@ -5,6 +5,29 @@ import type {
   MatchStatInput, MatchStage,
 } from "./types";
 
+/**
+ * PostgREST silently truncates a response at 1000 rows — no error, just a short
+ * payload. Any table that can outgrow that (session_attendance passed 1000 in
+ * Aug 2026) must be paged, or it under-reports without anyone noticing.
+ *
+ * `page` must apply a stable `.order()`, otherwise rows can repeat or vanish
+ * between pages.
+ */
+const PAGE_SIZE = 1000;
+
+async function fetchAllRows<T>(
+  page: (from: number, to: number) => PromiseLike<{ data: T[] | null; error: { message: string } | null }>,
+): Promise<T[]> {
+  const out: T[] = [];
+  for (let from = 0; ; from += PAGE_SIZE) {
+    const { data, error } = await page(from, from + PAGE_SIZE - 1);
+    if (error) throw error;
+    const rows = data ?? [];
+    out.push(...rows);
+    if (rows.length < PAGE_SIZE) return out;
+  }
+}
+
 // Players
 export async function fetchPlayers(team?: string): Promise<Player[]> {
   let q = supabase.from("players").select("*").order("name");
@@ -338,12 +361,14 @@ export async function fetchAllRPEWithSessions(): Promise<
 export async function fetchAllAttendanceStats(): Promise<
   (SessionAttendance & { players: Pick<Player, "id" | "name" | "primary_position" | "team"> })[]
 > {
-  const { data, error } = await supabase
-    .from("session_attendance")
-    .select("*, players(id, name, primary_position, team)")
-    .order("created_at", { ascending: true });
-  if (error) throw error;
-  return data as (SessionAttendance & { players: Pick<Player, "id" | "name" | "primary_position" | "team"> })[];
+  return fetchAllRows<SessionAttendance & { players: Pick<Player, "id" | "name" | "primary_position" | "team"> }>(
+    (from, to) =>
+      supabase
+        .from("session_attendance")
+        .select("*, players(id, name, primary_position, team)")
+        .order("id")
+        .range(from, to),
+  );
 }
 
 export async function bulkUpsertAttendance(
@@ -386,26 +411,31 @@ export async function fetchAttendanceForSessions(
   sessionIds: string[]
 ): Promise<{ session_id: string; player_id: string; status: AttendanceStatus }[]> {
   if (sessionIds.length === 0) return [];
-  const { data, error } = await supabase
-    .from("session_attendance")
-    .select("session_id, player_id, status")
-    .in("session_id", sessionIds);
-  if (error) throw error;
-  return (data ?? []) as { session_id: string; player_id: string; status: AttendanceStatus }[];
+  return fetchAllRows<{ session_id: string; player_id: string; status: AttendanceStatus }>((from, to) =>
+    supabase
+      .from("session_attendance")
+      .select("session_id, player_id, status")
+      .in("session_id", sessionIds)
+      .order("id")
+      .range(from, to),
+  );
 }
 
 export async function fetchAttendanceSummaryForSessions(
   sessionIds: string[]
 ): Promise<Record<string, { total: number; present: number }>> {
   if (sessionIds.length === 0) return {};
-  const { data, error } = await supabase
-    .from("session_attendance")
-    .select("session_id, status")
-    .in("session_id", sessionIds);
-  if (error) throw error;
+  const data = await fetchAllRows<{ session_id: string; status: AttendanceStatus }>((from, to) =>
+    supabase
+      .from("session_attendance")
+      .select("session_id, status")
+      .in("session_id", sessionIds)
+      .order("id")
+      .range(from, to),
+  );
 
   const summary: Record<string, { total: number; present: number }> = {};
-  for (const row of (data ?? []) as { session_id: string; status: AttendanceStatus }[]) {
+  for (const row of data) {
     if (!summary[row.session_id]) summary[row.session_id] = { total: 0, present: 0 };
     summary[row.session_id].total += 1;
     if (row.status === "Present" || row.status === "Late") {

@@ -6,10 +6,11 @@ import { EmptyState } from "@/components/EmptyState";
 import { fetchPlayers, createPlayer, updatePlayer, fetchTrainingSessions } from "@/lib/queries";
 import { ReportOptionsModal } from "@/components/report/ReportOptionsModal";
 import { AddButton } from "@/components/AddButton";
+import { CountPill, IconButton, SearchInput, TOOLBAR_MENU, TOOLBAR_SELECT } from "@/components/Toolbar";
 import { calcAgeRange, cn } from "@/lib/utils";
 import { PosBadge } from "@/components/PosBadge";
 import type { Player } from "@/lib/types";
-import { Users, Search, Check, FileText, X, Pencil, SlidersHorizontal } from "lucide-react";
+import { Users, Check, FileText, X, Pencil, SlidersHorizontal } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 
 const PRIMARY_POSITIONS = ["Goalkeeper", "Defender", "Midfielder", "Forward"];
@@ -262,7 +263,7 @@ function QuickEditModal({
               <select
                 value={form.primary_position}
                 onChange={(e) => setForm({ ...form, primary_position: e.target.value })}
-                className={selectCls}
+                className={TOOLBAR_SELECT}
                 data-testid="quick-edit-position"
               >
                 {PRIMARY_POSITIONS.map((p) => <option key={p} value={p}>{p}</option>)}
@@ -273,7 +274,7 @@ function QuickEditModal({
               <select
                 value={form.age_range}
                 onChange={(e) => setForm({ ...form, age_range: e.target.value })}
-                className={selectCls}
+                className={TOOLBAR_SELECT}
                 data-testid="quick-edit-age"
               >
                 <option value="">— None —</option>
@@ -409,56 +410,38 @@ export default function Players() {
   const activeFilterCount =
     (filterPos ? 1 : 0) + (filterAge ? 1 : 0) + (filterActive !== "active" ? 1 : 0);
 
-  // One height and one shape for every control on the bar
-  const iconBtn = "h-9 w-9 flex items-center justify-center rounded-lg border transition-colors shrink-0";
-  const selectCls = "w-full bg-muted border border-border rounded-md px-2.5 py-1.5 text-sm text-foreground";
-
   return (
     <div className="space-y-5">
       {/* Toolbar */}
       <div className="flex items-center gap-2">
-        <div className="relative flex-1 max-w-sm">
-          <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none" />
-          <input
-            type="search"
-            placeholder="Search name…"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            className="w-full h-9 pl-9 pr-3 bg-muted border border-border rounded-lg text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary"
-            data-testid="input-search-players"
-          />
-        </div>
+        <SearchInput
+          value={search}
+          onChange={setSearch}
+          placeholder="Search name…"
+          className="flex-1 max-w-sm"
+          data-testid="input-search-players"
+        />
 
         <div className="relative" ref={filterRef}>
-          <button
+          <IconButton
+            label="Filters"
             onClick={() => setShowFilters((v) => !v)}
-            aria-label="Filters"
+            active={showFilters || activeFilterCount > 0}
+            badge={activeFilterCount}
             aria-expanded={showFilters}
-            title="Filters"
-            className={cn(
-              iconBtn,
-              showFilters || activeFilterCount > 0
-                ? "border-indigo-500/50 text-indigo-400 bg-indigo-500/10"
-                : "border-border text-muted-foreground hover:text-foreground",
-            )}
             data-testid="button-filters"
           >
             <SlidersHorizontal size={15} />
-            {activeFilterCount > 0 && (
-              <span className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-indigo-600 text-white text-[9px] font-bold flex items-center justify-center">
-                {activeFilterCount}
-              </span>
-            )}
-          </button>
+          </IconButton>
 
           {showFilters && (
-            <div className="absolute right-0 top-11 z-20 w-56 bg-card border border-border rounded-xl shadow-xl p-3 space-y-3" data-testid="filter-panel">
+            <div className={cn(TOOLBAR_MENU, "w-56 space-y-3")} data-testid="filter-panel">
               <div>
                 <label className="block text-xs text-muted-foreground mb-1">Position</label>
                 <select
                   value={filterPos}
                   onChange={(e) => setFilterPos(e.target.value)}
-                  className={selectCls}
+                  className={TOOLBAR_SELECT}
                   data-testid="select-filter-position"
                 >
                   <option value="">All positions</option>
@@ -470,7 +453,7 @@ export default function Players() {
                 <select
                   value={filterAge}
                   onChange={(e) => setFilterAge(e.target.value)}
-                  className={selectCls}
+                  className={TOOLBAR_SELECT}
                   data-testid="select-filter-age"
                 >
                   <option value="">All ages</option>
@@ -482,7 +465,7 @@ export default function Players() {
                 <select
                   value={filterActive}
                   onChange={(e) => setFilterActive(e.target.value as typeof filterActive)}
-                  className={selectCls}
+                  className={TOOLBAR_SELECT}
                   data-testid="select-filter-active"
                 >
                   <option value="active">Active</option>
@@ -502,31 +485,24 @@ export default function Players() {
           )}
         </div>
 
-        <button
+        <IconButton
+          label={selected.size > 0 ? `Download report (${selected.size} selected)` : "Download report"}
           onClick={() => setShowReport(true)}
-          aria-label={selected.size > 0 ? `Download report (${selected.size} selected)` : "Download report"}
-          title={selected.size > 0 ? `Download report (${selected.size} selected)` : "Download report"}
-          className={cn(iconBtn, "relative border-border text-muted-foreground hover:text-foreground")}
+          badge={selected.size}
           data-testid="button-download-report"
         >
           <FileText size={15} />
-          {selected.size > 0 && (
-            <span className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-indigo-600 text-white text-[9px] font-bold flex items-center justify-center">
-              {selected.size}
-            </span>
-          )}
-        </button>
+        </IconButton>
 
         <AddButton label="Add player" onClick={() => setShowAdd(true)} data-testid="button-add-player" />
 
         {/* Counts what the table is actually showing, so it tracks the filters */}
-        <span
+        <CountPill
           title={`${filtered.length} player${filtered.length !== 1 ? "s" : ""} shown`}
-          className="h-9 px-3 flex items-center rounded-lg border border-border bg-muted/40 text-sm font-time font-medium text-muted-foreground shrink-0"
           data-testid="text-player-count"
         >
           {loading ? "—" : filtered.length}
-        </span>
+        </CountPill>
       </div>
 
       {/* Selection bar */}
