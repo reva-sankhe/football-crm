@@ -132,11 +132,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
 
       {/* Nav */}
       <nav className={cn("flex-1 space-y-0.5", compact ? "px-2" : "px-3")}>
-        {!compact && (
-          <p className={cn("px-3 pb-1.5 text-[10px] font-semibold uppercase tracking-[0.14em]", isDark ? "text-slate-600" : "text-slate-400")}>
-            Menu
-          </p>
-        )}
+
         {navItems.map((item) => (
           <NavLink key={item.href} {...item} onClick={onNav} compact={compact} />
         ))}
