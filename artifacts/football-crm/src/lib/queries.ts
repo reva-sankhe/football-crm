@@ -1,8 +1,10 @@
 import { supabase } from "./supabase";
+import { dayFromISO } from "./attendance";
 import type {
   Player, TestSession, TestResult, TrainingSession, SessionRPE, SessionAttendance, AttendanceStatus,
   Tournament, TournamentLink, Squad, SquadWithPlayers, Match, MatchWithSession, MatchPlayerStat,
-  MatchStatInput, MatchStage,
+  MatchStatInput, MatchStage, Opponent,
+  MatchPenaltyKick, MatchPenaltyKickInput,
 } from "./types";
 
 /**
@@ -15,7 +17,7 @@ import type {
  */
 const PAGE_SIZE = 1000;
 
-async function fetchAllRows<T>(
+export async function fetchAllRows<T>(
   page: (from: number, to: number) => PromiseLike<{ data: T[] | null; error: { message: string } | null }>,
 ): Promise<T[]> {
   const out: T[] = [];
@@ -238,10 +240,28 @@ export async function fetchTrainingSession(id: string): Promise<TrainingSession>
 export async function createTrainingSession(
   session: Omit<TrainingSession, "id" | "day" | "planned_load_au" | "created_at">
 ): Promise<TrainingSession> {
-  const day = new Date(session.date + "T00:00:00").toLocaleDateString("en-US", { weekday: "long" });
   const { data, error } = await supabase
     .from("sessions")
-    .insert({ ...session, day })
+    .insert({ ...session, day: dayFromISO(session.date) })
+    .select()
+    .single();
+  if (error) throw error;
+  return data as TrainingSession;
+}
+
+/**
+ * `day` is a stored column derived from `date`, so moving a session has to carry
+ * it — otherwise the row says Monday while the date is a Thursday.
+ */
+export async function updateTrainingSession(
+  id: string,
+  updates: Partial<Pick<TrainingSession, "date" | "duration_mins" | "planned_rpe" | "notes">>,
+): Promise<TrainingSession> {
+  const payload = updates.date ? { ...updates, day: dayFromISO(updates.date) } : updates;
+  const { data, error } = await supabase
+    .from("sessions")
+    .update(payload)
+    .eq("id", id)
     .select()
     .single();
   if (error) throw error;
@@ -560,7 +580,7 @@ export async function setSquadPlayers(squadId: string, playerIds: string[]): Pro
 }
 
 // ── Matches ───────────────────────────────────────────────────────────────────
-const MATCH_SELECT = "*, sessions(*), squads(id, name)";
+export const MATCH_SELECT = "*, sessions(*), squads(id, name), opponents(id, name)";
 
 export async function fetchMatchesForTournament(tournamentId: string): Promise<MatchWithSession[]> {
   const { data, error } = await supabase
@@ -574,6 +594,22 @@ export async function fetchMatchesForTournament(tournamentId: string): Promise<M
   );
 }
 
+/**
+ * Matches belonging to no tournament — the friendlies archive. Ordered newest
+ * first, unlike a tournament's matches: those read as a run of play, this reads
+ * as a history.
+ */
+export async function fetchStandaloneMatches(): Promise<MatchWithSession[]> {
+  const { data, error } = await supabase
+    .from("matches")
+    .select(MATCH_SELECT)
+    .is("tournament_id", null);
+  if (error) throw error;
+  return ((data ?? []) as MatchWithSession[]).sort((a, b) =>
+    (b.sessions?.date ?? "").localeCompare(a.sessions?.date ?? ""),
+  );
+}
+
 export async function fetchMatch(id: string): Promise<MatchWithSession> {
   const { data, error } = await supabase.from("matches").select(MATCH_SELECT).eq("id", id).single();
   if (error) throw error;
@@ -581,10 +617,11 @@ export async function fetchMatch(id: string): Promise<MatchWithSession> {
 }
 
 export interface CreateMatchInput {
-  tournament_id: string;
+  /** null for a standalone match that belongs to no tournament. */
+  tournament_id: string | null;
   squad_id: string | null;
   stage: MatchStage;
-  opponent: string | null;
+  opponent_id: string | null;
   date: string;
   duration_mins: number;
   planned_rpe: number;
@@ -611,7 +648,7 @@ export async function createMatch(input: CreateMatchInput): Promise<Match> {
       session_id: session.id,
       squad_id: input.squad_id,
       stage: input.stage,
-      opponent: input.opponent,
+      opponent_id: input.opponent_id,
       notes: input.notes ?? null,
     })
     .select()
@@ -650,7 +687,7 @@ export async function adoptSessionAsMatch(
       session_id: sessionId,
       squad_id: input.squad_id,
       stage: input.stage,
-      opponent: input.opponent,
+      opponent_id: input.opponent_id,
       notes: input.notes ?? null,
     })
     .select()
@@ -700,16 +737,47 @@ export async function bulkUpsertMatchStats(matchId: string, rows: MatchStatInput
   if (error) throw error;
 }
 
+// ── Penalty shootouts ─────────────────────────────────────────────────────────
+// A replaceable child collection edited as a whole, so it follows the
+// delete-then-insert shape `setSquadPlayers` already uses.
+
+export async function fetchPenaltyKicks(matchId: string): Promise<MatchPenaltyKick[]> {
+  const { data, error } = await supabase
+    .from("match_penalty_kicks")
+    .select("*")
+    .eq("match_id", matchId)
+    .order("kick_order");
+  if (error) throw error;
+  return (data ?? []) as MatchPenaltyKick[];
+}
+
+export async function replacePenaltyKicks(
+  matchId: string,
+  rows: MatchPenaltyKickInput[],
+): Promise<void> {
+  const { error: delErr } = await supabase.from("match_penalty_kicks").delete().eq("match_id", matchId);
+  if (delErr) throw delErr;
+  // Renumber on save so deleting a middle kick can't leave a gap or a duplicate,
+  // either of which would violate the unique (match_id, kick_order) index.
+  const payload = rows
+    .filter((r) => r.player_id)
+    .map((r, i) => ({ match_id: matchId, player_id: r.player_id, scored: r.scored, kick_order: i + 1 }));
+  if (payload.length === 0) return;
+  const { error } = await supabase.from("match_penalty_kicks").insert(payload);
+  if (error) throw error;
+}
+
 /** One stat line per match a player featured in, newest first. */
 export type PlayerMatchStat = MatchPlayerStat & {
-  matches: (Pick<Match, "id" | "stage" | "opponent" | "goals_for" | "goals_against" | "tournament_id"> & {
+  matches: (Pick<Match, "id" | "stage" | "opponent_id" | "goals_for" | "goals_against" | "tournament_id"> & {
     tournaments: Pick<Tournament, "id" | "name"> | null;
     sessions: Pick<TrainingSession, "id" | "date"> | null;
+    opponents: Pick<Opponent, "id" | "name"> | null;
   }) | null;
 };
 
 const PLAYER_MATCH_STAT_SELECT =
-  "*, matches(id, stage, opponent, goals_for, goals_against, tournament_id, tournaments(id, name), sessions(id, date))";
+  "*, matches(id, stage, opponent_id, goals_for, goals_against, tournament_id, tournaments(id, name), sessions(id, date), opponents(id, name))";
 
 /** Every player's match stats in one request — backs the bulk report page. */
 export async function fetchAllMatchStats(): Promise<PlayerMatchStat[]> {
@@ -723,9 +791,7 @@ export async function fetchAllMatchStats(): Promise<PlayerMatchStat[]> {
 export async function fetchMatchStatsByPlayer(playerId: string): Promise<PlayerMatchStat[]> {
   const { data, error } = await supabase
     .from("match_player_stats")
-    .select(
-      "*, matches(id, stage, opponent, goals_for, goals_against, tournament_id, tournaments(id, name), sessions(id, date))"
-    )
+    .select(PLAYER_MATCH_STAT_SELECT)
     .eq("player_id", playerId);
   if (error) throw error;
   // Match date lives on the joined session, so sort here rather than in SQL
@@ -788,7 +854,9 @@ export async function fetchMatchCountsByTournament(): Promise<Record<string, num
   const { data, error } = await supabase.from("matches").select("tournament_id");
   if (error) throw error;
   const counts: Record<string, number> = {};
-  for (const row of (data ?? []) as { tournament_id: string }[]) {
+  for (const row of (data ?? []) as { tournament_id: string | null }[]) {
+    // Standalone friendlies belong to no tournament and count towards none
+    if (!row.tournament_id) continue;
     counts[row.tournament_id] = (counts[row.tournament_id] ?? 0) + 1;
   }
   return counts;

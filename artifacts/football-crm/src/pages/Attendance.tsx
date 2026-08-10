@@ -6,6 +6,7 @@ import {
   fetchPlayers,
   fetchTrainingSessions,
 } from "@/lib/queries";
+import { collapseMatchDays } from "@/lib/attendance";
 import type { Player, TrainingSession } from "@/lib/types";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { SessionStrip } from "@/components/attendance/SessionStrip";
@@ -17,7 +18,8 @@ const UNSAVED_WARNING = "You have unsaved attendance changes. Discard them?";
 export default function Attendance() {
   const { toast } = useToast();
 
-  const [sessions, setSessions] = useState<TrainingSession[]>([]);
+  /** Every session as stored. The list shown is derived from this, not held. */
+  const [allSessions, setAllSessions] = useState<TrainingSession[]>([]);
   const [players, setPlayers] = useState<Player[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -34,13 +36,14 @@ export default function Attendance() {
   const loadAll = useCallback(async () => {
     setLoading(true);
     try {
-      const [sess, plist] = await Promise.all([fetchTrainingSessions(), fetchPlayers()]);
-      setSessions(sess);
+      const [all, plist] = await Promise.all([fetchTrainingSessions(), fetchPlayers()]);
+
+      // Counts are fetched for every session, not just the visible ones: they are
+      // what tells collapseMatchDays which session on a match day already holds
+      // that day's attendance, so existing rows are never stranded.
+      setSummary(await fetchAttendanceSummaryForSessions(all.map((s) => s.id)));
+      setAllSessions(all);
       setPlayers(plist.filter((p) => p.is_active));
-      setActiveSessionId((prev) =>
-        prev && sess.some((s) => s.id === prev) ? prev : sess[0]?.id ?? null,
-      );
-      setSummary(await fetchAttendanceSummaryForSessions(sess.map((s) => s.id)));
     } catch (err) {
       toast({ title: "Error loading data", description: String(err), variant: "destructive" });
     } finally {
@@ -49,6 +52,24 @@ export default function Attendance() {
   }, [toast]);
 
   useEffect(() => { loadAll(); }, [loadAll]);
+
+  // One entry per training session, but only one per match day.
+  const { sessions, matchesOnDay } = useMemo(
+    () => collapseMatchDays(allSessions, (id) => (summary[id]?.total ?? 0) > 0),
+    [allSessions, summary],
+  );
+
+  // Keep the selection pointing at something visible. A match session created on a
+  // date that already has one gets collapsed away, so fall back to that day's
+  // entry rather than jumping the user to the top of the strip.
+  useEffect(() => {
+    if (loading || sessions.length === 0) return;
+    setActiveSessionId((prev) => {
+      if (prev && sessions.some((s) => s.id === prev)) return prev;
+      const prevDate = allSessions.find((s) => s.id === prev)?.date;
+      return sessions.find((s) => s.date === prevDate)?.id ?? sessions[0].id;
+    });
+  }, [sessions, allSessions, loading]);
 
   const activeSession = useMemo(
     () => sessions.find((s) => s.id === activeSessionId) ?? null,
@@ -72,7 +93,9 @@ export default function Attendance() {
 
   // ── Mutations from children ────────────────────────────────────────────────
   const handleSessionCreated = useCallback((session: TrainingSession) => {
-    setSessions((prev) => [session, ...prev].sort((a, b) => b.date.localeCompare(a.date)));
+    // Added to the raw list; collapsing and selection are handled by the effects
+    // above, so a match on an existing match day folds into that day's entry.
+    setAllSessions((prev) => [session, ...prev]);
     setActiveSessionId(session.id);
     setRefreshKey((k) => k + 1);
   }, []);
@@ -111,12 +134,14 @@ export default function Attendance() {
               activeSessionId={activeSessionId}
               onSelect={setActiveSessionId}
               marked={summary}
+              matchesOnDay={matchesOnDay}
               rosterSize={players.length}
               onSessionCreated={handleSessionCreated}
               canLeaveSession={confirmLeave}
             />
             <MarkAttendance
               session={activeSession}
+              matchesOnDay={activeSessionId ? matchesOnDay[activeSessionId] : undefined}
               players={players}
               onDirtyChange={setDirty}
               onSaved={handleSaved}
@@ -126,6 +151,7 @@ export default function Attendance() {
           <TabsContent value="overview" className="mt-0">
             <AttendanceMatrix
               sessions={sessions}
+              matchesOnDay={matchesOnDay}
               players={players}
               refreshKey={refreshKey}
               onJumpToSession={handleJumpToSession}

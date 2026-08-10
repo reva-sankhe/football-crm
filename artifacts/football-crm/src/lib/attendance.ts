@@ -1,5 +1,5 @@
 import { CheckCircle2, XCircle, Clock, Activity } from "lucide-react";
-import type { AttendanceStatus, SessionType } from "./types";
+import type { AttendanceStatus, SessionType, TrainingSession } from "./types";
 import { STATUS, STATUS_TEXT } from "./viz";
 
 // ── Session type styling ──────────────────────────────────────────────────────
@@ -50,6 +50,116 @@ export function attendancePctFill(pct: number): string {
   if (pct >= 85) return STATUS.good;
   if (pct >= 75) return STATUS.warning;
   return STATUS.critical;
+}
+
+// ── Attendance units ──────────────────────────────────────────────────────────
+export interface CollapsedSessions {
+  /** What to show: every training session, but only one entry per match day. */
+  sessions: TrainingSession[];
+  /** Canonical session id → how many matches that day. Absent for non-match days. */
+  matchesOnDay: Record<string, number>;
+}
+
+/**
+ * Collapses a day's matches into a single attendance entry.
+ *
+ * Attendance is about who turned up, which is a property of the day, not of each
+ * fixture — a tournament day with four matches is one attendance check, not four.
+ * Training sessions are untouched and stay one entry each.
+ *
+ * The surviving "canonical" session is the one attendance rows are written to. A
+ * day that already has attendance keeps that session, so collapsing can never
+ * orphan rows that were recorded before; failing that, the earliest-created match
+ * session wins, which is stable across reloads.
+ */
+export function collapseMatchDays(
+  sessions: TrainingSession[],
+  hasAttendance: (sessionId: string) => boolean = () => false,
+): CollapsedSessions {
+  const matchDays = new Map<string, TrainingSession[]>();
+  const out: TrainingSession[] = [];
+  const matchesOnDay: Record<string, number> = {};
+
+  for (const s of sessions) {
+    if (s.session_type !== "Match") {
+      out.push(s);
+      continue;
+    }
+    const group = matchDays.get(s.date);
+    if (group) group.push(s);
+    else matchDays.set(s.date, [s]);
+  }
+
+  for (const group of matchDays.values()) {
+    const canonical =
+      group.find((s) => hasAttendance(s.id)) ??
+      [...group].sort((a, b) => (a.created_at ?? "").localeCompare(b.created_at ?? ""))[0];
+    matchesOnDay[canonical.id] = group.length;
+    out.push(canonical);
+  }
+
+  // Newest first, matching what the strip and matrix expect. created_at breaks
+  // ties so a training session and a match on the same date keep a stable order.
+  out.sort(
+    (a, b) => b.date.localeCompare(a.date) || (b.created_at ?? "").localeCompare(a.created_at ?? ""),
+  );
+  return { sessions: out, matchesOnDay };
+}
+
+/**
+ * Match-day attendance, counted the way `collapseMatchDays` displays it: per
+ * day, not per fixture.
+ *
+ * Turning up to a tournament day covers every fixture played that day — one
+ * turnout check, not four — so the **percentage is day-wise**. The tally stays
+ * in fixtures ("7/7"), because that is the number a coach is actually asking
+ * about. The two therefore measure different things on purpose: `attended` and
+ * `total` count matches, `pct` counts days.
+ */
+export interface MatchDayAttendance {
+  /** Fixtures in scope, and those played on days the player turned up to. */
+  total: number;
+  attended: number;
+  /** Day-wise turnout, 0–100. Deliberately not `attended / total`. */
+  pct: number | null;
+  /** The days the percentage is computed from. */
+  days: number;
+  daysAttended: number;
+}
+
+export function matchDayAttendance(
+  sessions: TrainingSession[],
+  attended: (sessionId: string) => boolean,
+): MatchDayAttendance {
+  const byDay = new Map<string, TrainingSession[]>();
+  for (const s of sessions) {
+    if (s.session_type !== "Match") continue;
+    const group = byDay.get(s.date);
+    if (group) group.push(s);
+    else byDay.set(s.date, [s]);
+  }
+
+  let daysAttended = 0;
+  let total = 0;
+  let attendedMatches = 0;
+  for (const group of byDay.values()) {
+    total += group.length;
+    // A day's attendance lives on one of its sessions, so any hit means they
+    // came — which session holds the row doesn't matter here.
+    if (group.some((s) => attended(s.id))) {
+      daysAttended += 1;
+      attendedMatches += group.length;
+    }
+  }
+
+  const days = byDay.size;
+  return {
+    total,
+    attended: attendedMatches,
+    pct: days > 0 ? Math.round((daysAttended / days) * 100) : null,
+    days,
+    daysAttended,
+  };
 }
 
 // ── Date helpers ──────────────────────────────────────────────────────────────

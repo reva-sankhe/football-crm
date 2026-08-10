@@ -1,4 +1,6 @@
-import { countsAsAttended } from "./attendance";
+import {
+  collapseMatchDays, countsAsAttended, matchDayAttendance, type MatchDayAttendance,
+} from "./attendance";
 import { STATUS, ordinal, type Mode } from "./viz";
 import { sumStats, type Totals } from "./tournaments";
 import { getBroncoTier, type BroncoTier } from "./types";
@@ -68,14 +70,18 @@ export interface PlayerReport {
     monthly: MonthlyAttendance[];
     /** Training, gym and recovery — the sessions a player is expected at. */
     training: AttendanceSlice;
-    /** Match-day availability, reported separately from turning up to train. */
-    match: AttendanceSlice;
+    /**
+     * Match-day availability, reported separately from turning up to train.
+     * `attended`/`total` count fixtures; `pct` counts days — see
+     * `matchDayAttendance`.
+     */
+    match: MatchDayAttendance;
     /**
      * Unscoped figures, so an all-time report leads with the same numbers the
      * player profile does rather than a lifetime average.
      */
     currentMonthTraining: AttendanceSlice & { month: string };
-    currentMonthMatch: AttendanceSlice;
+    currentMonthMatch: MatchDayAttendance;
   };
   matches: Totals & {
     callUps: number;
@@ -206,10 +212,14 @@ export function buildPlayerReport(
       .filter((a) => a.player_id === player.id && countsAsAttended(a.status))
       .map((a) => a.session_id),
   );
-  const attended = scopedSessions.filter((s) => attendedIds.has(s.id)).length;
+  // Attendance is marked per day, so a tournament day is one unit however many
+  // fixtures it held. Counting raw sessions would understate every month that
+  // contained a tournament.
+  const scopedUnits = collapseMatchDays(scopedSessions, (sid) => attendedIds.has(sid)).sessions;
+  const attended = scopedUnits.filter((s) => attendedIds.has(s.id)).length;
 
   const byMonth: Record<string, string[]> = {};
-  for (const s of scopedSessions) (byMonth[s.date.slice(0, 7)] ??= []).push(s.id);
+  for (const s of scopedUnits) (byMonth[s.date.slice(0, 7)] ??= []).push(s.id);
   const monthly: MonthlyAttendance[] = Object.entries(byMonth)
     .map(([month, ids]) => {
       const a = ids.filter((id) => attendedIds.has(id)).length;
@@ -230,7 +240,7 @@ export function buildPlayerReport(
     month: thisMonthKey,
     ...slice(monthSessions.filter((s) => !isMatchSession(s))),
   };
-  const currentMonthMatch = slice(monthSessions.filter(isMatchSession));
+  const currentMonthMatch = matchDayAttendance(monthSessions, (sid) => attendedIds.has(sid));
 
   // ── Matches ─────────────────────────────────────────────────────────────
   const playerStats = data.matchStats.filter(
@@ -325,12 +335,12 @@ export function buildPlayerReport(
     player,
     range,
     attendance: {
-      total: scopedSessions.length,
+      total: scopedUnits.length,
       attended,
-      pct: scopedSessions.length > 0 ? Math.round((attended / scopedSessions.length) * 100) : null,
+      pct: scopedUnits.length > 0 ? Math.round((attended / scopedUnits.length) * 100) : null,
       monthly,
       training: slice(scopedSessions.filter((s) => !isMatchSession(s))),
-      match: slice(scopedSessions.filter(isMatchSession)),
+      match: matchDayAttendance(scopedSessions, (sid) => attendedIds.has(sid)),
       currentMonthTraining,
       currentMonthMatch,
     },

@@ -1,5 +1,5 @@
 import { Link, useLocation } from "wouter";
-import { ChevronDown, ChevronsLeft, ChevronsRight, Sun, Moon, ClipboardCheck, Users, BarChart2, ClipboardList } from "lucide-react";
+import { ChevronDown, ChevronsLeft, ChevronsRight, Sun, Moon, ClipboardCheck, Users, BarChart2, ClipboardList, Trophy } from "lucide-react";
 import { useState, useRef, useEffect } from "react";
 import { cn } from "@/lib/utils";
 import { useTheme } from "@/context/ThemeContext";
@@ -10,6 +10,7 @@ const COLLAPSE_KEY = "bg-crm-sidebar-collapsed";
 const navItems = [
   { href: "/players",  label: "Players",      icon: Users           },
   { href: "/sessions", label: "Sessions",     icon: ClipboardList   },
+  { href: "/tournaments", label: "Tournaments", icon: Trophy        },
   { href: "/attendance", label: "Attendance", icon: ClipboardCheck  },
   { href: "/analytics",label: "Analytics",    icon: BarChart2       },
 ];
@@ -31,10 +32,14 @@ export function Layout({ children }: { children: React.ReactNode }) {
     try { localStorage.setItem(COLLAPSE_KEY, collapsed ? "1" : "0"); } catch {}
   }, [collapsed]);
 
-  // Falls back to Analytics — the landing page, and the only route not in the nav
+  // A match page lives at /matches/:id, outside the nav, but belongs to Tournaments.
+  // Anything else unmatched falls back to Analytics — the landing page.
   const currentLabel = navItems.find(
     (item) => location === item.href || (item.href !== "/" && location.startsWith(item.href))
-  )?.label ?? (location === "/dashboard" ? "Dashboard" : "Analytics");
+  )?.label
+    ?? (location.startsWith("/matches") ? "Tournaments"
+      : location === "/dashboard" ? "Dashboard"
+      : "Analytics");
 
   useEffect(() => {
     if (!mobileOpen) return;

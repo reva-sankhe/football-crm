@@ -4,13 +4,20 @@ import { countsAsAttended, formatDateLong } from "@/lib/attendance";
 import type { AttendanceStatus, TrainingSession } from "@/lib/types";
 
 interface LastSessionsCardProps {
+  /**
+   * Attendance units, not raw sessions — pass the output of `collapseMatchDays`
+   * so a tournament day is one row rather than filling the card with fixtures
+   * that share a date and a single attendance mark.
+   */
   sessions: TrainingSession[];
+  /** Canonical session id → matches that day. Only set when a day had several. */
+  matchesOnDay?: Record<string, number>;
   /** This player's attendance rows, keyed elsewhere by session_id. */
   attendance: { session_id: string; status: AttendanceStatus }[];
   count?: number;
 }
 
-export function LastSessionsCard({ sessions, attendance, count = 3 }: LastSessionsCardProps) {
+export function LastSessionsCard({ sessions, matchesOnDay, attendance, count = 3 }: LastSessionsCardProps) {
   const rows = useMemo(() => {
     const statusBySession = new Map(attendance.map((a) => [a.session_id, a.status]));
     return [...sessions]
@@ -43,6 +50,8 @@ export function LastSessionsCard({ sessions, attendance, count = 3 }: LastSessio
                   <div className="text-sm text-foreground truncate">{formatDateLong(session.date)}</div>
                   <div className="text-[11px] text-muted-foreground">
                     {session.day} · {session.session_type}
+                    {/* Say how many fixtures the one row stands for */}
+                    {(matchesOnDay?.[session.id] ?? 0) > 1 && ` · ${matchesOnDay![session.id]} matches`}
                   </div>
                 </div>
 

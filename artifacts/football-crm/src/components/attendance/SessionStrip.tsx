@@ -14,6 +14,8 @@ interface SessionStripProps {
   onSelect: (sessionId: string) => void;
   /** playerId-count of attended players per session, keyed by session id. */
   marked: Record<string, { total: number; present: number }>;
+  /** Canonical session id → matches that day. Only set when a day had several. */
+  matchesOnDay?: Record<string, number>;
   rosterSize: number;
   onSessionCreated: (session: TrainingSession) => void;
   /** Guard hook — return false to block switching away from an unsaved session. */
@@ -25,6 +27,7 @@ export function SessionStrip({
   activeSessionId,
   onSelect,
   marked,
+  matchesOnDay,
   rosterSize,
   onSessionCreated,
   canLeaveSession,
@@ -94,7 +97,12 @@ export function SessionStrip({
               </div>
               <div className="flex items-center gap-1 mt-0.5">
                 <span className={cn("w-1.5 h-1.5 rounded-full shrink-0", cfg.dot)} />
-                <span className="text-[10px] text-muted-foreground truncate">{s.session_type}</span>
+                <span className="text-[10px] text-muted-foreground truncate">
+                  {/* A match day is one attendance check however many were played */}
+                  {(matchesOnDay?.[s.id] ?? 0) > 1
+                    ? `${matchesOnDay![s.id]} matches`
+                    : s.session_type}
+                </span>
               </div>
               <div
                 className={cn(

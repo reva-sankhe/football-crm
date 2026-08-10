@@ -215,6 +215,8 @@ export function ImportAttendanceSheet({
           mp.player = await createPlayer({
             name: mp.csvName,
             code: mp.csvName.toUpperCase().replace(/\s+/g, "_"),
+            // A sheet import knows nothing about squad numbers — assign later
+            jersey_number: null,
             primary_position: "",
             secondary_position: null,
             age: null,

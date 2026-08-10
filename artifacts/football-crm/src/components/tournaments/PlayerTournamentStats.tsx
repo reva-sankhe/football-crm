@@ -147,7 +147,7 @@ export function PlayerTournamentStats({ stats }: { stats: PlayerMatchStat[] }) {
                 <div className="min-w-0 flex-1">
                   {m ? (
                     <Link href={`/matches/${m.id}`} className="text-xs text-foreground hover:text-indigo-400 transition-colors">
-                      {m.opponent ? `vs ${m.opponent}` : "Opponent TBD"}
+                      {m.opponents ? `vs ${m.opponents.name}` : "Opponent TBD"}
                     </Link>
                   ) : (
                     <span className="text-xs text-muted-foreground">Match removed</span>

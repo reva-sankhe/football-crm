@@ -381,6 +381,7 @@ function SessionDetail({
       const created = await createPlayer({
         name: newPlayerForm.name.trim(),
         code: newPlayerForm.code.trim().toUpperCase(),
+        jersey_number: null,
         team: newPlayerForm.team,
         primary_position: newPlayerForm.primary_position || "Forward",
         secondary_position: null,

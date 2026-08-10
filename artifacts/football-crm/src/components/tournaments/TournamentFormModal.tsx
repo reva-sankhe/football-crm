@@ -3,8 +3,9 @@ import { Trash2 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { createTournament, deleteTournament, updateTournament } from "@/lib/queries";
 import { MATCH_FORMATS } from "@/lib/tournaments";
+import { DEFAULT_MATCH_MINS, DEFAULT_MAX_SUBS, DEFAULT_SUB_POLICY, SUB_POLICIES } from "@/lib/lineup";
 import { todayISO } from "@/lib/attendance";
-import type { Tournament } from "@/lib/types";
+import type { SubPolicy, Tournament } from "@/lib/types";
 
 interface TournamentFormModalProps {
   /** Absent creates a tournament; present edits that one. */
@@ -30,7 +31,9 @@ export function TournamentFormModal({
     end_date: tournament?.end_date ?? "",
     location: tournament?.location ?? "",
     format: tournament?.format ?? "",
-    default_match_mins: tournament?.default_match_mins ?? 90,
+    default_match_mins: tournament?.default_match_mins ?? DEFAULT_MATCH_MINS,
+    sub_policy: tournament?.sub_policy ?? DEFAULT_SUB_POLICY,
+    max_subs: tournament?.max_subs ?? DEFAULT_MAX_SUBS,
   });
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -48,6 +51,9 @@ export function TournamentFormModal({
         location: form.location.trim() || null,
         format: form.format || null,
         default_match_mins: form.default_match_mins,
+        sub_policy: form.sub_policy,
+        // Rolling subs are uncapped, so a cap would only be misleading.
+        max_subs: form.sub_policy === "rolling" ? null : form.max_subs,
       };
       if (editing) {
         await updateTournament(tournament.id, fields);
@@ -159,6 +165,35 @@ export function TournamentFormModal({
               Used when creating a match — you can override it per match.
             </p>
           </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs text-muted-foreground mb-1">Substitutions</label>
+              <select
+                value={form.sub_policy}
+                onChange={(e) => setForm({ ...form, sub_policy: e.target.value as SubPolicy })}
+                className={inputCls}
+              >
+                {SUB_POLICIES.map((p) => <option key={p.value} value={p.value}>{p.label}</option>)}
+              </select>
+            </div>
+            {form.sub_policy === "limited" && (
+              <div>
+                <label className="block text-xs text-muted-foreground mb-1">Max subs</label>
+                <input
+                  type="number"
+                  min={0}
+                  max={20}
+                  value={form.max_subs}
+                  onChange={(e) => setForm({ ...form, max_subs: parseInt(e.target.value) || 0 })}
+                  className={inputCls}
+                />
+              </div>
+            )}
+          </div>
+          <p className="text-[11px] text-muted-foreground -mt-2">
+            {SUB_POLICIES.find((p) => p.value === form.sub_policy)?.hint}
+          </p>
 
           <div className="flex gap-2 pt-1">
             <button type="button" onClick={onClose} className="flex-1 px-4 py-2.5 text-sm border border-border rounded-xl text-muted-foreground hover:text-foreground transition-colors">

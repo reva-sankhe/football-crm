@@ -2,6 +2,12 @@ export interface Player {
   id: string;
   code: string;
   name: string;
+  /**
+   * Permanent squad number, 1–99, null when unassigned. Distinct from
+   * `squad_players.shirt_number`, which is the number worn for one tournament
+   * squad and may differ from this one.
+   */
+  jersey_number: number | null;
   primary_position: string;
   secondary_position: string | null;
   age: number | null;
@@ -142,6 +148,9 @@ export type MatchStage =
   | "Final"
   | "Friendly";
 
+/** How substitutions work. "rolling" lets a player return after coming off. */
+export type SubPolicy = "rolling" | "limited";
+
 export interface Tournament {
   id: string;
   name: string;
@@ -153,6 +162,10 @@ export interface Tournament {
   format: string | null;
   default_match_mins: number;
   default_planned_rpe: number;
+  /** Default sub rules for this tournament's matches; a match may override. */
+  sub_policy: SubPolicy;
+  /** null means uncapped. Always null in effect for rolling subs. */
+  max_subs: number | null;
   notes: string | null;
   created_at: string;
 }
@@ -188,23 +201,45 @@ export interface SquadWithPlayers extends Squad {
   squad_players: (SquadPlayer & { players: Player | null })[];
 }
 
-export interface Match {
+/** An opposition club. Normalised out of the old free-text `matches.opponent`. */
+export interface Opponent {
   id: string;
-  tournament_id: string;
-  session_id: string;
-  squad_id: string | null;
-  stage: MatchStage;
-  opponent: string | null;
-  goals_for: number | null;
-  goals_against: number | null;
+  name: string;
+  short_name: string | null;
+  logo_url: string | null;
+  is_active: boolean;
   notes: string | null;
   created_at: string;
 }
 
-/** A match with its backing session (date/duration live there) and squad name. */
+export interface Match {
+  id: string;
+  /** null for a standalone match — a friendly that belongs to no tournament. */
+  tournament_id: string | null;
+  session_id: string;
+  squad_id: string | null;
+  stage: MatchStage;
+  opponent_id: string | null;
+  /** @deprecated Legacy free-text name, kept only until the column is dropped. Read `opponents.name` and write `opponent_id`. */
+  opponent: string | null;
+  goals_for: number | null;
+  goals_against: number | null;
+  /** A knockout level after full time goes to spot kicks. */
+  went_to_penalties: boolean;
+  pens_for: number | null;
+  pens_against: number | null;
+  /** null on both means "inherit the tournament's rules". See resolveSubPolicy. */
+  sub_policy: SubPolicy | null;
+  max_subs: number | null;
+  notes: string | null;
+  created_at: string;
+}
+
+/** A match with its backing session (date/duration live there), squad and opponent. */
 export interface MatchWithSession extends Match {
   sessions: TrainingSession | null;
   squads: Pick<Squad, "id" | "name"> | null;
+  opponents: Pick<Opponent, "id" | "name"> | null;
 }
 
 export interface MatchPlayerStat {
@@ -212,7 +247,23 @@ export interface MatchPlayerStat {
   match_id: string;
   player_id: string;
   minutes_played: number;
+  /**
+   * Minutes come from `started` + on/off (see playerMinutes in lib/lineup). This
+   * flag is set once someone hand-edits the value, which stops the calculation
+   * overwriting it. Only meaningful under a limited-subs policy — rolling-subs
+   * matches have their minutes typed in directly, with nothing to override.
+   */
+  minutes_overridden: boolean;
+  /** In the starting XI. A starter's clock runs from minute 0. */
+  started: boolean;
+  /** When a substitute came on. null for a starter, or for anyone who didn't play. */
+  on_minute: number | null;
+  /** When they came off. null means they were still on at full time. */
+  off_minute: number | null;
   goals: number;
+  /** Subsets of `goals` — the remainder is open play. DB enforces FK + P <= goals. */
+  goals_free_kick: number;
+  goals_penalty: number;
   assists: number;
   yellow_cards: number;
   red_cards: number;
@@ -225,5 +276,88 @@ export interface MatchPlayerStat {
 /** The editable subset of a stat row — what the match grid drafts and saves. */
 export type MatchStatInput = Pick<
   MatchPlayerStat,
-  "player_id" | "minutes_played" | "goals" | "assists" | "yellow_cards" | "red_cards" | "injured" | "injury_note"
+  "player_id" | "minutes_played" | "minutes_overridden" | "started" | "on_minute"
+  | "off_minute" | "goals" | "goals_free_kick" | "goals_penalty" | "assists"
+  | "yellow_cards" | "red_cards" | "injured" | "injury_note"
 >;
+
+/** One shootout kick. Shootout kicks are never counted as goals. */
+export interface MatchPenaltyKick {
+  id: string;
+  match_id: string;
+  /** 1-based position in the shootout sequence. Unique per match. */
+  kick_order: number;
+  player_id: string;
+  scored: boolean;
+  created_at: string;
+}
+
+export type MatchPenaltyKickInput = Pick<MatchPenaltyKick, "kick_order" | "player_id" | "scored">;
+
+// ── Opponent analytics (SQL views) ────────────────────────────────────────────
+// These three mirror v_opponent_h2h, v_player_vs_opponent and v_player_match_totals.
+// The aggregation lives in Postgres so every screen reports the same numbers —
+// keep these shapes in step with the view definitions.
+
+/** Our record against one opponent. Opponents never played show played = 0. */
+export interface OpponentH2H {
+  opponent_id: string;
+  opponent_name: string;
+  played: number;
+  won: number;
+  drawn: number;
+  lost: number;
+  goals_for: number;
+  goals_against: number;
+  /** ISO date of the first/last played match, null when never played. */
+  first_played: string | null;
+  last_played: string | null;
+}
+
+/** One player's record against one opponent — the "plays well against" row. */
+export interface PlayerVsOpponent {
+  player_id: string;
+  opponent_id: string;
+  /** Denormalised in the view: PostgREST can't embed FKs on grouped views. */
+  player_name: string;
+  opponent_name: string;
+  appearances: number;
+  minutes: number;
+  goals: number;
+  goals_free_kick: number;
+  goals_penalty: number;
+  goals_open_play: number;
+  assists: number;
+  yellow_cards: number;
+  red_cards: number;
+  injuries: number;
+  /** null when the player has no logged minutes against this opponent. */
+  goals_per90: number | null;
+  assists_per90: number | null;
+  /** Team result, counted only for matches the player actually played in. */
+  team_won: number;
+  team_drawn: number;
+  team_lost: number;
+}
+
+/** A player's overall totals — the baseline a per-opponent rate is judged against. */
+export interface PlayerMatchTotals {
+  player_id: string;
+  appearances: number;
+  minutes: number;
+  goals: number;
+  goals_free_kick: number;
+  goals_penalty: number;
+  goals_open_play: number;
+  assists: number;
+  goals_per90: number | null;
+  assists_per90: number | null;
+}
+
+/** Shootout record per player. Deliberately separate from goal stats. */
+export interface PlayerShootout {
+  player_id: string;
+  player_name: string;
+  taken: number;
+  scored: number;
+}

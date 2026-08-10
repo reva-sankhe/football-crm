@@ -1,7 +1,7 @@
 import {
   Bar, BarChart, CartesianGrid, Cell, Line, LineChart, ReferenceLine, XAxis, YAxis,
 } from "recharts";
-import { formatBronco } from "@/lib/utils";
+import { formatBronco, playerLabel } from "@/lib/utils";
 import { attendancePctFill, formatDateLong } from "@/lib/attendance";
 import { HIGHLIGHT, ink } from "@/lib/viz";
 import { formatDateRange } from "@/lib/tournaments";
@@ -81,7 +81,7 @@ export function ReportPage({ report, generatedAt }: { report: PlayerReport; gene
             <div className="text-[8px] font-bold uppercase tracking-[0.16em] text-slate-500">
               Bombay Gymkhana · Women's Football
             </div>
-            <h1 className="text-2xl font-bold leading-tight">{player.name}</h1>
+            <h1 className="text-2xl font-bold leading-tight">{playerLabel(player)}</h1>
             <div className="text-[10px] text-slate-600">
               {player.primary_position}
               {player.secondary_position && ` / ${player.secondary_position}`}
@@ -318,7 +318,7 @@ export function ReportPage({ report, generatedAt }: { report: PlayerReport; gene
 
       <footer className="mt-auto pt-4 text-[8px] text-slate-400 border-t border-slate-200 flex justify-between">
         <span>Bombay Gymkhana Women's Football · Player report</span>
-        <span>{player.name} · {rangeLabel}</span>
+        <span>{playerLabel(player)} · {rangeLabel}</span>
       </footer>
     </article>
   );

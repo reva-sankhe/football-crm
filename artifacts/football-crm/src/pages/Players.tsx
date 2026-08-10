@@ -7,7 +7,7 @@ import { fetchPlayers, createPlayer, updatePlayer, fetchTrainingSessions } from 
 import { ReportOptionsModal } from "@/components/report/ReportOptionsModal";
 import { AddButton } from "@/components/AddButton";
 import { CountPill, IconButton, SearchInput, TOOLBAR_MENU, TOOLBAR_SELECT } from "@/components/Toolbar";
-import { calcAgeRange, cn } from "@/lib/utils";
+import { JERSEY_MAX, JERSEY_MIN, calcAgeRange, cn, parseJersey, playerLabel } from "@/lib/utils";
 import { PosBadge } from "@/components/PosBadge";
 import type { Player } from "@/lib/types";
 import { Users, Check, FileText, X, Pencil, SlidersHorizontal } from "lucide-react";
@@ -33,6 +33,7 @@ function AddPlayerModal({ onClose, onSaved }: { onClose: () => void; onSaved: ()
   const [form, setForm] = useState({
     name: "",
     code: "",
+    jersey_number: "",
     primary_position: "Goalkeeper",
     secondary_position: "",
     year_of_birth: "",
@@ -51,12 +52,18 @@ function AddPlayerModal({ onClose, onSaved }: { onClose: () => void; onSaved: ()
       toast({ title: "Player name is required", variant: "destructive" });
       return;
     }
+    const jersey = parseJersey(form.jersey_number);
+    if (jersey === "invalid") {
+      toast({ title: `Jersey number must be between ${JERSEY_MIN} and ${JERSEY_MAX}`, variant: "destructive" });
+      return;
+    }
     setSaving(true);
     try {
       const yob = form.year_of_birth ? parseInt(form.year_of_birth) : null;
       await createPlayer({
         name: form.name.trim(),
         code: generateCode(form.name),
+        jersey_number: jersey,
         primary_position: form.primary_position,
         secondary_position: form.secondary_position || null,
         year_of_birth: yob,
@@ -138,7 +145,19 @@ function AddPlayerModal({ onClose, onSaved }: { onClose: () => void; onSaved: ()
               </select>
             ))}
           </div>
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-3 gap-3">
+            {field("Jersey #", (
+              <input
+                type="number"
+                min={JERSEY_MIN}
+                max={JERSEY_MAX}
+                value={form.jersey_number}
+                onChange={(e) => setForm({ ...form, jersey_number: e.target.value })}
+                placeholder="e.g. 12"
+                data-testid="input-jersey-number"
+                className={inputCls}
+              />
+            ))}
             {field("Year of Birth", (
               <input
                 type="number"
@@ -194,7 +213,7 @@ function AddPlayerModal({ onClose, onSaved }: { onClose: () => void; onSaved: ()
   );
 }
 
-/** The four fields worth changing without leaving the roster table. */
+/** The handful of fields worth changing without leaving the roster table. */
 function QuickEditModal({
   player,
   onClose,
@@ -208,6 +227,7 @@ function QuickEditModal({
   const [saving, setSaving] = useState(false);
   const [form, setForm] = useState({
     name: player.name,
+    jersey_number: player.jersey_number?.toString() ?? "",
     primary_position: player.primary_position,
     age_range: player.age_range ?? "",
     is_active: player.is_active,
@@ -221,10 +241,16 @@ function QuickEditModal({
       toast({ title: "Player name is required", variant: "destructive" });
       return;
     }
+    const jersey = parseJersey(form.jersey_number);
+    if (jersey === "invalid") {
+      toast({ title: `Jersey number must be between ${JERSEY_MIN} and ${JERSEY_MAX}`, variant: "destructive" });
+      return;
+    }
     setSaving(true);
     try {
       const updated = await updatePlayer(player.id, {
         name: form.name.trim(),
+        jersey_number: jersey,
         primary_position: form.primary_position,
         age_range: (form.age_range || null) as Player["age_range"],
         is_active: form.is_active,
@@ -247,15 +273,30 @@ function QuickEditModal({
           <button onClick={onClose} className="text-muted-foreground hover:text-foreground text-lg leading-none">&times;</button>
         </div>
         <form onSubmit={save} className="px-5 py-4 space-y-3">
-          <div>
-            <label className="block text-xs text-muted-foreground mb-1">Name</label>
-            <input
-              autoFocus
-              value={form.name}
-              onChange={(e) => setForm({ ...form, name: e.target.value })}
-              className="w-full bg-muted border border-border rounded-md px-3 py-1.5 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
-              data-testid="quick-edit-name"
-            />
+          <div className="grid grid-cols-3 gap-3">
+            <div className="col-span-2">
+              <label className="block text-xs text-muted-foreground mb-1">Name</label>
+              <input
+                autoFocus
+                value={form.name}
+                onChange={(e) => setForm({ ...form, name: e.target.value })}
+                className="w-full bg-muted border border-border rounded-md px-3 py-1.5 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+                data-testid="quick-edit-name"
+              />
+            </div>
+            <div>
+              <label className="block text-xs text-muted-foreground mb-1">Jersey #</label>
+              <input
+                type="number"
+                min={JERSEY_MIN}
+                max={JERSEY_MAX}
+                value={form.jersey_number}
+                onChange={(e) => setForm({ ...form, jersey_number: e.target.value })}
+                placeholder="—"
+                className="w-full bg-muted border border-border rounded-md px-3 py-1.5 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+                data-testid="quick-edit-jersey"
+              />
+            </div>
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div>
@@ -591,7 +632,7 @@ export default function Players() {
                             p.is_active ? "bg-emerald-500" : "bg-muted-foreground/50",
                           )}
                         />
-                        {p.name}
+                        {playerLabel(p)}
                         <span className="sr-only">{p.is_active ? "Active" : "Inactive"}</span>
                       </span>
                     </td>

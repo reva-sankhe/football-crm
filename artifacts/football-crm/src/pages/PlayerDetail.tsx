@@ -4,8 +4,8 @@ import {
   fetchPlayer, fetchResultsByPlayer, updatePlayer, fetchAllResults, fetchPlayerRecentSessions,
   fetchAttendanceByPlayer, fetchTrainingSessions, fetchMatchStatsByPlayer, type PlayerMatchStat,
 } from "@/lib/queries";
-import { formatBronco, cn } from "@/lib/utils";
-import { attendancePctColor, countsAsAttended } from "@/lib/attendance";
+import { JERSEY_MAX, JERSEY_MIN, formatBronco, cn, isValidJersey, playerLabel } from "@/lib/utils";
+import { attendancePctColor, collapseMatchDays, countsAsAttended, matchDayAttendance } from "@/lib/attendance";
 import { ACWR_CONFIG, computeAcwr, isMatchSession, teamBandFor } from "@/lib/report";
 import { ChartSkeleton, Skeleton } from "@/components/Skeleton";
 import { EmptyState } from "@/components/EmptyState";
@@ -113,6 +113,10 @@ export default function PlayerDetail() {
   const cancelEdit = () => setEditing(false);
   const saveEdit = async () => {
     if (!player) return;
+    if (!isValidJersey(editForm.jersey_number ?? null)) {
+      toast({ title: `Jersey number must be between ${JERSEY_MIN} and ${JERSEY_MAX}`, variant: "destructive" });
+      return;
+    }
     setSaving(true);
     try {
       const updated = await updatePlayer(player.id, editForm);
@@ -171,10 +175,18 @@ export default function PlayerDetail() {
     [playerAttendance],
   );
 
+  // One entry per training session, but only one per match day — the same units
+  // the Attendance page marks in. Picking the session this player was marked on
+  // keeps their own record intact when a day has several fixtures.
+  const attendanceUnits = useMemo(
+    () => collapseMatchDays(allSessions, (sid) => attendedIds.has(sid)),
+    [allSessions, attendedIds],
+  );
+
   const monthlyAttendance = useMemo(() => {
-    if (!allSessions.length) return [];
+    if (!attendanceUnits.sessions.length) return [];
     const byMonth: Record<string, string[]> = {};
-    for (const s of allSessions) {
+    for (const s of attendanceUnits.sessions) {
       (byMonth[s.date.slice(0, 7)] ??= []).push(s.id);
     }
     return Object.entries(byMonth)
@@ -183,7 +195,7 @@ export default function PlayerDetail() {
         return { month, total: ids.length, attended, pct: Math.round((attended / ids.length) * 100) };
       })
       .sort((a, b) => a.month.localeCompare(b.month));
-  }, [allSessions, attendedIds]);
+  }, [attendanceUnits, attendedIds]);
 
   // ── Snapshot ──────────────────────────────────────────────────────────────
   // The headline is this month's training turnout; match-day availability is a
@@ -197,7 +209,8 @@ export default function PlayerDetail() {
   const monthLabel = new Date(thisMonth + "-01T00:00:00").toLocaleDateString("en-GB", { month: "short" });
   const monthSessions = allSessions.filter((s) => s.date.slice(0, 7) === thisMonth);
   const currentMonth = attendanceSlice(monthSessions.filter((s) => !isMatchSession(s)));
-  const matchAttendance = attendanceSlice(monthSessions.filter(isMatchSession));
+  // Matches are counted per day rather than per fixture — see matchDayAttendance
+  const matchAttendance = matchDayAttendance(monthSessions, (sid) => attendedIds.has(sid));
 
   // Goals and appearances are labelled "this year", so they are scoped to it
   const thisYear = String(new Date().getFullYear());
@@ -252,7 +265,7 @@ export default function PlayerDetail() {
                 data-testid="input-edit-name"
               />
             ) : (
-              <h1 className="text-3xl font-semibold tracking-tight text-foreground">{player.name}</h1>
+              <h1 className="text-3xl font-semibold tracking-tight text-foreground">{playerLabel(player)}</h1>
             )}
             <div className="flex flex-wrap items-center gap-x-2 gap-y-1 mt-1.5 text-sm text-muted-foreground">
               <span className="text-foreground font-medium">{player.primary_position}</span>
@@ -278,6 +291,19 @@ export default function PlayerDetail() {
 
         {editing && (
           <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 pt-4 mt-4 border-t border-border">
+            <div>
+              <label className="block text-xs text-muted-foreground mb-1">Jersey #</label>
+              <input
+                type="number"
+                min={JERSEY_MIN}
+                max={JERSEY_MAX}
+                value={editForm.jersey_number ?? ""}
+                onChange={(e) => setEditForm({ ...editForm, jersey_number: e.target.value === "" ? null : parseInt(e.target.value) })}
+                placeholder="—"
+                className="w-full bg-muted border border-border rounded-lg px-2 py-1.5 text-sm text-foreground"
+                data-testid="input-edit-jersey"
+              />
+            </div>
             <div>
               <label className="block text-xs text-muted-foreground mb-1">Primary Position</label>
               <select value={editForm.primary_position ?? ""} onChange={(e) => setEditForm({ ...editForm, primary_position: e.target.value, secondary_position: null })} className="w-full bg-muted border border-border rounded-lg px-2 py-1.5 text-sm text-foreground">
@@ -341,7 +367,11 @@ export default function PlayerDetail() {
         <SectionLabel>Availability</SectionLabel>
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 items-stretch">
           <AttendanceCard monthly={monthlyAttendance} />
-          <LastSessionsCard sessions={allSessions} attendance={playerAttendance} />
+          <LastSessionsCard
+            sessions={attendanceUnits.sessions}
+            matchesOnDay={attendanceUnits.matchesOnDay}
+            attendance={playerAttendance}
+          />
         </div>
       </section>
 

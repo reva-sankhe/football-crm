@@ -50,6 +50,8 @@ function sameDraft(a: AttendanceDraft, b: AttendanceDraft): boolean {
 
 interface MarkAttendanceProps {
   session: TrainingSession | null;
+  /** Matches played on this date, when the day had more than one. */
+  matchesOnDay?: number;
   players: Player[];
   /** Reports draft-vs-saved state up so the page can guard navigation. */
   onDirtyChange: (dirty: boolean) => void;
@@ -59,6 +61,7 @@ interface MarkAttendanceProps {
 
 export function MarkAttendance({
   session,
+  matchesOnDay,
   players,
   onDirtyChange,
   onSaved,
@@ -222,6 +225,12 @@ export function MarkAttendance({
             </button>
           )}
         </div>
+
+        {(matchesOnDay ?? 0) > 1 && (
+          <span className="text-[11px] text-muted-foreground">
+            {matchesOnDay} matches this day — attendance is taken once
+          </span>
+        )}
 
         <div className="flex items-center gap-3 text-[11px] text-muted-foreground">
           {ATTENDANCE_STATUSES.map((status) => {

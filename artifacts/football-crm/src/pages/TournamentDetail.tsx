@@ -1,14 +1,11 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useLocation, useParams } from "wouter";
-import { ArrowLeft, ArrowRight, Link2, Pencil, RefreshCw } from "lucide-react";
+import { ArrowLeft, ArrowRight, Pencil } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useTheme } from "@/context/ThemeContext";
 import { useToast } from "@/hooks/use-toast";
 import {
-  adoptSessionAsMatch,
-  createMatch,
   createSquad,
-  fetchAdoptableSessions,
   fetchMatchesForTournament,
   fetchPlayers,
   fetchSquadsForTournament,
@@ -17,17 +14,18 @@ import {
   type TournamentLeader,
 } from "@/lib/queries";
 import {
-  MATCH_STAGES, RESULT_CFG, STAGE_CFG, formatDateRange, matchResult, tournamentRecord,
+  RESULT_CFG, formatDateRange, matchResult, tournamentRecord,
 } from "@/lib/tournaments";
-import { formatDateShort, todayISO } from "@/lib/attendance";
+import { formatDateShort } from "@/lib/attendance";
 import { SquadCard } from "@/components/tournaments/SquadCard";
 import { TournamentFormModal } from "@/components/tournaments/TournamentFormModal";
+import { MatchFormModal } from "@/components/tournaments/MatchFormModal";
 import { LinksArchive } from "@/components/tournaments/LinksArchive";
 import { StageBadge } from "@/components/Badges";
 import { SectionLabel, StatTile } from "@/components/StatTile";
 import { AddButton } from "@/components/AddButton";
 import type {
-  MatchStage, MatchWithSession, Player, SquadWithPlayers, Tournament, TrainingSession,
+  MatchWithSession, Player, SquadWithPlayers, Tournament,
 } from "@/lib/types";
 
 export default function TournamentDetail() {
@@ -44,6 +42,8 @@ export default function TournamentDetail() {
   const [leaders, setLeaders] = useState<TournamentLeader[]>([]);
   const [loading, setLoading] = useState(true);
   const [showNewMatch, setShowNewMatch] = useState(false);
+  /** The match being edited, or null — the same modal that creates them. */
+  const [editMatch, setEditMatch] = useState<MatchWithSession | null>(null);
   const [showEdit, setShowEdit] = useState(false);
   const [showNewSquad, setShowNewSquad] = useState(false);
   /** "all", or a squad id — a tournament can be entered with more than one squad. */
@@ -130,10 +130,10 @@ export default function TournamentDetail() {
   return (
     <div className="space-y-6">
       <button
-        onClick={() => setLocation("/sessions")}
+        onClick={() => setLocation("/tournaments")}
         className="flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground transition-colors"
       >
-        <ArrowLeft size={14} /> Sessions
+        <ArrowLeft size={14} /> Tournaments
       </button>
 
       {/* ── Header ─────────────────────────────────────────────────────────── */}
@@ -237,7 +237,6 @@ export default function TournamentDetail() {
         ) : (
           <div className="space-y-2">
             {visibleMatches.map((m) => {
-              const cfg = STAGE_CFG[m.stage] ?? STAGE_CFG["Group Stage"];
               const result = matchResult(m);
               return (
                 <Link
@@ -249,7 +248,7 @@ export default function TournamentDetail() {
                   <StageBadge stage={m.stage} />
                   <div className="min-w-0 flex-1">
                     <div className="text-sm font-medium text-foreground truncate">
-                      {m.opponent ? `vs ${m.opponent}` : "Opponent TBD"}
+                      {m.opponents ? `vs ${m.opponents.name}` : "Opponent TBD"}
                     </div>
                     <div className="text-[11px] text-muted-foreground">
                       {m.sessions ? formatDateShort(m.sessions.date) : "—"}
@@ -269,6 +268,16 @@ export default function TournamentDetail() {
                   ) : (
                     <span className="text-[11px] text-muted-foreground shrink-0">Not played</span>
                   )}
+                  {/* Inside a Link, so the row's navigation has to be suppressed */}
+                  <button
+                    onClick={(e) => { e.preventDefault(); e.stopPropagation(); setEditMatch(m); }}
+                    aria-label={`Edit match${m.opponents ? ` vs ${m.opponents.name}` : ""}`}
+                    title="Edit match"
+                    className="p-1 rounded text-muted-foreground hover:text-foreground hover:bg-muted transition-colors shrink-0"
+                    data-testid={`button-edit-match-${m.id}`}
+                  >
+                    <Pencil size={13} />
+                  </button>
                   <ArrowRight size={13} className="text-muted-foreground shrink-0" />
                 </Link>
               );
@@ -281,11 +290,22 @@ export default function TournamentDetail() {
       <LinksArchive tournamentId={tournament.id} />
 
       {showNewMatch && (
-        <NewMatchModal
+        <MatchFormModal
           tournament={tournament}
           squads={squads}
           onClose={() => setShowNewMatch(false)}
           onSaved={() => { setShowNewMatch(false); load(); }}
+        />
+      )}
+
+      {editMatch && (
+        <MatchFormModal
+          tournament={tournament}
+          squads={squads}
+          match={editMatch}
+          onClose={() => setEditMatch(null)}
+          onSaved={() => { setEditMatch(null); load(); }}
+          onDeleted={() => { setEditMatch(null); load(); }}
         />
       )}
 
@@ -398,202 +418,6 @@ function NewSquadModal({
               data-testid="button-save-squad"
             >
               {saving ? "Saving…" : "Add Squad"}
-            </button>
-          </div>
-        </form>
-      </div>
-    </div>
-  );
-}
-
-// ── New match modal ───────────────────────────────────────────────────────────
-function NewMatchModal({
-  tournament,
-  squads,
-  onClose,
-  onSaved,
-}: {
-  tournament: Tournament;
-  squads: SquadWithPlayers[];
-  onClose: () => void;
-  onSaved: () => void;
-}) {
-  const { theme } = useTheme();
-  const isDark = theme === "dark";
-  const { toast } = useToast();
-  const [saving, setSaving] = useState(false);
-  const [mode, setMode] = useState<"new" | "adopt">("new");
-  const [adoptable, setAdoptable] = useState<TrainingSession[]>([]);
-  const [adoptId, setAdoptId] = useState<string>("");
-
-  const [form, setForm] = useState({
-    date: todayISO(),
-    stage: "Group Stage" as MatchStage,
-    opponent: "",
-    squad_id: squads[0]?.id ?? "",
-    duration_mins: tournament.default_match_mins,
-  });
-
-  // Existing Match-type sessions with no match row — lets old fixtures be
-  // pulled in with their attendance and RPE intact instead of duplicated.
-  useEffect(() => {
-    fetchAdoptableSessions()
-      .then(setAdoptable)
-      .catch(() => {/* the adopt tab just stays empty */});
-  }, []);
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setSaving(true);
-    try {
-      const shared = {
-        tournament_id: tournament.id,
-        squad_id: form.squad_id || null,
-        stage: form.stage,
-        opponent: form.opponent.trim() || null,
-      };
-
-      if (mode === "adopt") {
-        if (!adoptId) {
-          toast({ title: "Pick a session to adopt", variant: "destructive" });
-          setSaving(false);
-          return;
-        }
-        await adoptSessionAsMatch(adoptId, shared);
-        toast({ title: "Session linked as a match" });
-      } else {
-        await createMatch({
-          ...shared,
-          date: form.date,
-          duration_mins: form.duration_mins,
-          // Matches carry no planned RPE — 0 is the app's "no plan" sentinel
-          planned_rpe: 0,
-        });
-        toast({ title: "Match created" });
-      }
-      onSaved();
-    } catch (err) {
-      toast({ title: "Failed to save match", description: String(err), variant: "destructive" });
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const inputCls =
-    "w-full bg-muted border border-border rounded-lg px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground/40 focus:outline-none focus:ring-1 focus:ring-primary";
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4 bg-background/80 backdrop-blur-sm">
-      <div className="w-full max-w-md bg-card border border-border rounded-2xl shadow-xl overflow-hidden max-h-[90vh] overflow-y-auto">
-        <div className="flex items-center justify-between px-5 py-4 border-b border-border">
-          <h2 className="text-base font-semibold text-foreground">New Match</h2>
-          <button onClick={onClose} className="text-muted-foreground hover:text-foreground transition-colors text-xl leading-none">&times;</button>
-        </div>
-
-        {/* Mode switch */}
-        <div className="px-5 pt-4 flex gap-2">
-          {(["new", "adopt"] as const).map((m) => (
-            <button
-              key={m}
-              type="button"
-              onClick={() => setMode(m)}
-              className={cn(
-                "flex-1 px-3 py-2 rounded-lg text-xs font-medium border transition-colors",
-                mode === m
-                  ? "bg-indigo-500/15 text-indigo-400 border-indigo-500/30"
-                  : isDark ? "border-white/10 text-muted-foreground hover:bg-white/5" : "border-slate-200 text-slate-500 hover:bg-slate-50",
-              )}
-            >
-              {m === "new" ? "Create new" : `Link existing (${adoptable.length})`}
-            </button>
-          ))}
-        </div>
-
-        <form onSubmit={handleSubmit} className="px-5 py-4 space-y-4">
-          {mode === "new" ? (
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="block text-xs text-muted-foreground mb-1">Date</label>
-                <input type="date" value={form.date} onChange={(e) => setForm({ ...form, date: e.target.value })} className={inputCls} required />
-              </div>
-              <div>
-                <label className="block text-xs text-muted-foreground mb-1">Duration (min)</label>
-                <input
-                  type="number"
-                  min={1}
-                  max={300}
-                  value={form.duration_mins}
-                  onChange={(e) => setForm({ ...form, duration_mins: parseInt(e.target.value) || 0 })}
-                  className={inputCls}
-                  required
-                />
-              </div>
-            </div>
-          ) : (
-            <div>
-              <label className="block text-xs text-muted-foreground mb-1">Existing match session</label>
-              {adoptable.length === 0 ? (
-                <p className="text-xs text-muted-foreground py-2">
-                  No unlinked Match sessions found. Every existing match session already belongs to a tournament.
-                </p>
-              ) : (
-                <>
-                  <select value={adoptId} onChange={(e) => setAdoptId(e.target.value)} className={inputCls}>
-                    <option value="">Select a session…</option>
-                    {adoptable.map((s) => (
-                      <option key={s.id} value={s.id}>
-                        {s.date} · {s.day} · {s.duration_mins} min
-                      </option>
-                    ))}
-                  </select>
-                  <p className="text-[11px] text-muted-foreground mt-1.5 flex items-start gap-1.5">
-                    <Link2 size={11} className="mt-0.5 shrink-0" />
-                    Keeps the session's existing attendance and RPE.
-                  </p>
-                </>
-              )}
-            </div>
-          )}
-
-          <div>
-            <label className="block text-xs text-muted-foreground mb-1">Stage</label>
-            <select
-              value={form.stage}
-              onChange={(e) => setForm({ ...form, stage: e.target.value as MatchStage })}
-              className={inputCls}
-            >
-              {MATCH_STAGES.map((s) => <option key={s} value={s}>{s}</option>)}
-            </select>
-          </div>
-
-          <div>
-            <label className="block text-xs text-muted-foreground mb-1">Opponent <span className="text-muted-foreground/50">(optional)</span></label>
-            <input value={form.opponent} onChange={(e) => setForm({ ...form, opponent: e.target.value })} placeholder="e.g. Bandra United" className={inputCls} />
-          </div>
-
-          <div>
-            <label className="block text-xs text-muted-foreground mb-1">Squad</label>
-            <select value={form.squad_id} onChange={(e) => setForm({ ...form, squad_id: e.target.value })} className={inputCls}>
-              <option value="">No squad</option>
-              {squads.map((sq) => (
-                <option key={sq.id} value={sq.id}>
-                  {sq.name} ({sq.squad_players.length})
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <div className="flex gap-2 pt-1">
-            <button type="button" onClick={onClose} className="flex-1 px-4 py-2.5 text-sm border border-border rounded-xl text-muted-foreground hover:text-foreground transition-colors">
-              Cancel
-            </button>
-            <button
-              type="submit"
-              disabled={saving || (mode === "adopt" && !adoptId) || (mode === "new" && form.duration_mins <= 0)}
-              className="flex-1 px-4 py-2.5 text-sm btn-primary text-white rounded-xl font-semibold disabled:opacity-60 flex items-center justify-center gap-1.5"
-            >
-              {saving && <RefreshCw size={13} className="animate-spin" />}
-              {saving ? "Saving…" : mode === "adopt" ? "Link Match" : "Create Match"}
             </button>
           </div>
         </form>

@@ -94,6 +94,8 @@ export function LinksArchive({ tournamentId }: { tournamentId: string }) {
     try {
       await deleteTournamentLink(link.id);
       toast({ title: "Link removed" });
+      // Deleting happens from inside the edit form, so close it behind us
+      cancel();
       load();
     } catch (err) {
       toast({ title: "Failed to remove link", description: String(err), variant: "destructive" });
@@ -138,11 +140,25 @@ export function LinksArchive({ tournamentId }: { tournamentId: string }) {
               />
             </div>
           </div>
-          <div className="flex gap-2">
+          <div className="flex items-center gap-2">
+            {/* Delete lives in here rather than as a second icon on every row */}
+            {editingId && (
+              <button
+                type="button"
+                onClick={() => {
+                  const link = links.find((l) => l.id === editingId);
+                  if (link) remove(link);
+                }}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs text-muted-foreground hover:text-status-bad transition-colors"
+                data-testid="button-delete-link"
+              >
+                <Trash2 size={12} /> Delete
+              </button>
+            )}
             <button
               type="button"
               onClick={cancel}
-              className="px-3 py-1.5 rounded-lg text-xs text-muted-foreground hover:text-foreground transition-colors"
+              className="ml-auto px-3 py-1.5 rounded-lg text-xs text-muted-foreground hover:text-foreground transition-colors"
             >
               Cancel
             </button>
@@ -194,23 +210,15 @@ export function LinksArchive({ tournamentId }: { tournamentId: string }) {
               >
                 <ExternalLink size={13} />
               </a>
+              {/* One control: the edit form is also where a link is deleted */}
               <button
                 onClick={() => openEdit(l)}
-                aria-label={`Edit ${l.title}`}
+                aria-label={`Edit or remove ${l.title}`}
                 title="Edit link"
                 className="p-1 rounded text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
                 data-testid={`button-edit-link-${l.id}`}
               >
                 <Pencil size={13} />
-              </button>
-              <button
-                onClick={() => remove(l)}
-                aria-label={`Remove ${l.title}`}
-                title="Remove link"
-                className="p-1 rounded text-muted-foreground hover:text-status-bad transition-colors"
-                data-testid={`button-delete-link-${l.id}`}
-              >
-                <Trash2 size={13} />
               </button>
             </div>
           ))}

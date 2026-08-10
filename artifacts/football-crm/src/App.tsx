@@ -13,6 +13,7 @@ import Sessions from "@/pages/Sessions";
 import SessionRPE from "@/pages/SessionRPE";
 import SessionDetail from "@/pages/SessionDetail";
 import Attendance from "@/pages/Attendance";
+import Tournaments from "@/pages/Tournaments";
 import TournamentDetail from "@/pages/TournamentDetail";
 import MatchDetail from "@/pages/MatchDetail";
 import PlayerReports from "@/pages/PlayerReports";
@@ -45,6 +46,7 @@ function AppShell() {
         <Route path="/sessions" component={Sessions} />
         <Route path="/sessions/:id/rpe" component={SessionRPE} />
         <Route path="/sessions/:id" component={SessionDetail} />
+        <Route path="/tournaments" component={Tournaments} />
         <Route path="/tournaments/:id" component={TournamentDetail} />
         <Route path="/matches/:id" component={MatchDetail} />
         <Route path="/attendance" component={Attendance} />

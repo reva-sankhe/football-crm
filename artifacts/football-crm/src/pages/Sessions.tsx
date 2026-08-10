@@ -9,7 +9,6 @@ import { SessionTypeBadge } from "@/components/Badges";
 import { AddButton } from "@/components/AddButton";
 import { supabase } from "@/lib/supabase";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { TournamentsTab } from "@/components/tournaments/TournamentsTab";
 import FitnessTests from "@/pages/FitnessTests";
 import type { TrainingSession, SessionType } from "@/lib/types";
 
@@ -107,7 +106,9 @@ function NewSessionModal({ onClose, onSaved }: NewSessionModalProps) {
               onChange={(e) => setForm({ ...form, session_type: e.target.value as SessionType })}
               className="w-full bg-muted border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
             >
-              {SESSION_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
+              {/* No Match here — matches are created on the tournament page, and
+                  one made here would vanish from this tab the moment it saved. */}
+              {SESSION_TYPES.filter((t) => t !== "Match").map((t) => <option key={t} value={t}>{t}</option>)}
             </select>
           </div>
 
@@ -194,23 +195,18 @@ function NewSessionModal({ onClose, onSaved }: NewSessionModalProps) {
 
 // ── Sessions Page ─────────────────────────────────────────────────────────────
 export default function Sessions() {
-  const [tab, setTab] = useState<"training" | "tournaments" | "fitness">("training");
+  const [tab, setTab] = useState<"training" | "fitness">("training");
 
   return (
     <div className="space-y-5">
       <Tabs value={tab} onValueChange={(v) => setTab(v as typeof tab)} className="space-y-4">
         <TabsList className="justify-end">
           <TabsTrigger value="training" data-testid="tab-training">Training</TabsTrigger>
-          <TabsTrigger value="tournaments" data-testid="tab-tournaments">Tournaments</TabsTrigger>
           <TabsTrigger value="fitness" data-testid="tab-fitness">Fitness Tests</TabsTrigger>
         </TabsList>
 
         <TabsContent value="training" className="mt-0">
           <TrainingTab />
-        </TabsContent>
-
-        <TabsContent value="tournaments" className="mt-0">
-          <TournamentsTab />
         </TabsContent>
 
         {/* Self-contained: its own step machine, no routing of its own */}
@@ -234,7 +230,8 @@ function TrainingTab() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const sess = await fetchTrainingSessions();
+      // Matches live under Tournaments — this tab is the training archive only.
+      const sess = (await fetchTrainingSessions()).filter((s) => s.session_type !== "Match");
       setSessions(sess);
 
       if (sess.length > 0) {

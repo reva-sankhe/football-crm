@@ -69,13 +69,15 @@ interface PlayerStats {
 
 interface AttendanceMatrixProps {
   sessions: TrainingSession[];   // newest first
+  /** Canonical session id → matches that day. Only set when a day had several. */
+  matchesOnDay?: Record<string, number>;
   players: Player[];
   /** Bumped by the parent after a save/import to force a refetch. */
   refreshKey: number;
   onJumpToSession: (sessionId: string) => void;
 }
 
-export function AttendanceMatrix({ sessions, players, refreshKey, onJumpToSession }: AttendanceMatrixProps) {
+export function AttendanceMatrix({ sessions, matchesOnDay, players, refreshKey, onJumpToSession }: AttendanceMatrixProps) {
   const { theme } = useTheme();
   const isDark = theme === "dark";
   const { toast } = useToast();
@@ -436,7 +438,11 @@ export function AttendanceMatrix({ sessions, players, refreshKey, onJumpToSessio
                       return (
                         <th
                           key={s.id}
-                          title={`${formatDateLong(s.date)} · ${s.session_type}`}
+                          title={
+                            (matchesOnDay?.[s.id] ?? 0) > 1
+                              ? `${formatDateLong(s.date)} · ${matchesOnDay![s.id]} matches`
+                              : `${formatDateLong(s.date)} · ${s.session_type}`
+                          }
                           className="sticky top-0 z-20 bg-card border-b border-border px-1 py-2 w-9 min-w-[36px]"
                         >
                           <button
