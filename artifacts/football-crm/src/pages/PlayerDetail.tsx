@@ -2,7 +2,8 @@ import { useEffect, useState, useCallback, useMemo } from "react";
 import { useParams, useLocation } from "wouter";
 import {
   fetchPlayer, fetchResultsByPlayer, updatePlayer, fetchAllResults, fetchPlayerRecentSessions,
-  fetchAttendanceByPlayer, fetchTrainingSessions, fetchMatchStatsByPlayer, type PlayerMatchStat,
+  fetchAttendanceByPlayer, fetchTrainingSessions, fetchMatchStatsByPlayer,
+  fetchTournamentFinishes, type PlayerMatchStat,
 } from "@/lib/queries";
 import { JERSEY_MAX, JERSEY_MIN, formatBronco, cn, isValidJersey, playerLabel } from "@/lib/utils";
 import { attendancePctColor, collapseMatchDays, countsAsAttended, matchDayAttendance } from "@/lib/attendance";
@@ -10,7 +11,7 @@ import { ACWR_CONFIG, computeAcwr, isMatchSession, teamBandFor } from "@/lib/rep
 import { ChartSkeleton, Skeleton } from "@/components/Skeleton";
 import { EmptyState } from "@/components/EmptyState";
 import { PlayerTournamentStats } from "@/components/tournaments/PlayerTournamentStats";
-import { sumStats } from "@/lib/tournaments";
+import { sumStats, type TournamentFinish } from "@/lib/tournaments";
 import { SectionLabel, StatTile as SnapshotTile } from "@/components/StatTile";
 import { AttendanceCard } from "@/components/player/AttendanceCard";
 import { LastSessionsCard } from "@/components/player/LastSessionsCard";
@@ -55,6 +56,7 @@ export default function PlayerDetail() {
   const [allSessions, setAllSessions] = useState<TrainingSession[]>([]);
   const [playerAttendance, setPlayerAttendance] = useState<(SessionAttendance & { sessions: { id: string; date: string; session_type: string } })[]>([]);
   const [matchStats, setMatchStats] = useState<PlayerMatchStat[]>([]);
+  const [finishes, setFinishes] = useState<Map<string, TournamentFinish>>(new Map());
 
   const mode: Mode = isDark ? "dark" : "light";
   const INK = ink(mode);
@@ -71,7 +73,7 @@ export default function PlayerDetail() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [p, rs, allRs, loadHistory, attendance, sessions, mStats] = await Promise.all([
+      const [p, rs, allRs, loadHistory, attendance, sessions, mStats, placings] = await Promise.all([
         fetchPlayer(id!),
         fetchResultsByPlayer(id!),
         fetchAllResults(),
@@ -79,7 +81,9 @@ export default function PlayerDetail() {
         fetchAttendanceByPlayer(id!),
         fetchTrainingSessions(),
         fetchMatchStatsByPlayer(id!),
+        fetchTournamentFinishes(),
       ]);
+      setFinishes(placings);
       setPlayer(p);
       setResults(rs as (TestResult & { test_sessions?: { test_date: string; test_name: string; type: string | null } })[]);
       setRecentLoad(loadHistory as (SessionRPE & { sessions: TrainingSession })[]);
@@ -378,7 +382,7 @@ export default function PlayerDetail() {
       {/* ── Match record ───────────────────────────────────────────────────── */}
       <section className="space-y-2">
         <SectionLabel>Match Record</SectionLabel>
-        <PlayerTournamentStats stats={matchStats} />
+        <PlayerTournamentStats stats={matchStats} finishes={finishes} />
       </section>
 
       {/* ── Fitness ────────────────────────────────────────────────────────── */}

@@ -3,11 +3,19 @@ import { Link } from "wouter";
 import { Activity, ChevronDown, Trophy } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useTheme } from "@/context/ThemeContext";
-import { STAGE_CFG, sumStats } from "@/lib/tournaments";
+import { STAGE_CFG, sumStats, type TournamentFinish } from "@/lib/tournaments";
+import { FinishBadge } from "@/components/Badges";
 import { formatDateShort } from "@/lib/attendance";
 import type { PlayerMatchStat } from "@/lib/queries";
 
-export function PlayerTournamentStats({ stats }: { stats: PlayerMatchStat[] }) {
+export function PlayerTournamentStats({
+  stats,
+  finishes,
+}: {
+  stats: PlayerMatchStat[];
+  /** tournament id → where the team finished. Empty until it loads. */
+  finishes?: Map<string, TournamentFinish>;
+}) {
   const { theme } = useTheme();
   const isDark = theme === "dark";
   const [open, setOpen] = useState(false);
@@ -107,6 +115,11 @@ export function PlayerTournamentStats({ stats }: { stats: PlayerMatchStat[] }) {
                   </Link>
                 ) : (
                   <span className="text-sm font-medium text-muted-foreground">{group.name}</span>
+                )}
+                {/* Squad membership earns the placing, so it shows whether or
+                    not this player got on the pitch. */}
+                {group.id && finishes?.get(group.id) && (
+                  <FinishBadge finish={finishes.get(group.id)!} />
                 )}
                 <div className="ml-auto flex items-center gap-3 text-[11px] font-time">
                   <span className="text-foreground">{gt.goals} G</span>

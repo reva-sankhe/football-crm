@@ -1,5 +1,6 @@
 import { supabase } from "./supabase";
 import { dayFromISO } from "./attendance";
+import { tournamentFinish, type TournamentFinish } from "./tournaments";
 import type {
   Player, TestSession, TestResult, TrainingSession, SessionRPE, SessionAttendance, AttendanceStatus,
   Tournament, TournamentLink, Squad, SquadWithPlayers, Match, MatchWithSession, MatchPlayerStat,
@@ -582,6 +583,11 @@ export async function setSquadPlayers(squadId: string, playerIds: string[]): Pro
 // ── Matches ───────────────────────────────────────────────────────────────────
 export const MATCH_SELECT = "*, sessions(*), squads(id, name), opponents(id, name)";
 
+/** The subset of a match `tournamentFinish` needs. */
+type DecidingMatch = Pick<
+  Match, "stage" | "goals_for" | "goals_against" | "went_to_penalties" | "pens_for" | "pens_against"
+>;
+
 export async function fetchMatchesForTournament(tournamentId: string): Promise<MatchWithSession[]> {
   const { data, error } = await supabase
     .from("matches")
@@ -847,6 +853,36 @@ export async function fetchTournamentLeaders(
   return Array.from(byPlayer.values()).sort(
     (a, b) => b.goals - a.goals || b.assists - a.assists || b.minutes - a.minutes,
   );
+}
+
+/**
+ * Where the team finished in every tournament, in one request.
+ *
+ * Only the deciding matches are fetched — the tournament list, the player
+ * profile and the printed report all need this and none of them want every
+ * match row to work it out.
+ */
+export async function fetchTournamentFinishes(): Promise<Map<string, TournamentFinish>> {
+  const { data, error } = await supabase
+    .from("matches")
+    .select("tournament_id, stage, goals_for, goals_against, went_to_penalties, pens_for, pens_against")
+    .in("stage", ["Final", "Third Place"]);
+  if (error) throw error;
+
+  const byTournament = new Map<string, DecidingMatch[]>();
+  for (const row of (data ?? []) as (DecidingMatch & { tournament_id: string | null })[]) {
+    if (!row.tournament_id) continue; // a standalone friendly places nothing
+    const list = byTournament.get(row.tournament_id);
+    if (list) list.push(row);
+    else byTournament.set(row.tournament_id, [row]);
+  }
+
+  const out = new Map<string, TournamentFinish>();
+  for (const [id, rows] of byTournament) {
+    const finish = tournamentFinish(rows);
+    if (finish) out.set(id, finish);
+  }
+  return out;
 }
 
 /** Match counts per tournament, for the tournament cards. */

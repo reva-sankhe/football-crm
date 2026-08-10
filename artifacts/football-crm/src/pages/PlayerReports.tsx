@@ -3,7 +3,7 @@ import { useSearchParams } from "wouter";
 import { ArrowLeft, Printer, RefreshCw } from "lucide-react";
 import {
   fetchAllAttendanceStats, fetchAllMatchStats, fetchAllResults,
-  fetchAllRPEWithSessions, fetchPlayers, fetchTrainingSessions,
+  fetchAllRPEWithSessions, fetchPlayers, fetchTournamentFinishes, fetchTrainingSessions,
 } from "@/lib/queries";
 import { buildPlayerReport, type ReportData, type ReportRange } from "@/lib/report";
 import { formatDateLong } from "@/lib/attendance";
@@ -42,8 +42,8 @@ export default function PlayerReports() {
     return () => { if (wasDark) root.classList.add("dark"); };
   }, []);
 
-  // Six batch queries regardless of how many players were selected — the
-  // per-player profile queries would be ~7 requests each.
+  // A handful of batch queries regardless of how many players were selected —
+  // the per-player profile queries would be ~7 requests each.
   useEffect(() => {
     let cancelled = false;
     Promise.all([
@@ -53,8 +53,9 @@ export default function PlayerReports() {
       fetchAllResults(),
       fetchAllRPEWithSessions(),
       fetchAllMatchStats(),
+      fetchTournamentFinishes(),
     ])
-      .then(([ps, sessions, attendance, results, rpe, matchStats]) => {
+      .then(([ps, sessions, attendance, results, rpe, matchStats, finishes]) => {
         if (cancelled) return;
         setPlayers(ps);
         setData({
@@ -63,6 +64,7 @@ export default function PlayerReports() {
           results: results as ReportData["results"],
           rpe: rpe as ReportData["rpe"],
           matchStats,
+          finishes,
         });
       })
       .catch((err) => { if (!cancelled) setError(String(err)); })

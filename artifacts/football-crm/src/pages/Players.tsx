@@ -5,6 +5,8 @@ import { TableSkeleton } from "@/components/Skeleton";
 import { EmptyState } from "@/components/EmptyState";
 import { fetchPlayers, createPlayer, updatePlayer, fetchTrainingSessions } from "@/lib/queries";
 import { ReportOptionsModal } from "@/components/report/ReportOptionsModal";
+import { SquadOverview } from "@/components/players/SquadOverview";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { AddButton } from "@/components/AddButton";
 import { CountPill, IconButton, SearchInput, TOOLBAR_MENU, TOOLBAR_SELECT } from "@/components/Toolbar";
 import { JERSEY_MAX, JERSEY_MIN, calcAgeRange, cn, parseJersey, playerLabel } from "@/lib/utils";
@@ -370,9 +372,56 @@ function QuickEditModal({
 
 export default function Players() {
   const { team } = useTeam();
-  const [, navigate] = useLocation();
+  const [tab, setTab] = useState<"all" | "overview">("all");
   const [players, setPlayers] = useState<Player[]>([]);
   const [loading, setLoading] = useState(true);
+
+  // Fetched once here and shared by both tabs, so the roster and the overview
+  // can never describe different data.
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      setPlayers(await fetchPlayers(team));
+    } finally {
+      setLoading(false);
+    }
+  }, [team]);
+
+  useEffect(() => { load(); }, [load]);
+
+  return (
+    <div className="space-y-5">
+      <Tabs value={tab} onValueChange={(v) => setTab(v as typeof tab)} className="space-y-4">
+        <TabsList className="justify-end">
+          <TabsTrigger value="all" data-testid="tab-all-players">All</TabsTrigger>
+          <TabsTrigger value="overview" data-testid="tab-overview">Overview</TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="all" className="mt-0">
+          <AllPlayersTab players={players} loading={loading} reload={load} setPlayers={setPlayers} />
+        </TabsContent>
+
+        <TabsContent value="overview" className="mt-0">
+          <SquadOverview players={players} loading={loading} />
+        </TabsContent>
+      </Tabs>
+    </div>
+  );
+}
+
+// ── All tab — the roster table ────────────────────────────────────────────────
+function AllPlayersTab({
+  players,
+  loading,
+  reload,
+  setPlayers,
+}: {
+  players: Player[];
+  loading: boolean;
+  reload: () => void;
+  setPlayers: React.Dispatch<React.SetStateAction<Player[]>>;
+}) {
+  const [, navigate] = useLocation();
   const [search, setSearch] = useState("");
   const [filterPos, setFilterPos] = useState("");
   const [filterAge, setFilterAge] = useState("");
@@ -385,24 +434,12 @@ export default function Players() {
   const [sessionDates, setSessionDates] = useState<Date[]>([]);
   const filterRef = useRef<HTMLDivElement>(null);
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    try {
-      const data = await fetchPlayers(team);
-      setPlayers(data);
-    } finally {
-      setLoading(false);
-    }
-  }, [team]);
-
   // Only used to underline days that have data in the report range picker
   useEffect(() => {
     fetchTrainingSessions()
       .then((ss) => setSessionDates(ss.map((s) => new Date(s.date + "T00:00:00"))))
       .catch(() => {/* the picker just shows no underlines */});
   }, []);
-
-  useEffect(() => { load(); }, [load]);
 
   // Dismiss the filter popover on an outside click or Escape
   useEffect(() => {
@@ -452,7 +489,7 @@ export default function Players() {
     (filterPos ? 1 : 0) + (filterAge ? 1 : 0) + (filterActive !== "active" ? 1 : 0);
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-4">
       {/* Toolbar */}
       <div className="flex items-center gap-2">
         <SearchInput
@@ -661,7 +698,7 @@ export default function Players() {
         )}
       </div>
 
-      {showAdd && <AddPlayerModal onClose={() => setShowAdd(false)} onSaved={load} />}
+      {showAdd && <AddPlayerModal onClose={() => setShowAdd(false)} onSaved={reload} />}
 
       {editPlayer && (
         <QuickEditModal

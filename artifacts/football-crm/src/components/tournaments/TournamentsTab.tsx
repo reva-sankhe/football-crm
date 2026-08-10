@@ -1,12 +1,17 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Link } from "wouter";
-import { CalendarRange, Check, MapPin, SlidersHorizontal, Trophy } from "lucide-react";
+import { useLocation } from "wouter";
+import { ArrowRight, Check, SlidersHorizontal, Trophy } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
 import { AddButton } from "@/components/AddButton";
+import { EmptyState } from "@/components/EmptyState";
+import { TableSkeleton } from "@/components/Skeleton";
+import { FinishBadge } from "@/components/Badges";
 import { CountPill, IconButton, SearchInput, TOOLBAR_MENU, TOOLBAR_SELECT } from "@/components/Toolbar";
-import { fetchMatchCountsByTournament, fetchTournaments } from "@/lib/queries";
-import { MATCH_FORMATS, formatDateRange } from "@/lib/tournaments";
+import {
+  fetchMatchCountsByTournament, fetchTournamentFinishes, fetchTournaments,
+} from "@/lib/queries";
+import { MATCH_FORMATS, formatDateRange, type TournamentFinish } from "@/lib/tournaments";
 import { TournamentFormModal } from "@/components/tournaments/TournamentFormModal";
 import type { Tournament } from "@/lib/types";
 
@@ -26,8 +31,10 @@ function formatRank(format: string | null): number {
 
 export function TournamentsTab() {
   const { toast } = useToast();
+  const [, setLocation] = useLocation();
   const [tournaments, setTournaments] = useState<Tournament[]>([]);
   const [matchCounts, setMatchCounts] = useState<Record<string, number>>({});
+  const [finishes, setFinishes] = useState<Map<string, TournamentFinish>>(new Map());
   const [loading, setLoading] = useState(true);
   const [showNew, setShowNew] = useState(false);
 
@@ -42,9 +49,14 @@ export function TournamentsTab() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [list, counts] = await Promise.all([fetchTournaments(), fetchMatchCountsByTournament()]);
+      const [list, counts, placings] = await Promise.all([
+        fetchTournaments(),
+        fetchMatchCountsByTournament(),
+        fetchTournamentFinishes(),
+      ]);
       setTournaments(list);
       setMatchCounts(counts);
+      setFinishes(placings);
     } catch (err) {
       toast({ title: "Failed to load tournaments", description: String(err), variant: "destructive" });
     } finally {
@@ -187,24 +199,20 @@ export function TournamentsTab() {
         </CountPill>
       </div>
 
-      {loading ? (
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          {[...Array(3)].map((_, i) => (
-            <div key={i} className="bg-card border border-border rounded-2xl h-32 animate-pulse" />
-          ))}
-        </div>
-      ) : visible.length === 0 ? (
-        <div className="bg-card border border-border rounded-2xl p-12 text-center">
-          <Trophy size={32} className="mx-auto text-muted-foreground/40 mb-3" />
-          {tournaments.length === 0 ? (
-            <>
-              <p className="text-muted-foreground text-sm">No tournaments yet</p>
-              <button onClick={() => setShowNew(true)} className="mt-3 text-sm text-indigo-400 hover:text-indigo-300">
-                Create your first tournament
-              </button>
-            </>
+      {/* Same table shell as the Players roster — one type scale across both. */}
+      <div className="bg-card border border-border rounded-2xl overflow-hidden">
+        {loading ? (
+          <div className="p-4"><TableSkeleton rows={5} cols={5} /></div>
+        ) : visible.length === 0 ? (
+          tournaments.length === 0 ? (
+            <EmptyState
+              icon={Trophy}
+              title="No tournaments yet"
+              description="Create your first tournament to start logging matches"
+            />
           ) : (
-            <>
+            <div className="p-12 text-center">
+              <Trophy size={32} className="mx-auto text-muted-foreground/40 mb-3" />
               <p className="text-muted-foreground text-sm">No tournaments match your search</p>
               <button
                 onClick={() => { setSearch(""); setFilterFormat(""); setFilterYear(""); }}
@@ -212,44 +220,54 @@ export function TournamentsTab() {
               >
                 Clear search and filters
               </button>
-            </>
-          )}
-        </div>
-      ) : (
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          {visible.map((t) => {
-            const range = formatDateRange(t.start_date, t.end_date);
-            const count = matchCounts[t.id] ?? 0;
-            return (
-              <Link
-                key={t.id}
-                href={`/tournaments/${t.id}`}
-                className="block bg-card border border-border rounded-2xl p-4 hover:border-indigo-500/40 transition-colors"
-                data-testid={`card-tournament-${t.id}`}
-              >
-                <div className="min-w-0">
-                  <div className="text-sm font-semibold text-foreground truncate">{t.name}</div>
-                  {range && (
-                    <div className="text-[11px] text-muted-foreground flex items-center gap-1 mt-0.5">
-                      <CalendarRange size={10} /> {range}
-                    </div>
-                  )}
-                  {t.location && (
-                    <div className="text-[11px] text-muted-foreground flex items-center gap-1 mt-0.5 truncate">
-                      <MapPin size={10} className="shrink-0" /> {t.location}
-                    </div>
-                  )}
-                </div>
-                <div className="flex items-center gap-3 mt-3 pt-3 border-t border-border text-[11px] text-muted-foreground">
-                  <span className="font-time">{count} match{count !== 1 ? "es" : ""}</span>
-                  {t.format && <span className="font-time">{t.format}</span>}
-                  <span className="font-time">{t.default_match_mins} min default</span>
-                </div>
-              </Link>
-            );
-          })}
-        </div>
-      )}
+            </div>
+          )
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm" data-testid="tournaments-table">
+              <thead>
+                <tr className="border-b border-border text-xs text-muted-foreground">
+                  <th className="pl-4 pr-2 py-2.5 text-left font-medium">Name</th>
+                  <th className="px-2 py-2.5 text-left font-medium">Dates</th>
+                  <th className="px-2 py-2.5 text-left font-medium">Location</th>
+                  <th className="px-2 py-2.5 text-left font-medium">Format</th>
+                  <th className="px-2 py-2.5 text-right font-medium">Matches</th>
+                  <th className="px-2 py-2.5 text-left font-medium">Finish</th>
+                  <th className="pr-4 pl-2 py-2.5 w-8"></th>
+                </tr>
+              </thead>
+              <tbody>
+                {visible.map((t) => {
+                  const range = formatDateRange(t.start_date, t.end_date);
+                  const finish = finishes.get(t.id);
+                  return (
+                    <tr
+                      key={t.id}
+                      onClick={() => setLocation(`/tournaments/${t.id}`)}
+                      className="border-b border-border/50 hover:bg-muted/30 cursor-pointer transition-colors"
+                      data-testid={`row-tournament-${t.id}`}
+                    >
+                      <td className="pl-4 pr-2 py-2.5 font-medium text-foreground">{t.name}</td>
+                      <td className="px-2 py-2.5 text-muted-foreground">{range ?? "—"}</td>
+                      <td className="px-2 py-2.5 text-muted-foreground">{t.location ?? "—"}</td>
+                      <td className="px-2 py-2.5 text-muted-foreground">{t.format ?? "—"}</td>
+                      <td className="px-2 py-2.5 text-right text-muted-foreground font-time">
+                        {matchCounts[t.id] ?? 0}
+                      </td>
+                      <td className="px-2 py-2.5">
+                        {finish ? <FinishBadge finish={finish} /> : <span className="text-muted-foreground/40">—</span>}
+                      </td>
+                      <td className="pr-4 pl-2 py-2.5 text-right">
+                        <ArrowRight size={13} className="text-muted-foreground inline" />
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
 
       {showNew && (
         <TournamentFormModal

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useLocation, useParams } from "wouter";
-import { ArrowLeft, ArrowRight, Pencil } from "lucide-react";
+import { ArrowLeft, ArrowRight, ChevronDown, Pencil } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useTheme } from "@/context/ThemeContext";
 import { useToast } from "@/hooks/use-toast";
@@ -10,22 +10,22 @@ import {
   fetchPlayers,
   fetchSquadsForTournament,
   fetchTournament,
-  fetchTournamentLeaders,
-  type TournamentLeader,
 } from "@/lib/queries";
 import {
-  RESULT_CFG, formatDateRange, matchResult, tournamentRecord,
+  RESULT_CFG, formatDateRange, matchOutcome, stageRank, tournamentFinish, tournamentRecord,
+  type TournamentRecord,
 } from "@/lib/tournaments";
+import { formatShootout } from "@/lib/lineup";
 import { formatDateShort } from "@/lib/attendance";
 import { SquadCard } from "@/components/tournaments/SquadCard";
 import { TournamentFormModal } from "@/components/tournaments/TournamentFormModal";
 import { MatchFormModal } from "@/components/tournaments/MatchFormModal";
 import { LinksArchive } from "@/components/tournaments/LinksArchive";
-import { StageBadge } from "@/components/Badges";
+import { FinishBadge } from "@/components/Badges";
 import { SectionLabel, StatTile } from "@/components/StatTile";
 import { AddButton } from "@/components/AddButton";
 import type {
-  MatchWithSession, Player, SquadWithPlayers, Tournament,
+  MatchStage, MatchWithSession, Player, SquadWithPlayers, Tournament,
 } from "@/lib/types";
 
 export default function TournamentDetail() {
@@ -39,7 +39,6 @@ export default function TournamentDetail() {
   const [squads, setSquads] = useState<SquadWithPlayers[]>([]);
   const [matches, setMatches] = useState<MatchWithSession[]>([]);
   const [players, setPlayers] = useState<Player[]>([]);
-  const [leaders, setLeaders] = useState<TournamentLeader[]>([]);
   const [loading, setLoading] = useState(true);
   const [showNewMatch, setShowNewMatch] = useState(false);
   /** The match being edited, or null — the same modal that creates them. */
@@ -52,18 +51,16 @@ export default function TournamentDetail() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [t, sq, ms, ps, ld] = await Promise.all([
+      const [t, sq, ms, ps] = await Promise.all([
         fetchTournament(id!),
         fetchSquadsForTournament(id!),
         fetchMatchesForTournament(id!),
         fetchPlayers(),
-        fetchTournamentLeaders(id!),
       ]);
       setTournament(t);
       setSquads(sq);
       setMatches(ms);
       setPlayers(ps.filter((p) => p.is_active));
-      setLeaders(ld);
     } catch (err) {
       toast({ title: "Failed to load tournament", description: String(err), variant: "destructive" });
     } finally {
@@ -72,27 +69,6 @@ export default function TournamentDetail() {
   }, [id, toast]);
 
   useEffect(() => { load(); }, [load]);
-
-  // Leaders are aggregated server-side, so a squad change needs a refetch. The
-  // first load already fetched the "all" table, so this only fires on a change.
-  useEffect(() => {
-    if (squadFilter === "all") return;
-    let cancelled = false;
-    fetchTournamentLeaders(id!, squadFilter)
-      .then((ld) => { if (!cancelled) setLeaders(ld); })
-      .catch(() => {/* the leader tiles just fall back to em dashes */});
-    return () => { cancelled = true; };
-  }, [id, squadFilter]);
-
-  // Re-pull the combined table when the filter goes back to "all"
-  useEffect(() => {
-    if (squadFilter !== "all") return;
-    let cancelled = false;
-    fetchTournamentLeaders(id!)
-      .then((ld) => { if (!cancelled) setLeaders(ld); })
-      .catch(() => {/* leave whatever the last load produced */});
-    return () => { cancelled = true; };
-  }, [id, squadFilter]);
 
   const visibleMatches = useMemo(
     () => (squadFilter === "all" ? matches : matches.filter((m) => m.squad_id === squadFilter)),
@@ -103,8 +79,31 @@ export default function TournamentDetail() {
     [squads, squadFilter],
   );
 
-  const record = useMemo(() => tournamentRecord(visibleMatches), [visibleMatches]);
-  const topScorer = leaders.find((l) => l.goals > 0) ?? null;
+  // Counted the way the bracket does — a knockout won on pens is a win, not a draw
+  const record = useMemo(() => tournamentRecord(visibleMatches, matchOutcome), [visibleMatches]);
+
+  /**
+   * One group per stage in bracket order — group stage first, then the knockouts
+   * — with each group's matches in date order. The finish is read from every
+   * match, not just the visible ones, so a squad filter can't hide the final.
+   */
+  const stageGroups = useMemo(() => {
+    const byStage = new Map<MatchStage, MatchWithSession[]>();
+    for (const m of visibleMatches) {
+      const list = byStage.get(m.stage);
+      if (list) list.push(m);
+      else byStage.set(m.stage, [m]);
+    }
+    return [...byStage.entries()]
+      .sort(([a], [b]) => stageRank(a) - stageRank(b))
+      .map(([stage, ms]) => ({
+        stage,
+        matches: [...ms].sort((a, b) => (a.sessions?.date ?? "").localeCompare(b.sessions?.date ?? "")),
+        record: tournamentRecord(ms, matchOutcome),
+      }));
+  }, [visibleMatches]);
+
+  const finish = useMemo(() => tournamentFinish(matches), [matches]);
 
   if (loading) {
     return (
@@ -151,6 +150,9 @@ export default function TournamentDetail() {
             <Pencil size={15} />
           </button>
 
+          {/* Read off the bracket, so it can't disagree with the results below */}
+          {finish && <FinishBadge finish={finish} className="text-2xl" />}
+
           {squads.length > 1 && (
             <div className="ml-auto flex flex-wrap gap-1.5">
               {[{ id: "all", name: "All" }, ...squads].map((sq) => (
@@ -181,15 +183,10 @@ export default function TournamentDetail() {
         </div>
 
         {/* Record strip */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 pt-4 mt-4 border-t border-border">
+        <div className="grid grid-cols-3 gap-4 pt-4 mt-4 border-t border-border">
           <StatTile label="Played" value={record.played} />
           <StatTile label="W / D / L" value={`${record.won}/${record.drawn}/${record.lost}`} />
           <StatTile label="Goals" value={`${record.goalsFor}–${record.goalsAgainst}`} />
-          <StatTile
-            label="Top Scorer"
-            value={topScorer ? topScorer.goals : "—"}
-            sub={topScorer?.player.name}
-          />
         </div>
       </div>
 
@@ -235,53 +232,10 @@ export default function TournamentDetail() {
             </button>
           </div>
         ) : (
-          <div className="space-y-2">
-            {visibleMatches.map((m) => {
-              const result = matchResult(m);
-              return (
-                <Link
-                  key={m.id}
-                  href={`/matches/${m.id}`}
-                  className="flex items-center gap-3 bg-card border border-border rounded-xl px-4 py-3 hover:border-indigo-500/40 transition-colors"
-                  data-testid={`row-match-${m.id}`}
-                >
-                  <StageBadge stage={m.stage} />
-                  <div className="min-w-0 flex-1">
-                    <div className="text-sm font-medium text-foreground truncate">
-                      {m.opponents ? `vs ${m.opponents.name}` : "Opponent TBD"}
-                    </div>
-                    <div className="text-[11px] text-muted-foreground">
-                      {m.sessions ? formatDateShort(m.sessions.date) : "—"}
-                      {m.sessions && ` · ${m.sessions.duration_mins} min`}
-                      {m.squads && ` · ${m.squads.name}`}
-                    </div>
-                  </div>
-                  {result ? (
-                    <>
-                      <span className="font-time font-bold text-foreground text-sm">
-                        {m.goals_for}–{m.goals_against}
-                      </span>
-                      <span className={cn("w-6 h-6 rounded-md flex items-center justify-center text-[11px] font-bold shrink-0", RESULT_CFG[result].bg, RESULT_CFG[result].text)}>
-                        {result}
-                      </span>
-                    </>
-                  ) : (
-                    <span className="text-[11px] text-muted-foreground shrink-0">Not played</span>
-                  )}
-                  {/* Inside a Link, so the row's navigation has to be suppressed */}
-                  <button
-                    onClick={(e) => { e.preventDefault(); e.stopPropagation(); setEditMatch(m); }}
-                    aria-label={`Edit match${m.opponents ? ` vs ${m.opponents.name}` : ""}`}
-                    title="Edit match"
-                    className="p-1 rounded text-muted-foreground hover:text-foreground hover:bg-muted transition-colors shrink-0"
-                    data-testid={`button-edit-match-${m.id}`}
-                  >
-                    <Pencil size={13} />
-                  </button>
-                  <ArrowRight size={13} className="text-muted-foreground shrink-0" />
-                </Link>
-              );
-            })}
+          <div className="space-y-3">
+            {stageGroups.map((group) => (
+              <StageGroup key={group.stage} group={group} onEdit={setEditMatch} />
+            ))}
           </div>
         )}
       </div>
@@ -314,7 +268,7 @@ export default function TournamentDetail() {
           tournament={tournament}
           onClose={() => setShowEdit(false)}
           onSaved={() => { setShowEdit(false); load(); }}
-          onDeleted={() => setLocation("/sessions")}
+          onDeleted={() => setLocation("/tournaments")}
         />
       )}
 
@@ -326,6 +280,104 @@ export default function TournamentDetail() {
           onSaved={() => { setShowNewSquad(false); load(); }}
         />
       )}
+    </div>
+  );
+}
+
+// ── One stage's matches, foldable ─────────────────────────────────────────────
+function StageGroup({
+  group,
+  onEdit,
+}: {
+  group: { stage: MatchStage; matches: MatchWithSession[]; record: TournamentRecord };
+  onEdit: (m: MatchWithSession) => void;
+}) {
+  const { theme } = useTheme();
+  const isDark = theme === "dark";
+  // Closed by default: the heading's record is enough to scan a tournament, and
+  // eight fixtures open at once buried the rest of the page.
+  const [open, setOpen] = useState(false);
+  const { stage, matches, record } = group;
+
+  return (
+    <div className="space-y-2">
+      <button
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        className="w-full flex items-center gap-2 px-1 py-1 text-left group"
+        data-testid={`toggle-stage-${stage.toLowerCase().replace(/\s+/g, "-")}`}
+      >
+        <ChevronDown
+          size={14}
+          className={cn(
+            "text-muted-foreground transition-transform shrink-0",
+            !open && "-rotate-90",
+          )}
+        />
+        <span className="text-[11px] font-semibold uppercase tracking-widest text-muted-foreground">
+          {stage}
+        </span>
+        <span className="text-[11px] text-muted-foreground/70 font-time">
+          {matches.length}
+        </span>
+        {record.played > 0 && (
+          <span className="ml-auto text-[11px] text-muted-foreground font-time">
+            {record.won}W {record.drawn}D {record.lost}L · {record.goalsFor}–{record.goalsAgainst}
+          </span>
+        )}
+      </button>
+
+      {open && (
+        <div className="space-y-2">
+          {matches.map((m) => {
+            const result = matchOutcome(m);
+            return (
+              <Link
+                key={m.id}
+                href={`/matches/${m.id}`}
+                className="flex items-center gap-3 bg-card border border-border rounded-xl px-4 py-3 hover:border-indigo-500/40 transition-colors"
+                data-testid={`row-match-${m.id}`}
+              >
+                <div className="min-w-0 flex-1">
+                    <div className="text-sm font-medium text-foreground truncate">
+                      {m.opponents ? `vs ${m.opponents.name}` : "Opponent TBD"}
+                    </div>
+                    <div className="text-[11px] text-muted-foreground">
+                      {m.sessions ? formatDateShort(m.sessions.date) : "—"}
+                      {m.sessions && ` · ${m.sessions.duration_mins} min`}
+                      {m.squads && ` · ${m.squads.name}`}
+                      {/* Without this a 1–1 badged W looks like a mistake */}
+                      {formatShootout(m) && ` · ${formatShootout(m)}`}
+                    </div>
+                  </div>
+                  {result ? (
+                    <>
+                      <span className="font-time font-bold text-foreground text-sm">
+                        {m.goals_for}–{m.goals_against}
+                      </span>
+                      <span className={cn("w-6 h-6 rounded-md flex items-center justify-center text-[11px] font-bold shrink-0", RESULT_CFG[result].bg, RESULT_CFG[result].text)}>
+                        {result}
+                      </span>
+                    </>
+                  ) : (
+                    <span className="text-[11px] text-muted-foreground shrink-0">Not played</span>
+                  )}
+                  {/* Inside a Link, so the row's navigation has to be suppressed */}
+                  <button
+                    onClick={(e) => { e.preventDefault(); e.stopPropagation(); onEdit(m); }}
+                    aria-label={`Edit match${m.opponents ? ` vs ${m.opponents.name}` : ""}`}
+                    title="Edit match"
+                    className="p-1 rounded text-muted-foreground hover:text-foreground hover:bg-muted transition-colors shrink-0"
+                    data-testid={`button-edit-match-${m.id}`}
+                  >
+                    <Pencil size={13} />
+                  </button>
+                  <ArrowRight size={13} className="text-muted-foreground shrink-0" />
+                </Link>
+              );
+            })}
+          </div>
+        )}
     </div>
   );
 }

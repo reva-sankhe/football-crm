@@ -1,6 +1,6 @@
 import { cn } from "@/lib/utils";
 import { SESSION_TYPE_CFG } from "@/lib/attendance";
-import { STAGE_CFG } from "@/lib/tournaments";
+import { FINISH_CFG, STAGE_CFG, type TournamentFinish } from "@/lib/tournaments";
 import type { MatchStage, SessionType } from "@/lib/types";
 
 /**
@@ -42,6 +42,30 @@ export function StageBadge({
       )}
     >
       {short ? cfg.short : cfg.label}
+    </span>
+  );
+}
+
+/**
+ * Where the team finished, as a medal. The word rides along for screen readers
+ * and on hover, so nothing depends on the glyph rendering.
+ */
+export function FinishBadge({
+  finish,
+  className,
+}: {
+  finish: TournamentFinish;
+  className?: string;
+}) {
+  const cfg = FINISH_CFG[finish];
+  return (
+    <span
+      title={cfg.label}
+      className={cn("inline-flex items-center leading-none shrink-0 text-base", className)}
+      data-testid={`badge-finish-${finish.toLowerCase()}`}
+    >
+      <span aria-hidden>{cfg.medal}</span>
+      <span className="sr-only">{cfg.label}</span>
     </span>
   );
 }

@@ -48,6 +48,38 @@ A team management CRM for Bombay Gymkhana Women's Football — tracks players, s
   differ. `playerLabel()` in `lib/utils.ts` is the single definition of the "Aanya Vora (#12)"
   display format — use it everywhere a player is named, and `parseJersey`/`isValidJersey`
   (same file) to validate input against the constraint before writing.
+- The Players page has two tabs: **All** (the roster table) and **Overview** (squad
+  composition). Both read one fetch made by the parent `Players()` so they can never
+  describe different data. `lib/squad.ts` holds the computation *and* the prose:
+  `buildSquadOverview` derives the figures, and `interpretSize` / `interpretAge` /
+  `interpretPositions` turn them into the paragraph under each block. Those readings are
+  **deterministic, not LLM-generated** — every sentence is written from a real figure, so
+  the text can never claim something the data doesn't show. Adjust a threshold there and
+  adjust the sentence that reports it in the same edit.
+- Chart work follows the `dataviz` skill, and `lib/viz.ts` is this app's validated instance
+  of it — the categorical slots pass all six checks of the skill's validator on both real
+  surfaces. Consume `posColor`/`ink`/`HIGHLIGHT` rather than picking colours. Two rules bite
+  in practice: light mode's contrast WARN means any categorical chart needs visible labels
+  (the position bars carry direct value labels for exactly this reason), and every chart
+  needs a table view because a value reachable only by hovering fails accessibility.
+- **Where the team finished is derived, never stored.** `tournamentFinish` in
+  `lib/tournaments.ts` reads the Final and Third Place matches — win the final → Winners,
+  lose it → Runners-up, win the third-place playoff → Third, anything else → null. A final
+  level at full time is settled on the shootout, which is why the function consults
+  `pens_for`/`pens_against` even though `matchResult` still calls that match a draw. There is
+  no column to keep in sync, so a corrected scoreline corrects the placing everywhere.
+  `fetchTournamentFinishes` returns them all in one request; the tournament list, the player
+  profile and the printed report each use it. A squad call-up earns the placing, so it shows
+  on a player's profile whether or not they got on the pitch. On screen it renders as a
+  medal (`FinishBadge`) with the word in `sr-only` text and the `title`, so nothing depends
+  on the emoji font; the printed report uses `FINISH_CFG[...].label` instead, because the
+  report is deliberately monochrome and a colour glyph doesn't belong in it.
+- Tournament matches are grouped by stage in bracket order (`stageRank`) and dated within each
+  group, each group collapsible. The per-row stage badge is gone — the group heading carries it.
+- The tournaments list and the Players roster deliberately share one table shell
+  (`bg-card border rounded-2xl` → `thead` at `text-xs` → rows at `text-sm`). If you restyle
+  one, restyle the other; they were visibly different type scales before and it read as two
+  different apps.
 - Opponents are a real table, not free text. `matches.opponent_id` is the FK; the old
   `matches.opponent` text column is deprecated and kept only until the UI is fully cut
   over. Always write `opponent_id`.
@@ -112,6 +144,16 @@ A team management CRM for Bombay Gymkhana Women's Football — tracks players, s
 - Penalty shootouts never touch `goals_for`/`goals_against` or `matchResult()`. The
   match stays a draw and "won 4–3 on pens" is shown alongside, so head-to-head
   totals and per-90 rates stay honest.
+- **There are two result functions, and the split is deliberate.** `matchResult` counts
+  goals only — it is what the SQL head-to-head views (`v_opponent_h2h`) and the per-90
+  rates mirror, so it must never learn about shootouts. `matchOutcome` is the bracket's
+  view: identical everywhere except a drawn *knockout* tie, which the shootout settles into
+  a W or an L, because there is no such thing as a drawn semi-final. Group games and
+  friendlies can still end level under both. Anything a bracket owns — result badges, stage
+  records, a tournament's own W/D/L, `tournamentFinish` — uses `matchOutcome`;
+  `tournamentRecord` takes it as its `resultOf` argument. Consequence to accept: a
+  tournament page can read 4/2/1 while the H2H view counts the same games 3/3/1. That is
+  correct, not a bug — they are answering different questions.
 - previewPath is `/` so the CRM is the root app in the preview pane.
 - Supabase project ID: `ljxsclpmidkyqaujesio`
 

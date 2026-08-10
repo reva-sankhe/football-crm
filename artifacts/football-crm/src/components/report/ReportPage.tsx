@@ -4,7 +4,7 @@ import {
 import { formatBronco, playerLabel } from "@/lib/utils";
 import { attendancePctFill, formatDateLong } from "@/lib/attendance";
 import { HIGHLIGHT, ink } from "@/lib/viz";
-import { formatDateRange } from "@/lib/tournaments";
+import { FINISH_CFG, formatDateRange } from "@/lib/tournaments";
 import { ACWR_CONFIG, type PlayerReport } from "@/lib/report";
 
 // Reports always print on white, so they pin the light ink set.
@@ -206,7 +206,15 @@ export function ReportPage({ report, generatedAt }: { report: PlayerReport; gene
                 <tbody>
                   {matches.byTournament.map((t) => (
                     <tr key={t.name} className="border-b border-slate-100 last:border-0">
-                      <td className="py-0.5">{t.name}</td>
+                      <td className="py-0.5">
+                        {t.name}
+                        {/* Printed in ink, not colour — the page is monochrome-safe */}
+                        {t.finish && (
+                          <span className="ml-1.5 text-[9px] font-semibold uppercase tracking-wider text-slate-500">
+                            {FINISH_CFG[t.finish].label}
+                          </span>
+                        )}
+                      </td>
                       <td className="py-0.5 text-right">{t.totals.appearances}</td>
                       <td className="py-0.5 text-right">{t.totals.minutes > 0 ? t.totals.minutes : "—"}</td>
                       <td className="py-0.5 text-right font-semibold">{t.totals.goals}</td>

@@ -15,7 +15,7 @@ import {
   replacePenaltyKicks,
   updateMatch,
 } from "@/lib/queries";
-import { RESULT_CFG, matchResult } from "@/lib/tournaments";
+import { RESULT_CFG, matchOutcome } from "@/lib/tournaments";
 import {
   SUB_POLICIES, applyGoal, formatShootout, goalCountsByMethod, playerMinutes, resolveSubPolicy,
   spellInvalid, subsExceeded, subsUsed, type GoalMethod,
@@ -355,9 +355,15 @@ export default function MatchDetail() {
     );
   }
 
-  const result = matchResult({
+  // Reads the unsaved edits, so the badge follows the score and shootout as they
+  // are typed — and a knockout level on goals resolves to W or L on the pens.
+  const result = matchOutcome({
+    stage: match.stage,
     goals_for: goalsFor === "" ? null : parseInt(goalsFor),
     goals_against: goalsAgainst === "" ? null : parseInt(goalsAgainst),
+    went_to_penalties: wentToPens,
+    pens_for: pensFor === "" ? null : parseInt(pensFor),
+    pens_against: pensAgainst === "" ? null : parseInt(pensAgainst),
   });
 
   /** Where the back button and a delete both lead. */

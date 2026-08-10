@@ -2,7 +2,7 @@ import {
   collapseMatchDays, countsAsAttended, matchDayAttendance, type MatchDayAttendance,
 } from "./attendance";
 import { STATUS, ordinal, type Mode } from "./viz";
-import { sumStats, type Totals } from "./tournaments";
+import { sumStats, type Totals, type TournamentFinish } from "./tournaments";
 import { getBroncoTier, type BroncoTier } from "./types";
 import type {
   Player, SessionAttendance, SessionRPE, TestResult, TrainingSession,
@@ -29,6 +29,8 @@ export interface ReportData {
   results: (ResultRow & { player_id: string })[];
   rpe: RpeRow[];
   matchStats: PlayerMatchStat[];
+  /** tournament id → where the team finished, derived from the bracket. */
+  finishes: Map<string, TournamentFinish>;
 }
 
 export interface MonthlyAttendance {
@@ -85,7 +87,7 @@ export interface PlayerReport {
   };
   matches: Totals & {
     callUps: number;
-    byTournament: { name: string; totals: Totals }[];
+    byTournament: { name: string; totals: Totals; finish?: TournamentFinish }[];
     /** Current calendar year, matching the profile's Goals/Appearances tiles. */
     thisYear: Totals & { callUps: number };
   };
@@ -250,11 +252,16 @@ export function buildPlayerReport(
   const yearStats = data.matchStats.filter(
     (m) => m.player_id === player.id && (m.matches?.sessions?.date ?? "").startsWith(thisYear),
   );
-  const byTournamentMap = new Map<string, PlayerMatchStat[]>();
+  // Keyed by id rather than name so each group can be matched to its finish;
+  // matches belonging to no tournament share the one sentinel key.
+  const byTournamentMap = new Map<string, { name: string; rows: PlayerMatchStat[] }>();
   for (const s of playerStats) {
-    const name = s.matches?.tournaments?.name ?? "Unassigned matches";
-    if (!byTournamentMap.has(name)) byTournamentMap.set(name, []);
-    byTournamentMap.get(name)!.push(s);
+    const t = s.matches?.tournaments;
+    const key = t?.id ?? "__none__";
+    if (!byTournamentMap.has(key)) {
+      byTournamentMap.set(key, { name: t?.name ?? "Unassigned matches", rows: [] });
+    }
+    byTournamentMap.get(key)!.rows.push(s);
   }
 
   // ── Fitness ─────────────────────────────────────────────────────────────
@@ -347,9 +354,10 @@ export function buildPlayerReport(
     matches: {
       ...sumStats(playerStats),
       callUps: playerStats.length,
-      byTournament: Array.from(byTournamentMap.entries()).map(([name, rows]) => ({
-        name,
-        totals: sumStats(rows),
+      byTournament: Array.from(byTournamentMap.entries()).map(([id, group]) => ({
+        name: group.name,
+        totals: sumStats(group.rows),
+        finish: data.finishes.get(id),
       })),
       thisYear: { ...sumStats(yearStats), callUps: yearStats.length },
     },
