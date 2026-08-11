@@ -120,7 +120,7 @@ export default function TournamentDetail() {
     return (
       <div className="text-center py-16">
         <p className="text-muted-foreground">Tournament not found</p>
-        <button onClick={() => setLocation("/sessions")} className="mt-2 text-sm text-indigo-400">Back to Sessions</button>
+        <button onClick={() => setLocation("/training")} className="mt-2 text-sm text-indigo-400">Back to Training</button>
       </div>
     );
   }

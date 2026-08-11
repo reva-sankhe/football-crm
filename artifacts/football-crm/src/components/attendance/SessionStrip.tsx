@@ -104,14 +104,6 @@ export function SessionStrip({
                     : s.session_type}
                 </span>
               </div>
-              <div
-                className={cn(
-                  "mt-1.5 text-[10px] font-medium font-time",
-                  taken ? "text-status-good" : "text-muted-foreground/50",
-                )}
-              >
-                {taken ? `${summary.present}/${rosterSize}` : "not taken"}
-              </div>
             </button>
           );
         })}

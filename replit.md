@@ -33,10 +33,17 @@ A team management CRM for Bombay Gymkhana Women's Football — tracks players, s
 - `artifacts/football-crm/src/lib/tournamentAnalytics.ts` — tournament/squad reports, form, trend
   and the deterministic prose that reads them (pure)
 - `artifacts/football-crm/src/lib/lineup.ts` — minutes derivation, sub policy, goal methods, shootouts (pure)
-- `artifacts/football-crm/src/pages/` — page components (Dashboard, Players, Sessions, Analytics, etc.)
+- `artifacts/football-crm/src/lib/fitnessAnalytics.ts` — bronco lines, trend, group breakdowns,
+  bands and tiers, and the deterministic prose that reads them (pure)
+- `artifacts/football-crm/src/lib/trainingAnalytics.ts` — weekly team load and player load
+  distribution, on top of the `lib/report.ts` load primitives (pure)
+- `artifacts/football-crm/src/pages/` — page components (Dashboard, Players, Training, Fitness, etc.)
 - `artifacts/football-crm/src/pages/Tournaments.tsx` — the tournaments + friendlies list; its
   three tabs are `components/tournaments/TournamentsTab.tsx`, `FriendliesTab.tsx` and
   `OverviewTab.tsx`
+- `artifacts/football-crm/src/pages/Training.tsx` and `Fitness.tsx` — the same two-tab shell,
+  over `components/training/{SessionsTab,OverviewTab}.tsx` and `pages/FitnessTests.tsx` +
+  `components/fitness/OverviewTab.tsx`
 - `artifacts/api-server/` — Express API server (workspace boilerplate, not used by CRM yet)
 - `lib/db/src/schema/` — Drizzle schema (workspace boilerplate)
 - `lib/api-spec/openapi.yaml` — OpenAPI spec (workspace boilerplate)
@@ -59,6 +66,16 @@ A team management CRM for Bombay Gymkhana Women's Football — tracks players, s
   **deterministic, not LLM-generated** — every sentence is written from a real figure, so
   the text can never claim something the data doesn't show. Adjust a threshold there and
   adjust the sentence that reports it in the same edit.
+- **Analytics live beside the data they describe — there is no Analytics page.** Every section
+  carries its own Overview tab: Players, Training, Fitness and Tournaments. The old `/analytics`
+  page was seven tabs of which six were fitness tests and one was training load, sitting a click
+  away from the records they described; it was split along that seam and deleted. `/` lands on
+  Players, and `/analytics`, `/sessions` and `/sessions/:id` redirect so no saved link dies.
+- **Say which basis a group average uses.** The old Analytics page averaged bronco by position
+  two ways on one screen — the chart over the latest *session*, the cards beneath over each
+  player's own latest *time* — and showed 6:11 from 3 players directly above 6:26 from 4.
+  `buildGroupBreakdown` takes the session explicitly and every reading states it, including how
+  many players a session-based average leaves out.
 - **An Overview tab is a chart plus the reading of it, never a table of figures.**
   `components/OverviewCard.tsx` is the shared block — title, chart, a Table toggle, and an
   **Interpretation** paragraph — used by both Players → Overview and Tournaments → Overview.
@@ -157,6 +174,14 @@ A team management CRM for Bombay Gymkhana Women's Football — tracks players, s
   Two fallbacks catch match days the grid never saw, both at MATCH_RPE, so no day scores zero:
   an orphan session **with** an RPE row uses the minutes on that row; an orphan session
   **without** one uses `duration_mins` for whoever was marked Present or Late.
+- **Every load figure in the app reads those rows, team views included.**
+  `lib/trainingAnalytics.ts` (weekly team load, player load distribution, Training → Overview)
+  takes `LoadRow[]` rather than summing `session_rpe.load_au`, so it agrees with the player
+  profile, the printed report and the Dashboard alerts by construction. The old Analytics page
+  summed the raw column, which counted a match at whatever the player rated it and missed match
+  days nobody rated — figures moved when that page was replaced, deliberately. ACWR on that tab
+  always reads the full history, never the selected window: the ratio needs 28 days of baseline
+  behind it, and a 4-week window would compare a period against itself.
 - **The attendance fallback must be given the genuinely orphaned sessions** — pass
   `fetchAdoptableSessions()`, never "every match session". It cannot be inferred from "this
   player has no grid row for this session": attendance is taken once per match *day* while

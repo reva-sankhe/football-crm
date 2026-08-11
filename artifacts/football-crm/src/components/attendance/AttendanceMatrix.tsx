@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "wouter";
-import { CalendarRange, Check, Download, RefreshCw, SlidersHorizontal } from "lucide-react";
+import { CalendarRange, Check, RefreshCw, SlidersHorizontal } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useTheme } from "@/context/ThemeContext";
 import { useToast } from "@/hooks/use-toast";
@@ -89,9 +89,7 @@ export function AttendanceMatrix({ sessions, matchesOnDay, players, refreshKey, 
   const [pctBand, setPctBand] = useState<PctBand>("");
   const [grid, setGrid] = useState<Grid>({});
   const [loading, setLoading] = useState(true);
-  const [openMenu, setOpenMenu] = useState<"sort" | "filters" | "export" | null>(null);
-  const [exportRange, setExportRange] = useState<IsoRange | null>(null);
-  const [exporting, setExporting] = useState(false);
+  const [openMenu, setOpenMenu] = useState<"sort" | "filters" | null>(null);
   const barRef = useRef<HTMLDivElement>(null);
 
   const inRange = (date: string, r: IsoRange | null) => !r || (date >= r.from && date <= r.to);
@@ -203,72 +201,6 @@ export function AttendanceMatrix({ sessions, matchesOnDay, players, refreshKey, 
     }
   };
 
-  // ── CSV export ─────────────────────────────────────────────────────────────
-  /**
-   * Exports whatever range the user picks in the export popover, which may be
-   * wider than what's on screen — so it fetches its own attendance rather than
-   * reusing the loaded grid.
-   */
-  const handleExport = async () => {
-    const r = exportRange;
-    const exportSessions = sessions
-      .filter((s) => inRange(s.date, r))
-      .sort((a, b) => b.date.localeCompare(a.date));
-    if (exportSessions.length === 0) {
-      toast({ title: "No sessions in that range", variant: "destructive" });
-      return;
-    }
-
-    setExporting(true);
-    try {
-      const rows = await fetchAttendanceForSessions(exportSessions.map((s) => s.id));
-      const byPlayer: Grid = {};
-      for (const row of rows) (byPlayer[row.player_id] ??= {})[row.session_id] = row.status;
-
-      // Dates first, then the summary columns
-      const header = [
-        "Name",
-        ...exportSessions.map((s) => s.date),
-        "Attendance %",
-        ...ATTENDANCE_STATUSES,
-      ];
-
-      const lines = [...players]
-        .sort((a, b) => a.name.localeCompare(b.name))
-        .map((player) => {
-          const counts: Record<AttendanceStatus, number> = { Present: 0, Absent: 0, Late: 0, Injured: 0 };
-          let attended = 0;
-          for (const s of exportSessions) {
-            const status = byPlayer[player.id]?.[s.id];
-            if (status) counts[status]++;
-            if (countsAsAttended(status)) attended++;
-          }
-          const pct = Math.round((attended / exportSessions.length) * 100);
-          return [
-            player.name,
-            ...exportSessions.map((s) => ATTENDANCE_CFG[byPlayer[player.id]?.[s.id] ?? "Absent"].short),
-            String(pct),
-            ...ATTENDANCE_STATUSES.map((s) => String(counts[s])),
-          ];
-        });
-
-      const csv = [header, ...lines]
-        .map((row) => row.map((c) => (/[",\n]/.test(c) ? `"${c.replace(/"/g, '""')}"` : c)).join(","))
-        .join("\n");
-
-      const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8;" }));
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `attendance-${r ? `${r.from}_to_${r.to}` : "all-time"}.csv`;
-      a.click();
-      URL.revokeObjectURL(url);
-      setOpenMenu(null);
-    } catch (err) {
-      toast({ title: "Export failed", description: String(err), variant: "destructive" });
-    } finally {
-      setExporting(false);
-    }
-  };
 
   // Highlight days that actually have a session, so the picker shows where data is
   const sessionDays = useMemo(
@@ -353,44 +285,6 @@ export function AttendanceMatrix({ sessions, matchesOnDay, players, refreshKey, 
           )}
         </div>
 
-        <div className="relative">
-          <IconButton
-            label="Export CSV"
-            onClick={() => {
-              setExportRange(range);
-              setOpenMenu((m) => (m === "export" ? null : "export"));
-            }}
-            active={openMenu === "export"}
-            aria-expanded={openMenu === "export"}
-            data-testid="button-export-attendance"
-          >
-            <Download size={15} />
-          </IconButton>
-
-          {openMenu === "export" && (
-            <div className={cn(TOOLBAR_MENU, "w-64 space-y-3")}>
-              <div>
-                <div className="text-xs text-muted-foreground mb-1.5">Range to export</div>
-                <DateRangePicker
-                  value={exportRange}
-                  onChange={setExportRange}
-                  highlightDates={sessionDays}
-                  label="All time"
-                  align="end"
-                  className="h-9 text-sm w-full justify-center"
-                />
-              </div>
-              <button
-                onClick={handleExport}
-                disabled={exporting}
-                className="w-full px-3 py-2 rounded-lg text-xs font-semibold bg-indigo-600 text-white hover:bg-indigo-500 disabled:opacity-40 transition-colors"
-                data-testid="button-confirm-export"
-              >
-                {exporting ? "Exporting…" : "Export CSV"}
-              </button>
-            </div>
-          )}
-        </div>
 
         {teamPct != null && (
           <CountPill

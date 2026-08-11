@@ -178,7 +178,7 @@ export default function SessionRPE() {
     return (
       <div className="text-center py-16">
         <p className="text-muted-foreground">Session not found</p>
-        <button onClick={() => setLocation("/sessions")} className="mt-2 text-sm text-indigo-400">Back to Sessions</button>
+        <button onClick={() => setLocation("/training")} className="mt-2 text-sm text-indigo-400">Back to Training</button>
       </div>
     );
   }
@@ -191,7 +191,7 @@ export default function SessionRPE() {
       {/* Back nav */}
       <div className="flex items-center gap-2 mb-4">
         <button
-          onClick={() => setLocation(`/sessions/${selectedSessionId}`)}
+          onClick={() => setLocation(`/training/${selectedSessionId}`)}
           className="flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground transition-colors"
         >
           <ArrowLeft size={14} />

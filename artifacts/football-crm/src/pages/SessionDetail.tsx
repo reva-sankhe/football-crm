@@ -105,7 +105,7 @@ export default function SessionDetail() {
     return (
       <div className="text-center py-16">
         <p className="text-muted-foreground">Session not found</p>
-        <button onClick={() => setLocation("/sessions")} className="mt-2 text-sm text-indigo-400">Back to Sessions</button>
+        <button onClick={() => setLocation("/training")} className="mt-2 text-sm text-indigo-400">Back to Training</button>
       </div>
     );
   }
@@ -147,7 +147,7 @@ export default function SessionDetail() {
     <div className="space-y-5">
       {/* Back */}
       <button
-        onClick={() => setLocation("/sessions")}
+        onClick={() => setLocation("/training")}
         className="flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground transition-colors"
       >
         <ArrowLeft size={14} />
@@ -325,7 +325,7 @@ export default function SessionDetail() {
                 below covers the other case. A quiet link, not a primary button. */}
             {count > 0 && session.session_type !== "Lecture" && (
               <button
-                onClick={() => setLocation(`/sessions/${id}/rpe`)}
+                onClick={() => setLocation(`/training/${id}/rpe`)}
                 className="text-xs text-muted-foreground hover:text-foreground transition-colors"
                 data-testid="link-log-rpe"
               >
@@ -345,7 +345,7 @@ export default function SessionDetail() {
               <>
                 <p className="text-sm text-muted-foreground">No RPE entries yet</p>
                 <button
-                  onClick={() => setLocation(`/sessions/${id}/rpe`)}
+                  onClick={() => setLocation(`/training/${id}/rpe`)}
                   className="mt-2 text-sm text-indigo-400 hover:text-indigo-300"
                 >
                   Start logging RPE

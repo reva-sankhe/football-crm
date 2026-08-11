@@ -1,18 +1,20 @@
 import { Link, useLocation } from "wouter";
-import { ChevronDown, ChevronsLeft, ChevronsRight, Sun, Moon, ClipboardCheck, Users, BarChart2, ClipboardList, Trophy } from "lucide-react";
+import { ChevronDown, ChevronsLeft, ChevronsRight, Sun, Moon, ClipboardCheck, Users, Dumbbell, Activity, Trophy } from "lucide-react";
 import { useState, useRef, useEffect } from "react";
 import { cn } from "@/lib/utils";
 import { useTheme } from "@/context/ThemeContext";
 
 const COLLAPSE_KEY = "bg-crm-sidebar-collapsed";
 
-// Dashboard is hidden for now — it still lives at /dashboard
+// Dashboard is hidden for now — it still lives at /dashboard.
+// Each section carries its own analytics as an Overview tab, so there is no
+// Analytics entry: the numbers live beside the data they describe.
 const navItems = [
   { href: "/players",  label: "Players",      icon: Users           },
-  { href: "/sessions", label: "Sessions",     icon: ClipboardList   },
+  { href: "/training", label: "Training",     icon: Activity        },
+  { href: "/fitness",  label: "Fitness",      icon: Dumbbell        },
   { href: "/tournaments", label: "Tournaments", icon: Trophy        },
   { href: "/attendance", label: "Attendance", icon: ClipboardCheck  },
-  { href: "/analytics",label: "Analytics",    icon: BarChart2       },
 ];
 
 const logoSrc = `${import.meta.env.BASE_URL}bg-logo.png`.replace(/\/\//g, "/");

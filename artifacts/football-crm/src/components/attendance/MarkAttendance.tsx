@@ -206,7 +206,7 @@ export function MarkAttendance({
     <div className="space-y-4">
       {/* ── Toolbar — search and the running counts share one line ──────────── */}
       <div className="flex items-center gap-3 flex-wrap">
-        <div className="relative w-48 shrink-0">
+        <div className="relative w-36 shrink-0">
           <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none" />
           <input
             value={search}

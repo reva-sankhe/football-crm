@@ -8,8 +8,8 @@ import { Layout } from "@/components/Layout";
 import Dashboard from "@/pages/Dashboard";
 import Players from "@/pages/Players";
 import PlayerDetail from "@/pages/PlayerDetail";
-import Analytics from "@/pages/Analytics";
-import Sessions from "@/pages/Sessions";
+import Training from "@/pages/Training";
+import Fitness from "@/pages/Fitness";
 import SessionRPE from "@/pages/SessionRPE";
 import SessionDetail from "@/pages/SessionDetail";
 import Attendance from "@/pages/Attendance";
@@ -39,24 +39,28 @@ function AppShell() {
   return (
     <Layout>
       <Switch>
-        {/* Analytics is the landing page; Dashboard is hidden from the nav but
+        {/* Players is the landing page; Dashboard is hidden from the nav but
             still reachable at its own path */}
-        <Route path="/"><Redirect to="/analytics" /></Route>
+        <Route path="/"><Redirect to="/players" /></Route>
         <Route path="/dashboard" component={Dashboard} />
         <Route path="/players" component={Players} />
         <Route path="/players/:id" component={PlayerDetail} />
-        <Route path="/sessions" component={Sessions} />
-        <Route path="/sessions/:id/rpe" component={SessionRPE} />
-        <Route path="/sessions/:id" component={SessionDetail} />
+        <Route path="/training" component={Training} />
+        <Route path="/training/:id/rpe" component={SessionRPE} />
+        <Route path="/training/:id" component={SessionDetail} />
+        <Route path="/fitness" component={Fitness} />
         <Route path="/tournaments" component={Tournaments} />
         <Route path="/tournaments/:id" component={TournamentDetail} />
         <Route path="/matches/:id" component={MatchDetail} />
         <Route path="/attendance" component={Attendance} />
-        {/* Legacy links — the calendar became Attendance, Fitness Tests became a
-            tab on Sessions */}
+        {/* Legacy links. The calendar became Attendance; Sessions split into
+            Training and Fitness, each carrying the analytics that used to sit on
+            the Analytics page — six of its seven tabs were fitness tests. */}
         <Route path="/calendar"><Redirect to="/attendance" /></Route>
-        <Route path="/fitness"><Redirect to="/sessions" /></Route>
-        <Route path="/analytics" component={Analytics} />
+        <Route path="/sessions/:id/rpe">{(p) => <Redirect to={`/training/${p.id}/rpe`} />}</Route>
+        <Route path="/sessions/:id">{(p) => <Redirect to={`/training/${p.id}`} />}</Route>
+        <Route path="/sessions"><Redirect to="/training" /></Route>
+        <Route path="/analytics"><Redirect to="/fitness?tab=overview" /></Route>
         <Route component={NotFound} />
       </Switch>
     </Layout>

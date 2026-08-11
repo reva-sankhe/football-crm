@@ -8,8 +8,6 @@ import { SESSION_TYPES, dayFromISO, todayISO } from "@/lib/attendance";
 import { SessionTypeBadge } from "@/components/Badges";
 import { AddButton } from "@/components/AddButton";
 import { supabase } from "@/lib/supabase";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import FitnessTests from "@/pages/FitnessTests";
 import type { TrainingSession, SessionType } from "@/lib/types";
 
 
@@ -193,33 +191,13 @@ function NewSessionModal({ onClose, onSaved }: NewSessionModalProps) {
   );
 }
 
-// ── Sessions Page ─────────────────────────────────────────────────────────────
-export default function Sessions() {
-  const [tab, setTab] = useState<"training" | "fitness">("training");
-
-  return (
-    <div className="space-y-5">
-      <Tabs value={tab} onValueChange={(v) => setTab(v as typeof tab)} className="space-y-4">
-        <TabsList className="justify-end">
-          <TabsTrigger value="training" data-testid="tab-training">Training</TabsTrigger>
-          <TabsTrigger value="fitness" data-testid="tab-fitness">Fitness Tests</TabsTrigger>
-        </TabsList>
-
-        <TabsContent value="training" className="mt-0">
-          <TrainingTab />
-        </TabsContent>
-
-        {/* Self-contained: its own step machine, no routing of its own */}
-        <TabsContent value="fitness" className="mt-0">
-          <FitnessTests />
-        </TabsContent>
-      </Tabs>
-    </div>
-  );
-}
-
-// ── Training tab — the original session archive ───────────────────────────────
-function TrainingTab() {
+// ── The session archive ───────────────────────────────────────────────────────
+/**
+ * Every training session, newest first. Matches are excluded: they live under
+ * Tournaments, and a fixture is not a training session even though both are
+ * rows in `sessions`.
+ */
+export function SessionsTab() {
   const [, setLocation] = useLocation();
   const [sessions, setSessions] = useState<TrainingSession[]>([]);
   const [loggedCounts, setLoggedCounts] = useState<Record<string, number>>({});
@@ -290,7 +268,7 @@ function TrainingTab() {
             {sessions.map((s) => (
               <button
                 key={s.id}
-                onClick={() => setLocation(`/sessions/${s.id}`)}
+                onClick={() => setLocation(`/training/${s.id}`)}
                 className="w-full text-left bg-card border border-border rounded-xl p-4 hover:border-indigo-500/40 transition-colors active:bg-muted/50"
               >
                 <div className="flex items-start justify-between mb-2">
@@ -335,7 +313,7 @@ function TrainingTab() {
                 {sessions.map((s) => (
                   <tr
                     key={s.id}
-                    onClick={() => setLocation(`/sessions/${s.id}`)}
+                    onClick={() => setLocation(`/training/${s.id}`)}
                     className="border-b border-border/50 hover:bg-muted/30 cursor-pointer transition-colors"
                     data-testid={`row-session-${s.id}`}
                   >
@@ -367,7 +345,7 @@ function TrainingTab() {
           onSaved={(id, carriesLoad) => {
             setShowNew(false);
             // A lecture has no RPE to log — go straight to the session
-            setLocation(carriesLoad ? `/sessions/${id}/rpe` : `/sessions/${id}`);
+            setLocation(carriesLoad ? `/training/${id}/rpe` : `/training/${id}`);
           }}
         />
       )}
