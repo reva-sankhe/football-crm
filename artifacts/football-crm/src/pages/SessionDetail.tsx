@@ -5,25 +5,63 @@ import { cn } from "@/lib/utils";
 import { PosBadge } from "@/components/PosBadge";
 import { SessionTypeBadge } from "@/components/Badges";
 import { useTheme } from "@/context/ThemeContext";
-import { HIGHLIGHT, ink, ordinal, posColor, type Mode } from "@/lib/viz";
+import { AGE_ORDER, HIGHLIGHT, POSITION_ORDER, ageColor, ink, posColor, type Mode } from "@/lib/viz";
 import { fetchTrainingSession, fetchSessionRPEWithPlayers } from "@/lib/queries";
-import type { TrainingSession, SessionRPE, Player, SessionType } from "@/lib/types";
+import type { TrainingSession, SessionRPE, Player } from "@/lib/types";
 import {
-  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
+  Area, AreaChart, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
   ResponsiveContainer, Cell, ReferenceLine, LabelList,
 } from "recharts";
-
-// RPE 1→10 is an ordinal intensity scale — one hue, light to dark.
-function rpeColor(mode: Mode, rpe: number): string {
-  return ordinal(mode, 10, Math.max(1, Math.min(10, Math.floor(rpe))) - 1);
-}
-
 
 function formatDate(iso: string) {
   return new Date(iso + "T00:00:00").toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
 }
 
 type RpeRow = SessionRPE & { players: Player };
+
+/** One figure in the strip under the session header. */
+function Stat({ label, value, sub, tone }: {
+  label: string;
+  value: string | number;
+  sub?: string | null;
+  tone?: string;
+}) {
+  return (
+    // Flex rather than a grid cell: the strip carries anywhere from one tile to
+    // six, and an empty grid cell would show as a block of bare divider colour
+    <div className="bg-card px-4 py-3 flex-1 min-w-[7.5rem]">
+      <div className="text-xs text-muted-foreground mb-0.5">{label}</div>
+      <div className={cn("text-xl font-bold font-time", tone ?? "text-foreground")}>{value}</div>
+      {sub && <div className="text-[11px] text-muted-foreground truncate">{sub}</div>}
+    </div>
+  );
+}
+
+/**
+ * Average load for one grouping of the session's RPE rows — position or age.
+ * Groups nobody was in are dropped rather than plotted at zero, which would
+ * read as a group that turned up and did nothing.
+ */
+function groupLoad<T extends string>(
+  rows: RpeRow[],
+  order: readonly T[],
+  groupOf: (r: RpeRow) => string | null | undefined,
+  colorOf: (g: T) => string,
+) {
+  return order
+    .map((group) => {
+      const inGroup = rows.filter((r) => groupOf(r) === group);
+      if (inGroup.length === 0) return null;
+      return {
+        group,
+        avgLoad: Math.round(inGroup.reduce((s, r) => s + r.load_au, 0) / inGroup.length),
+        avgRpe: parseFloat((inGroup.reduce((s, r) => s + r.rpe, 0) / inGroup.length).toFixed(1)),
+        color: colorOf(group),
+        count: inGroup.length,
+      };
+    })
+    .filter(Boolean) as { group: string; avgLoad: number; avgRpe: number; color: string; count: number }[];
+}
 
 export default function SessionDetail() {
   const { id } = useParams<{ id: string }>();
@@ -84,36 +122,15 @@ export default function SessionDetail() {
   // Lectures are attendance only; matches record minutes, not a planned RPE
   const carriesLoad = session.session_type !== "Lecture" && session.planned_rpe > 0;
 
-  // Chart B data — sorted ascending by load, RPE-colored
-  const chartData = [...rpeRows]
-    .sort((a, b) => a.load_au - b.load_au)
-    .map((r) => ({
-      name: r.players?.name?.split(" ")[0] ?? "—",
-      load: Math.round(r.load_au),
-      rpe: r.rpe,
-      color: rpeColor(mode, r.rpe),
-    }));
+  // The RPE curve — how many reported each score, over the whole 1–10 scale so
+  // the shape is comparable between sessions rather than fitted to the data
+  const curveData = Array.from({ length: 10 }, (_, i) => ({
+    rpe: i + 1,
+    count: rpeRows.filter((r) => Math.round(r.rpe) === i + 1).length,
+  }));
 
-  // Chart A — RPE distribution histogram
-  const histogramData = Array.from({ length: 10 }, (_, i) => {
-    const rpeVal = i + 1;
-    return {
-      rpe: rpeVal,
-      count: rpeRows.filter((r) => Math.round(r.rpe) === rpeVal).length,
-      color: ordinal(mode, 10, rpeVal - 1),
-    };
-  });
-
-  // Chart C — avg load by position
-  const positionLoadData = ["Forward", "Midfielder", "Defender", "Goalkeeper"]
-    .map((pos) => {
-      const inPos = rpeRows.filter((r) => r.players?.primary_position === pos);
-      if (inPos.length === 0) return null;
-      const avgL = Math.round(inPos.reduce((s, r) => s + r.load_au, 0) / inPos.length);
-      const avgR = inPos.reduce((s, r) => s + r.rpe, 0) / inPos.length;
-      return { pos, avgLoad: avgL, avgRpe: parseFloat(avgR.toFixed(1)), color: posColor(mode, pos), count: inPos.length };
-    })
-    .filter(Boolean) as { pos: string; avgLoad: number; avgRpe: number; color: string; count: number }[];
+  const positionLoadData = groupLoad(rpeRows, POSITION_ORDER, (r) => r.players?.primary_position, (g) => posColor(mode, g));
+  const ageLoadData = groupLoad(rpeRows, AGE_ORDER, (r) => r.players?.age_range, (g) => ageColor(mode, g));
 
   // Effort vs plan insight blurb
   const teamAvgLoad = avgLoad ?? 0;
@@ -123,131 +140,124 @@ export default function SessionDetail() {
     : null;
   const effortBlurb = count > 0 && planLoad > 0
     ? `Team averaged ${Math.abs(pctVsPlan)}% ${pctVsPlan >= 0 ? "above" : "below"} plan` +
-      (highestPosGroup ? `, with ${highestPosGroup.pos}s carrying the highest load (avg ${highestPosGroup.avgLoad} AU).` : ".")
+      (highestPosGroup ? `, with ${highestPosGroup.group}s carrying the highest load (avg ${highestPosGroup.avgLoad} AU).` : ".")
     : null;
 
   return (
     <div className="space-y-5">
-      {/* Back + actions */}
-      <div className="flex items-center justify-between">
-        <button
-          onClick={() => setLocation("/sessions")}
-          className="flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground transition-colors"
-        >
-          <ArrowLeft size={14} />
-          Sessions
-        </button>
-        <button
-          onClick={() => setLocation(`/sessions/${id}/rpe`)}
-          className="flex items-center gap-1.5 px-3 py-1.5 text-sm btn-primary text-white rounded-xl font-semibold"
-        >
-          <Zap size={13} />
-          Log RPE
-        </button>
-      </div>
+      {/* Back */}
+      <button
+        onClick={() => setLocation("/sessions")}
+        className="flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground transition-colors"
+      >
+        <ArrowLeft size={14} />
+        Sessions
+      </button>
 
-      {/* Session info card */}
+      {/* Session header */}
       <div className="bg-card border border-border rounded-xl p-5">
-        <div className="flex items-start justify-between mb-4">
+        <div className="flex items-start justify-between">
           <div>
             <h1 className="text-xl font-semibold text-foreground">{session.day}</h1>
             <div className="text-sm text-muted-foreground">{formatDate(session.date)}</div>
           </div>
           <SessionTypeBadge type={session.session_type} />
         </div>
-        {/* Lectures and matches carry no plan, so the load chrome is dropped */}
-        <div className={cn("grid gap-3 mb-4", carriesLoad ? "grid-cols-3" : "grid-cols-1")}>
-          <div>
-            <div className="text-xs text-muted-foreground mb-0.5">Duration</div>
-            <div className="text-lg font-bold font-time text-foreground">{session.duration_mins}<span className="text-xs font-normal text-muted-foreground ml-1">min</span></div>
-          </div>
-          {carriesLoad && (
-            <>
-              <div>
-                <div className="text-xs text-muted-foreground mb-0.5">Planned RPE</div>
-                <div className="text-lg font-bold font-time text-foreground">{session.planned_rpe.toFixed(1)}</div>
-              </div>
-              <div>
-                <div className="text-xs text-muted-foreground mb-0.5">Planned Load</div>
-                <div className="text-lg font-bold font-time text-status-warn">{planLoad} <span className="text-xs font-normal text-muted-foreground">AU</span></div>
-              </div>
-            </>
-          )}
-        </div>
-        {carriesLoad && (
-          <div className="flex items-center justify-between bg-status-warn border border-status-warn rounded-lg px-4 py-2.5">
-            <div className="flex items-center gap-2">
-              <Zap size={14} className="text-status-warn" />
-              <span className="text-xs text-muted-foreground font-medium">Planned Load (AU)</span>
-            </div>
-            <span className="text-2xl font-bold text-status-warn font-time">{planLoad}</span>
-          </div>
-        )}
         {session.notes && (
           <p className="text-xs text-muted-foreground mt-3 border-t border-border pt-3">{session.notes}</p>
         )}
       </div>
 
-      {/* Summary stats row */}
-      {count > 0 && (
-        <div className="grid grid-cols-2 sm:grid-cols-5 border border-border rounded-2xl overflow-hidden divide-x divide-y sm:divide-y-0 divide-border bg-card">
-          <div className="px-4 py-3">
-            <div className="text-xs text-muted-foreground mb-0.5">Avg RPE</div>
-            <div className="text-xl font-bold font-time text-foreground">{avgRpe?.toFixed(1) ?? "—"}</div>
-          </div>
-          <div className="px-4 py-3">
-            <div className="text-xs text-muted-foreground mb-0.5">Avg Load (AU)</div>
-            <div className="text-xl font-bold font-time text-status-good">{avgLoad ?? "—"}</div>
-          </div>
-          <div className="px-4 py-3">
-            <div className="text-xs text-muted-foreground mb-0.5">Highest Load</div>
-            <div className="text-base font-bold font-time text-foreground">{highest ? Math.round(highest.load_au) : "—"}</div>
-            {highest && <div className="text-[11px] text-muted-foreground truncate">{highest.players?.name}</div>}
-          </div>
-          <div className="px-4 py-3">
-            <div className="text-xs text-muted-foreground mb-0.5">Lowest Load</div>
-            <div className="text-base font-bold font-time text-foreground">{lowest ? Math.round(lowest.load_au) : "—"}</div>
-            {lowest && <div className="text-[11px] text-muted-foreground truncate">{lowest.players?.name}</div>}
-          </div>
-          <div className="px-4 py-3">
-            <div className="text-xs text-muted-foreground mb-0.5">Logged</div>
-            <div className="text-xl font-bold font-time text-foreground">{count}</div>
-          </div>
-        </div>
-      )}
+      {/* Plan and outcome in one strip. `gap-px` over a border-coloured ground
+          gives clean dividers however many tiles there are and however they wrap —
+          a lecture has no plan, and an unlogged session has no outcome. */}
+      <div className="flex flex-wrap gap-px bg-border border border-border rounded-2xl overflow-hidden">
+        <Stat label="Duration" value={session.duration_mins} sub="minutes" />
+        {carriesLoad && (
+          <Stat
+            label="Planned load"
+            value={`${planLoad} AU`}
+            sub={`RPE ${session.planned_rpe.toFixed(1)} × ${session.duration_mins} min`}
+          />
+        )}
+        {count > 0 && (
+          <>
+            <Stat
+              label="Avg RPE"
+              value={avgRpe?.toFixed(1) ?? "—"}
+              sub={carriesLoad ? `planned ${session.planned_rpe.toFixed(1)}` : null}
+            />
+            <Stat
+              label="Avg load"
+              value={`${avgLoad ?? "—"} AU`}
+              tone="text-status-good"
+              sub={carriesLoad && planLoad > 0 ? `${pctVsPlan >= 0 ? "+" : ""}${pctVsPlan}% vs plan` : null}
+            />
+            <Stat
+              label="Highest load"
+              value={highest ? Math.round(highest.load_au) : "—"}
+              sub={highest?.players?.name}
+            />
+            <Stat
+              label="Lowest load"
+              value={lowest ? Math.round(lowest.load_au) : "—"}
+              sub={lowest?.players?.name}
+            />
+          </>
+        )}
+      </div>
 
-      {/* Chart A — RPE Distribution */}
+      {/* RPE distribution */}
       {count > 0 && (
         <div className="bg-card border border-border rounded-2xl p-5">
-          <h2 className="text-sm font-semibold text-foreground mb-1">RPE Distribution</h2>
+          <h2 className="text-sm font-semibold text-foreground mb-1">RPE distribution</h2>
           <p className="text-xs text-muted-foreground mb-4">
-            How many players reported each RPE score this session.
+            How many players reported each RPE score. 1 is easy, 10 is maximal.
           </p>
           <ResponsiveContainer width="100%" height={180}>
-            <BarChart data={histogramData} margin={{ top: 4, right: 8, bottom: 4, left: -20 }}>
+            <AreaChart data={curveData} margin={{ top: 4, right: 8, bottom: 4, left: -20 }}>
+              <defs>
+                <linearGradient id="rpe-curve" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor={HIGHLIGHT} stopOpacity={0.32} />
+                  <stop offset="100%" stopColor={HIGHLIGHT} stopOpacity={0.02} />
+                </linearGradient>
+              </defs>
               <CartesianGrid strokeDasharray="3 3" stroke={INK.grid} vertical={false} />
-              <XAxis dataKey="rpe" tick={{ fill: INK.axis, fontSize: 11 }} />
+              {/* Numeric rather than category, so the average can sit at 7.4 */}
+              <XAxis
+                dataKey="rpe"
+                type="number"
+                domain={[1, 10]}
+                ticks={[1, 2, 3, 4, 5, 6, 7, 8, 9, 10]}
+                tick={{ fill: INK.axis, fontSize: 11 }}
+              />
               <YAxis allowDecimals={false} tick={{ fill: INK.axis, fontSize: 10 }} />
               <Tooltip
                 contentStyle={{ background: INK.tooltipBg, border: `1px solid ${INK.tooltipBorder}`, borderRadius: 8 }}
                 labelStyle={{ color: INK.primary, fontSize: 12 }}
-                formatter={(v: number, _: string, entry: { payload?: { rpe?: number } }) => [
-                  `${v} player${v !== 1 ? "s" : ""}`,
-                  `RPE ${entry.payload?.rpe}`,
-                ]}
+                labelFormatter={(rpe) => `RPE ${rpe}`}
+                formatter={(v: number) => [`${v} player${v !== 1 ? "s" : ""}`, "Reported"]}
               />
-              <Bar dataKey="count" radius={[4, 4, 0, 0]} maxBarSize={36}>
-                {histogramData.map((entry, i) => (
-                  <Cell key={`hist-${i}`} fill={entry.color} />
-                ))}
-              </Bar>
-            </BarChart>
+              {avgRpe != null && (
+                <ReferenceLine
+                  x={avgRpe}
+                  stroke={INK.axis}
+                  strokeDasharray="4 4"
+                  label={{ value: `avg ${avgRpe.toFixed(1)}`, position: "top", fill: INK.secondary, fontSize: 10 }}
+                />
+              )}
+              {/* One series, so one hue and no legend — the title names it */}
+              <Area
+                type="monotone"
+                dataKey="count"
+                stroke={HIGHLIGHT}
+                strokeWidth={2}
+                fill="url(#rpe-curve)"
+                dot={{ r: 3, fill: HIGHLIGHT, strokeWidth: 0 }}
+                activeDot={{ r: 5, fill: HIGHLIGHT, stroke: INK.surface, strokeWidth: 2 }}
+              />
+            </AreaChart>
           </ResponsiveContainer>
-          <div className="flex items-center justify-between mt-2 text-[11px]">
-            <span style={{ color: ordinal(mode, 10, 0) }}>1 — Easy</span>
-            <span style={{ color: ordinal(mode, 10, 4) }}>5 — Moderate</span>
-            <span style={{ color: ordinal(mode, 10, 9) }}>10 — Max</span>
-          </div>
         </div>
       )}
 
@@ -259,52 +269,70 @@ export default function SessionDetail() {
         </div>
       )}
 
-      {/* Chart C — Load by Position */}
-      {positionLoadData.length > 0 && (
-        <div className="bg-card border border-border rounded-2xl p-5">
-          <h2 className="text-sm font-semibold text-foreground mb-1">Avg Load by Position</h2>
-          <p className="text-xs text-muted-foreground mb-4">
-            Average load (AU) per position group. Dashed line = planned ({planLoad} AU).
-          </p>
-          <ResponsiveContainer width="100%" height={180}>
-            <BarChart data={positionLoadData} margin={{ top: 4, right: 40, bottom: 4, left: 0 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke={INK.grid} vertical={false} />
-              <XAxis dataKey="pos" tick={{ fill: INK.axis, fontSize: 11 }} />
-              <YAxis tick={{ fill: INK.axis, fontSize: 10 }} />
-              <Tooltip
-                contentStyle={{ background: INK.tooltipBg, border: `1px solid ${INK.tooltipBorder}`, borderRadius: 8 }}
-                labelStyle={{ color: INK.primary, fontSize: 12 }}
-                formatter={(v: number, _: string, entry: { payload?: { avgRpe?: number; count?: number } }) => [
-                  `${v} AU · avg RPE ${entry.payload?.avgRpe?.toFixed(1) ?? "?"} · ${entry.payload?.count} player${entry.payload?.count !== 1 ? "s" : ""}`,
-                  "Avg Load",
-                ]}
-              />
-              <ReferenceLine
-                y={planLoad}
-                stroke={HIGHLIGHT}
-                strokeDasharray="5 3"
-                label={{ value: "Plan", position: "insideTopRight", fill: HIGHLIGHT, fontSize: 10 }}
-              />
-              <Bar dataKey="avgLoad" radius={[4, 4, 0, 0]} maxBarSize={52}>
-                <LabelList
-                  dataKey="avgLoad"
-                  position="top"
-                  style={{ fill: INK.axis, fontSize: 10 }}
-                />
-                {positionLoadData.map((entry, i) => (
-                  <Cell key={`pos-${i}`} fill={entry.color} />
-                ))}
-              </Bar>
-            </BarChart>
-          </ResponsiveContainer>
+      {/* Who carried the load — the same measure cut two ways, side by side */}
+      {(positionLoadData.length > 0 || ageLoadData.length > 0) && (
+        <div className="grid gap-4 lg:grid-cols-2">
+          {[
+            { title: "Avg load by position", data: positionLoadData },
+            { title: "Avg load by age group", data: ageLoadData },
+          ].map(({ title, data }) => data.length === 0 ? null : (
+            <div key={title} className="bg-card border border-border rounded-2xl p-5">
+              <h2 className="text-sm font-semibold text-foreground mb-1">{title}</h2>
+              <p className="text-xs text-muted-foreground mb-4">
+                Average load (AU) per group.
+                {carriesLoad && ` Dashed line = planned (${planLoad} AU).`}
+              </p>
+              <ResponsiveContainer width="100%" height={180}>
+                <BarChart data={data} margin={{ top: 16, right: 8, bottom: 4, left: -12 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke={INK.grid} vertical={false} />
+                  <XAxis dataKey="group" tick={{ fill: INK.axis, fontSize: 11 }} />
+                  <YAxis tick={{ fill: INK.axis, fontSize: 10 }} />
+                  <Tooltip
+                    contentStyle={{ background: INK.tooltipBg, border: `1px solid ${INK.tooltipBorder}`, borderRadius: 8 }}
+                    labelStyle={{ color: INK.primary, fontSize: 12 }}
+                    formatter={(v: number, _: string, entry: { payload?: { avgRpe?: number; count?: number } }) => [
+                      `${v} AU · avg RPE ${entry.payload?.avgRpe?.toFixed(1) ?? "?"} · ${entry.payload?.count} player${entry.payload?.count !== 1 ? "s" : ""}`,
+                      "Avg load",
+                    ]}
+                  />
+                  {carriesLoad && (
+                    <ReferenceLine
+                      y={planLoad}
+                      stroke={HIGHLIGHT}
+                      strokeDasharray="5 3"
+                      label={{ value: "Plan", position: "insideTopRight", fill: HIGHLIGHT, fontSize: 10 }}
+                    />
+                  )}
+                  {/* Colour follows the group, never its rank — see lib/viz.ts */}
+                  <Bar dataKey="avgLoad" radius={[4, 4, 0, 0]} maxBarSize={52}>
+                    <LabelList dataKey="avgLoad" position="top" style={{ fill: INK.axis, fontSize: 10 }} />
+                    {data.map((entry) => <Cell key={entry.group} fill={entry.color} />)}
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          ))}
         </div>
       )}
 
       {/* Player RPE table */}
       <div className="bg-card border border-border rounded-lg">
-        <div className="px-4 py-3 border-b border-border flex items-center justify-between">
+        <div className="px-4 py-3 border-b border-border flex items-center justify-between gap-3">
           <h2 className="text-sm font-semibold text-foreground">Player RPE</h2>
-          <span className="text-xs text-muted-foreground">{count} player{count !== 1 ? "s" : ""}</span>
+          <div className="flex items-center gap-3">
+            <span className="text-xs text-muted-foreground">{count} player{count !== 1 ? "s" : ""}</span>
+            {/* The way to the RPE screen once entries exist — the empty state
+                below covers the other case. A quiet link, not a primary button. */}
+            {count > 0 && session.session_type !== "Lecture" && (
+              <button
+                onClick={() => setLocation(`/sessions/${id}/rpe`)}
+                className="text-xs text-muted-foreground hover:text-foreground transition-colors"
+                data-testid="link-log-rpe"
+              >
+                Log RPE
+              </button>
+            )}
+          </div>
         </div>
         {count === 0 ? (
           <div className="py-12 text-center">
@@ -369,66 +397,6 @@ export default function SessionDetail() {
         )}
       </div>
 
-      {/* Chart B — Planned vs Actual Load, RPE-colored */}
-      {count > 0 && (
-        <div className="bg-card border border-border rounded-2xl p-5">
-          <h2 className="text-sm font-semibold text-foreground mb-1">Planned vs Actual Load (AU)</h2>
-          <p className="text-xs text-muted-foreground mb-4">
-            Each bar colored by player RPE. Dashed line = planned ({planLoad} AU).
-          </p>
-          <ResponsiveContainer width="100%" height={Math.max(220, count * 28)}>
-            <BarChart data={chartData} layout="vertical" margin={{ top: 4, right: 60, bottom: 4, left: 60 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke={INK.grid} horizontal={false} />
-              <XAxis
-                type="number"
-                domain={[0, "dataMax + 50"]}
-                tick={{ fill: INK.axis, fontSize: 10 }}
-              />
-              <YAxis
-                type="category"
-                dataKey="name"
-                tick={{ fill: INK.axis, fontSize: 11 }}
-                width={56}
-              />
-              <Tooltip
-                contentStyle={{ background: INK.tooltipBg, border: `1px solid ${INK.tooltipBorder}`, borderRadius: 8 }}
-                labelStyle={{ color: INK.primary, fontSize: 12 }}
-                formatter={(v: number, _: string, entry: { payload?: { rpe?: number } }) => [
-                  `${v} AU — RPE ${entry.payload?.rpe?.toFixed(1) ?? "?"}`,
-                  "Load",
-                ]}
-              />
-              <ReferenceLine
-                x={planLoad}
-                stroke={HIGHLIGHT}
-                strokeDasharray="5 3"
-                label={{ value: "Plan", position: "right", fill: HIGHLIGHT, fontSize: 10 }}
-              />
-              <Bar dataKey="load" radius={[0, 4, 4, 0]} maxBarSize={20}>
-                <LabelList
-                  dataKey="rpe"
-                  position="insideRight"
-                  style={{ fill: "#fff", fontSize: 9, fontWeight: 700 }}
-                  formatter={(v: number) => (v >= 1 ? v.toFixed(1) : "")}
-                />
-                {chartData.map((entry, index) => (
-                  <Cell key={`cell-${index}`} fill={entry.color} />
-                ))}
-              </Bar>
-            </BarChart>
-          </ResponsiveContainer>
-          {/* RPE gradient legend */}
-          <div className="flex h-2 rounded-full overflow-hidden mt-3 gap-px">
-            {[1,2,3,4,5,6,7,8,9,10].map((n) => (
-              <div key={n} className="flex-1 h-full" style={{ background: ordinal(mode, 10, n - 1) }} />
-            ))}
-          </div>
-          <div className="flex justify-between text-[10px] text-muted-foreground mt-1">
-            <span>RPE 1 (Easy)</span>
-            <span>RPE 10 (Max)</span>
-          </div>
-        </div>
-      )}
     </div>
   );
 }
