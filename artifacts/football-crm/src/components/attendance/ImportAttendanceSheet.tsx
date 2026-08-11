@@ -16,7 +16,7 @@ import {
   createTrainingSession,
   createPlayer,
 } from "@/lib/queries";
-import type { TrainingSession, Player, AttendanceStatus } from "@/lib/types";
+import { DEFAULT_TEAM, type TrainingSession, type Player, type AttendanceStatus } from "@/lib/types";
 import {
   Sheet,
   SheetContent,
@@ -222,7 +222,7 @@ export function ImportAttendanceSheet({
             age: null,
             year_of_birth: null,
             age_range: null,
-            team: "Sharks",
+            team: DEFAULT_TEAM,
             is_active: true,
           });
           newPlayerCount++;
@@ -456,7 +456,7 @@ export function ImportAttendanceSheet({
                   )}>
                     <AlertCircle size={12} className="text-status-warn mt-0.5 shrink-0" />
                     <span className="text-status-warn dark:text-status-warn">
-                      {importPreview.matchedPlayers.filter(p => !p.player).length} new player{importPreview.matchedPlayers.filter(p => !p.player).length > 1 ? "s" : ""} will be added to the Sharks roster on import.
+                      {importPreview.matchedPlayers.filter(p => !p.player).length} new player{importPreview.matchedPlayers.filter(p => !p.player).length > 1 ? "s" : ""} will be added to the roster on import.
                     </span>
                   </div>
                 )}

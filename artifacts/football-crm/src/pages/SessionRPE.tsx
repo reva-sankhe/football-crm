@@ -3,7 +3,6 @@ import { useParams, useLocation } from "wouter";
 import { ArrowLeft, Zap, Users } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
-import { useTeam } from "@/context/TeamContext";
 import {
   fetchTrainingSession,
   fetchTrainingSessions,
@@ -66,7 +65,6 @@ export default function SessionRPE() {
   const { id } = useParams<{ id: string }>();
   const [, setLocation] = useLocation();
   const { toast } = useToast();
-  const { team } = useTeam();
 
   const [session, setSession] = useState<TrainingSession | null>(null);
   const [allSessions, setAllSessions] = useState<TrainingSession[]>([]);
@@ -93,7 +91,7 @@ export default function SessionRPE() {
       const [sess, allSess, allPlayers] = await Promise.all([
         fetchTrainingSession(id!),
         fetchTrainingSessions(),
-        fetchPlayers(team),
+        fetchPlayers(),
       ]);
       setSession(sess);
       setAllSessions(allSess.slice(0, 20));
@@ -108,7 +106,7 @@ export default function SessionRPE() {
     } finally {
       setLoading(false);
     }
-  }, [id, team, refreshLoggedIds]);
+  }, [id, refreshLoggedIds]);
 
   useEffect(() => { load(); }, [load]);
 

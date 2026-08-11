@@ -464,7 +464,7 @@ export function buildPlayerReport(
   // by the report range so a short period still ranks against the full squad.
   const squadLatest = new Map<string, { date: string; mins: number }>();
   for (const r of data.results) {
-    if (r.bronco_mins === null || r.players?.team !== player.team) continue;
+    if (r.bronco_mins === null) continue;
     const date = r.test_sessions?.test_date ?? "";
     const held = squadLatest.get(r.player_id);
     if (!held || date > held.date) squadLatest.set(r.player_id, { date, mins: r.bronco_mins });

@@ -5,10 +5,8 @@ import {
   Tooltip, XAxis, YAxis, ZAxis,
 } from "recharts";
 import { cn } from "@/lib/utils";
-import { useTeam } from "@/context/TeamContext";
 import { useTheme } from "@/context/ThemeContext";
 import { useToast } from "@/hooks/use-toast";
-import { TeamSwitcher } from "@/components/TeamSwitcher";
 import { MiniTable, OverviewCard, tooltipStyle } from "@/components/OverviewCard";
 import { HIGHLIGHT, ink, posColor, type Mode } from "@/lib/viz";
 import {
@@ -42,7 +40,6 @@ const WINDOWS: { label: string; weeks: number | null }[] = [
 ];
 
 export function OverviewTab() {
-  const { team } = useTeam();
   const { theme } = useTheme();
   const mode: Mode = theme === "dark" ? "dark" : "light";
   const INK = ink(mode);
@@ -60,7 +57,7 @@ export function OverviewTab() {
       // The same five reads the Dashboard makes, for the same reason: load is
       // rated sessions plus match minutes plus the match days nobody rated
       const [ps, rpe, matchStats, attendance, orphans] = await Promise.all([
-        fetchPlayers(team),
+        fetchPlayers(),
         fetchAllRPEWithSessions(),
         fetchAllMatchStats(),
         fetchAllAttendanceStats(),
@@ -81,7 +78,7 @@ export function OverviewTab() {
     } finally {
       setLoading(false);
     }
-  }, [team, toast]);
+  }, [toast]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -142,7 +139,6 @@ export function OverviewTab() {
               </button>
             ))}
           </div>
-          <TeamSwitcher />
         </div>
       </div>
 

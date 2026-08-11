@@ -9,7 +9,12 @@ export interface Player {
   age: number | null;
   year_of_birth: number | null;
   age_range: "U18" | "18-24" | "25+" | null;
-  team: "Sharks" | "Wildcats";
+  /**
+   * A legacy column from when the app carried two squads. Nothing filters on it
+   * any more — every screen reports the whole squad — but the column is still
+   * written so existing rows and new ones stay consistent. See DEFAULT_TEAM.
+   */
+  team: string;
   is_active: boolean;
   created_at: string;
 }
@@ -43,7 +48,12 @@ export interface TestResult {
   created_at: string;
 }
 
-export type Team = "Sharks" | "Wildcats";
+/**
+ * What `players.team` is set to on create. The app used to switch between a
+ * Sharks and a Wildcats squad; it is one squad now, so this exists only to keep
+ * the column consistent with the rows already in it.
+ */
+export const DEFAULT_TEAM = "Sharks";
 
 export interface MasTier {
   label: string;

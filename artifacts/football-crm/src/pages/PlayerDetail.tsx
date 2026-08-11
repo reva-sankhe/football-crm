@@ -119,8 +119,8 @@ export default function PlayerDetail() {
         [...rows].sort((a, b) => (b.test_sessions?.test_date ?? "").localeCompare(a.test_sessions?.test_date ?? ""));
 
       const teamLatest = new Map<string, number>();
-      const teamRows = (allRs as (TestResult & { players?: { team: string }; test_sessions?: { test_date: string } | null })[])
-        .filter(r => r.players?.team === p?.team && r.bronco_mins !== null);
+      const teamRows = (allRs as (TestResult & { test_sessions?: { test_date: string } | null })[])
+        .filter(r => r.bronco_mins !== null);
       for (const r of byTestDateDesc(teamRows)) {
         if (!teamLatest.has(r.player_id)) teamLatest.set(r.player_id, r.bronco_mins!);
       }
@@ -376,13 +376,6 @@ export default function PlayerDetail() {
             <div>
               <label className="block text-xs text-muted-foreground mb-1">Year of Birth</label>
               <input type="number" value={editForm.year_of_birth ?? ""} onChange={(e) => setEditForm({ ...editForm, year_of_birth: parseInt(e.target.value) || null })} className="w-full bg-muted border border-border rounded-lg px-2 py-1.5 text-sm text-foreground" />
-            </div>
-            <div>
-              <label className="block text-xs text-muted-foreground mb-1">Team</label>
-              <select value={editForm.team ?? "Sharks"} onChange={(e) => setEditForm({ ...editForm, team: e.target.value as "Sharks" | "Wildcats" })} className="w-full bg-muted border border-border rounded-lg px-2 py-1.5 text-sm text-foreground">
-                <option value="Sharks">Sharks</option>
-                <option value="Wildcats">Wildcats</option>
-              </select>
             </div>
             <div className="flex items-center gap-2 pt-4">
               <input type="checkbox" id="edit_active" checked={editForm.is_active ?? true} onChange={(e) => setEditForm({ ...editForm, is_active: e.target.checked })} className="rounded border-border" />

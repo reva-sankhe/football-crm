@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import { useLocation } from "wouter";
-import { useTeam } from "@/context/TeamContext";
 import { TableSkeleton } from "@/components/Skeleton";
 import { EmptyState } from "@/components/EmptyState";
 import { fetchPlayers, createPlayer, updatePlayer, fetchTrainingSessions } from "@/lib/queries";
@@ -13,7 +12,7 @@ import {
   JERSEY_MAX, JERSEY_MIN, calcAgeRange, cn, jerseyClash, parseJersey, playerLabel,
 } from "@/lib/utils";
 import { PosBadge } from "@/components/PosBadge";
-import type { Player } from "@/lib/types";
+import { DEFAULT_TEAM, type Player } from "@/lib/types";
 import { Users, Check, FileText, X, Pencil, SlidersHorizontal } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 
@@ -57,7 +56,6 @@ function AddPlayerModal({
   onSaved: () => void;
 }) {
   const { toast } = useToast();
-  const { team: currentTeam } = useTeam();
   const [saving, setSaving] = useState(false);
   const [form, setForm] = useState({
     name: "",
@@ -66,7 +64,6 @@ function AddPlayerModal({
     primary_position: "Goalkeeper",
     secondary_position: "",
     year_of_birth: "",
-    team: currentTeam as "Sharks" | "Wildcats",
     is_active: true,
   });
 
@@ -98,7 +95,8 @@ function AddPlayerModal({
         year_of_birth: yob,
         age: yob ? new Date().getFullYear() - yob : null,
         age_range: calcAgeRange(yob),
-        team: form.team,
+        // One squad now — the column is kept consistent, not chosen
+        team: DEFAULT_TEAM,
         is_active: form.is_active,
       });
       toast({ title: "Player added" });
@@ -199,17 +197,6 @@ function AddPlayerModal({
                 data-testid="input-year-of-birth"
                 className={inputCls}
               />
-            ))}
-            {field("Team", (
-              <select
-                value={form.team}
-                onChange={(e) => setForm({ ...form, team: e.target.value as "Sharks" | "Wildcats" })}
-                className="w-full bg-muted border border-border rounded-md px-3 py-1.5 text-sm text-foreground"
-                data-testid="select-team"
-              >
-                <option value="Sharks">Sharks</option>
-                <option value="Wildcats">Wildcats</option>
-              </select>
             ))}
           </div>
           <div className="flex items-center gap-2 pt-1">
@@ -406,7 +393,6 @@ function QuickEditModal({
 }
 
 export default function Players() {
-  const { team } = useTeam();
   const [tab, setTab] = useState<"all" | "overview">("all");
   const [players, setPlayers] = useState<Player[]>([]);
   const [loading, setLoading] = useState(true);
@@ -416,11 +402,11 @@ export default function Players() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      setPlayers(await fetchPlayers(team));
+      setPlayers(await fetchPlayers());
     } finally {
       setLoading(false);
     }
-  }, [team]);
+  }, []);
 
   useEffect(() => { load(); }, [load]);
 

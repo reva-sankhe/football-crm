@@ -5,7 +5,7 @@ import { createTournament, deleteTournament, updateTournament } from "@/lib/quer
 import { MATCH_FORMATS } from "@/lib/tournaments";
 import { DEFAULT_MATCH_MINS, DEFAULT_MAX_SUBS, DEFAULT_SUB_POLICY, SUB_POLICIES } from "@/lib/lineup";
 import { todayISO } from "@/lib/attendance";
-import type { SubPolicy, Tournament } from "@/lib/types";
+import { DEFAULT_TEAM, type SubPolicy, type Tournament } from "@/lib/types";
 
 interface TournamentFormModalProps {
   /** Absent creates a tournament; present edits that one. */
@@ -59,7 +59,7 @@ export function TournamentFormModal({
         await updateTournament(tournament.id, fields);
         toast({ title: "Tournament updated" });
       } else {
-        await createTournament({ ...fields, team: "Sharks", notes: null });
+        await createTournament({ ...fields, team: DEFAULT_TEAM, notes: null });
         toast({ title: "Tournament created" });
       }
       onSaved();

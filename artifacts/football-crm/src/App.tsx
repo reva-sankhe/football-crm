@@ -2,7 +2,6 @@ import { Switch, Route, Redirect, Router as WouterRouter } from "wouter";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import { TeamProvider } from "@/context/TeamContext";
 import { ThemeProvider } from "@/context/ThemeContext";
 import { Layout } from "@/components/Layout";
 import Dashboard from "@/pages/Dashboard";
@@ -72,11 +71,9 @@ function App() {
     <QueryClientProvider client={queryClient}>
       <TooltipProvider>
         <ThemeProvider>
-          <TeamProvider>
-            <WouterRouter base={import.meta.env.BASE_URL.replace(/\/$/, "")}>
-              <Router />
-            </WouterRouter>
-          </TeamProvider>
+          <WouterRouter base={import.meta.env.BASE_URL.replace(/\/$/, "")}>
+            <Router />
+          </WouterRouter>
           <Toaster />
         </ThemeProvider>
       </TooltipProvider>

@@ -7,7 +7,7 @@ import { formatBronco } from "@/lib/utils";
 import { cn } from "@/lib/utils";
 import { PosBadge } from "@/components/PosBadge";
 import { AddButton } from "@/components/AddButton";
-import type { TestSession, Player, TestResult } from "@/lib/types";
+import { DEFAULT_TEAM, type TestSession, type Player, type TestResult } from "@/lib/types";
 import { Dumbbell, Plus, CheckCircle2, AlertCircle, ChevronRight, Pencil, Trash2 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 
@@ -200,10 +200,9 @@ function SessionDetail({
   const [newPlayerForm, setNewPlayerForm] = useState<{
     name: string;
     code: string;
-    team: "Sharks" | "Wildcats";
     primary_position: string;
     age_range: "" | "U18" | "18-24" | "25+";
-  }>({ name: "", code: "", team: "Sharks", primary_position: "", age_range: "" });
+  }>({ name: "", code: "", primary_position: "", age_range: "" });
   const [newPlayerSaving, setNewPlayerSaving] = useState(false);
 
   const reload = useCallback(() => {
@@ -326,7 +325,7 @@ function SessionDetail({
     setAddSearch("");
     setAddSelectedPlayer(null);
     setAddResultForm(BLANK_FORM);
-    setNewPlayerForm({ name: "", code: "", team: "Sharks", primary_position: "", age_range: "" });
+    setNewPlayerForm({ name: "", code: "", primary_position: "", age_range: "" });
   };
 
   const closeAddPanel = () => {
@@ -382,7 +381,7 @@ function SessionDetail({
         name: newPlayerForm.name.trim(),
         code: newPlayerForm.code.trim().toUpperCase(),
         jersey_number: null,
-        team: newPlayerForm.team,
+        team: DEFAULT_TEAM,
         primary_position: newPlayerForm.primary_position || "Forward",
         secondary_position: null,
         age: null,
@@ -492,9 +491,6 @@ function SessionDetail({
                       <PosBadge pos={p.primary_position} className="h-5 px-1" />
                       <span className="text-sm text-foreground flex-1">{p.name}</span>
                       <span className="text-[11px] text-muted-foreground font-time">{p.code}</span>
-                      <span className={cn("text-[10px] font-medium px-1.5 py-0.5 rounded", p.team === "Sharks" ? "text-foreground bg-muted" : "text-status-warn bg-status-warn")}>
-                        {p.team}
-                      </span>
                     </button>
                   );
                 })}
@@ -513,7 +509,6 @@ function SessionDetail({
                       ...f,
                       name: addSearch.trim(),
                       code: "",
-                      team: "Sharks",
                       primary_position: "Forward",
                       age_range: "",
                     }));
@@ -575,17 +570,6 @@ function SessionDetail({
                     onChange={(e) => setNewPlayerForm((f) => ({ ...f, code: e.target.value }))}
                     className="w-full bg-muted/50 border border-border rounded-lg px-3 py-2 text-sm font-time text-foreground placeholder:text-muted-foreground outline-none focus:border-indigo-500/50 transition-colors"
                   />
-                </div>
-                <div className="space-y-1">
-                  <label className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Team</label>
-                  <select
-                    value={newPlayerForm.team}
-                    onChange={(e) => setNewPlayerForm((f) => ({ ...f, team: e.target.value as "Sharks" | "Wildcats" }))}
-                    className="w-full bg-muted/50 border border-border rounded-lg px-3 py-2 text-sm text-foreground outline-none focus:border-indigo-500/50 transition-colors"
-                  >
-                    <option value="Sharks">Sharks</option>
-                    <option value="Wildcats">Wildcats</option>
-                  </select>
                 </div>
                 <div className="space-y-1">
                   <label className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Position</label>

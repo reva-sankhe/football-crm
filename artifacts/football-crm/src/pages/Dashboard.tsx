@@ -1,6 +1,4 @@
 import { useEffect, useState, useCallback, useMemo } from "react";
-import { useTeam } from "@/context/TeamContext";
-import { TeamSwitcher } from "@/components/TeamSwitcher";
 import { MetricCardSkeleton } from "@/components/Skeleton";
 import {
   fetchLatestSessionResults, fetchPlayers, fetchAllRPEWithSessions,
@@ -81,7 +79,6 @@ type ResultRow = TestResult & { players?: Pick<Player, "name" | "code" | "team" 
 
 // ── Main ─────────────────────────────────────────────────────────────────────
 export default function Dashboard() {
-  const { team } = useTeam();
 
   const [players,          setPlayers]          = useState<Player[]>([]);
   const [latestData,       setLatestData]        = useState<{ session: TestSession | null; results: (TestResult & { players: Pick<Player, "name" | "code" | "team"> })[] } | null>(null);
@@ -98,7 +95,7 @@ export default function Dashboard() {
     setLoading(true);
     try {
       const [ps, latest, rpe, att, results, sessions, mStats, orphans] = await Promise.all([
-        fetchPlayers(team), fetchLatestSessionResults(team),
+        fetchPlayers(), fetchLatestSessionResults(),
         fetchAllRPEWithSessions(), fetchAllAttendanceStats(),
         fetchAllResults(), fetchTrainingSessions(), fetchAllMatchStats(),
         fetchAdoptableSessions(),
@@ -112,7 +109,7 @@ export default function Dashboard() {
       setMatchStats(mStats);
       setOrphanSessions(orphans);
     } finally { setLoading(false); }
-  }, [team]);
+  }, []);
 
   useEffect(() => { load(); }, [load]);
 
@@ -127,16 +124,13 @@ export default function Dashboard() {
   const alerts = useMemo((): AlertItem[] => {
     const items: AlertItem[] = [];
     const activePlayers = players.filter((p) => p.is_active);
-    const teamRpe       = rpeData.filter((r) => r.players?.team === team);
-    const teamResults   = allResults.filter((r) => r.players?.team === team);
-    const teamAtt       = attendanceData.filter((a) => a.players?.team === team);
 
     const now     = new Date();
     const days7   = new Date(now.getTime() - 7  * 86_400_000);
 
     // 1. ACWR + RPE vs planned gap
     const rpeByPlayer = new Map<string, RPERow[]>();
-    for (const r of teamRpe) {
+    for (const r of rpeData) {
       if (!r.players?.id) continue;
       if (!rpeByPlayer.has(r.players.id)) rpeByPlayer.set(r.players.id, []);
       rpeByPlayer.get(r.players.id)!.push(r);
@@ -150,7 +144,7 @@ export default function Dashboard() {
     }
     // Attendance backs the estimate for match days that never got a grid
     const attByPlayer = new Map<string, AttRow[]>();
-    for (const a of teamAtt) {
+    for (const a of attendanceData) {
       if (!attByPlayer.has(a.player_id)) attByPlayer.set(a.player_id, []);
       attByPlayer.get(a.player_id)!.push(a);
     }
@@ -232,11 +226,11 @@ export default function Dashboard() {
     const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().slice(0, 10);
     const monthEnd   = new Date(now.getFullYear(), now.getMonth() + 1, 0).toISOString().slice(0, 10);
     const monthSessions = trainingSessions.filter((s) => (s.date ?? "") >= monthStart && (s.date ?? "") <= monthEnd);
-    const sessionIdsWithAtt = new Set(teamAtt.map((a) => a.session_id));
+    const sessionIdsWithAtt = new Set(attendanceData.map((a) => a.session_id));
     const loggedMonthSessions = monthSessions.filter((s) => sessionIdsWithAtt.has(s.id));
     if (loggedMonthSessions.length > 0) {
       for (const player of activePlayers) {
-        const playerAtt = teamAtt.filter((a) => a.player_id === player.id && loggedMonthSessions.some((s) => s.id === a.session_id));
+        const playerAtt = attendanceData.filter((a) => a.player_id === player.id && loggedMonthSessions.some((s) => s.id === a.session_id));
         if (!playerAtt.length) continue;
         const attended = playerAtt.filter((a) => a.status === "Present" || a.status === "Late").length;
         const pct = attended / loggedMonthSessions.length;
@@ -256,7 +250,7 @@ export default function Dashboard() {
 
     // 3. Fitness decline
     const resultsByPlayer = new Map<string, ResultRow[]>();
-    for (const r of teamResults) {
+    for (const r of allResults) {
       if (!r.player_id || r.bronco_mins === null) continue;
       if (!resultsByPlayer.has(r.player_id)) resultsByPlayer.set(r.player_id, []);
       resultsByPlayer.get(r.player_id)!.push(r);
@@ -280,7 +274,7 @@ export default function Dashboard() {
 
     // 4. Test overdue (>60 days)
     const latestTestDate = new Map<string, string>();
-    for (const r of teamResults) {
+    for (const r of allResults) {
       if (!r.player_id || !r.test_sessions?.test_date) continue;
       const ex = latestTestDate.get(r.player_id);
       if (!ex || r.test_sessions.test_date > ex) latestTestDate.set(r.player_id, r.test_sessions.test_date);
@@ -298,20 +292,19 @@ export default function Dashboard() {
 
     const order: Record<AlertSeverity, number> = { danger: 0, warning: 1, info: 2 };
     return items.sort((a, b) => order[a.severity] - order[b.severity]);
-  }, [players, rpeData, attendanceData, allResults, trainingSessions, team]);
+  }, [players, rpeData, attendanceData, allResults, trainingSessions]);
 
   // ── Monthly attendance % ──────────────────────────────────────────────────
   const monthlyAttPct = useMemo(() => {
     const now = new Date();
     const ms  = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().slice(0, 10);
     const me  = new Date(now.getFullYear(), now.getMonth() + 1, 0).toISOString().slice(0, 10);
-    const teamAtt = attendanceData.filter((a) => a.players?.team === team);
-    const logged  = trainingSessions.filter((s) => (s.date ?? "") >= ms && (s.date ?? "") <= me && teamAtt.some((a) => a.session_id === s.id));
+    const logged  = trainingSessions.filter((s) => (s.date ?? "") >= ms && (s.date ?? "") <= me && attendanceData.some((a) => a.session_id === s.id));
     if (!logged.length) return null;
-    const relevant = teamAtt.filter((a) => logged.some((s) => s.id === a.session_id));
+    const relevant = attendanceData.filter((a) => logged.some((s) => s.id === a.session_id));
     const present  = relevant.filter((a) => a.status === "Present" || a.status === "Late").length;
     return relevant.length > 0 ? Math.round((present / relevant.length) * 100) : null;
-  }, [attendanceData, trainingSessions, team]);
+  }, [attendanceData, trainingSessions]);
 
   // ── Upcoming sessions ─────────────────────────────────────────────────────
   const upcoming = useMemo(() => {
@@ -354,7 +347,6 @@ export default function Dashboard() {
       {/* Header */}
       <div className="flex items-center justify-between flex-wrap gap-3">
         <p className="text-sm text-muted-foreground">{active.length} active · {inactive.length} inactive · {monthName}</p>
-        <TeamSwitcher />
       </div>
 
       {/* Stat strip */}
@@ -430,7 +422,7 @@ export default function Dashboard() {
               <CheckCircle2 size={18} className="text-status-good flex-shrink-0" />
               <div>
                 <div className="text-sm font-medium text-foreground">All clear</div>
-                <div className="text-xs text-muted-foreground mt-0.5">No concerns flagged for {team} right now</div>
+                <div className="text-xs text-muted-foreground mt-0.5">No concerns flagged right now</div>
               </div>
             </div>
           ) : (

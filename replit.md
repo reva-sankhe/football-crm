@@ -58,6 +58,13 @@ A team management CRM for Bombay Gymkhana Women's Football — tracks players, s
   differ. `playerLabel()` in `lib/utils.ts` is the single definition of the "Aanya Vora (#12)"
   display format — use it everywhere a player is named, and `parseJersey`/`isValidJersey`
   (same file) to validate input against the constraint before writing.
+- **The app is one squad.** It used to switch between a Sharks and a Wildcats roster through a
+  `TeamContext` + `TeamSwitcher` pair, and every screen filtered on `players.team`. That is gone:
+  there is no switcher, no context, and nothing filters by team — every screen reports the whole
+  squad. `players.team` and `tournaments.team` still exist (nullable text, no constraint, every
+  row "Sharks") and are still written on create via `DEFAULT_TEAM` in `lib/types.ts`, so the
+  column stays consistent; nothing reads it. Reintroducing squads means a real scope picker, not
+  a global toggle — see `lib/scope.ts` for the shape that worked.
 - The Players page has two tabs: **All** (the roster table) and **Overview** (squad
   composition). Both read one fetch made by the parent `Players()` so they can never
   describe different data. `lib/squad.ts` holds the computation *and* the prose:

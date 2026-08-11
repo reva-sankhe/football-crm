@@ -6,10 +6,8 @@ import {
 } from "recharts";
 import { cn } from "@/lib/utils";
 import { formatBronco } from "@/lib/utils";
-import { useTeam } from "@/context/TeamContext";
 import { useTheme } from "@/context/ThemeContext";
 import { useToast } from "@/hooks/use-toast";
-import { TeamSwitcher } from "@/components/TeamSwitcher";
 import { MiniTable, OverviewCard, tooltipStyle } from "@/components/OverviewCard";
 import { PosBadge } from "@/components/PosBadge";
 import { AGE_ORDER, HIGHLIGHT, POSITION_ORDER, ageColor, ink, posColor, series, type Mode } from "@/lib/viz";
@@ -48,7 +46,6 @@ type Grouping = "all" | "position" | "age";
 type Placing = "bands" | "tiers";
 
 export function OverviewTab() {
-  const { team } = useTeam();
   const { theme } = useTheme();
   const mode: Mode = theme === "dark" ? "dark" : "light";
   const INK = ink(mode);
@@ -69,7 +66,7 @@ export function OverviewTab() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [rs, ss, ps] = await Promise.all([fetchAllResults(), fetchSessions(), fetchPlayers(team)]);
+      const [rs, ss, ps] = await Promise.all([fetchAllResults(), fetchSessions(), fetchPlayers()]);
       setResults(rs as ResultRow[]);
       setSessions(ss);
       setPlayers(ps);
@@ -78,12 +75,9 @@ export function OverviewTab() {
     } finally {
       setLoading(false);
     }
-  }, [team, toast]);
+  }, [toast]);
 
   useEffect(() => { load(); }, [load]);
-
-  // Results arrive for every team; the squad in view is what scopes them
-  const teamResults = useMemo(() => results.filter((r) => r.players?.team === team), [results, team]);
 
   const scopedSessions = useMemo(
     () => (pickedSession ? sessions.filter((s) => s.id === pickedSession) : sessions),
@@ -91,12 +85,12 @@ export function OverviewTab() {
   );
 
   const lines = useMemo(
-    () => buildFitnessLines(players, teamResults, scopedSessions),
-    [players, teamResults, scopedSessions],
+    () => buildFitnessLines(players, results, scopedSessions),
+    [players, results, scopedSessions],
   );
   const trend = useMemo(
-    () => buildTeamTrend(teamResults, scopedSessions),
-    [teamResults, scopedSessions],
+    () => buildTeamTrend(results, scopedSessions),
+    [results, scopedSessions],
   );
 
   const withTime = useMemo(() => ranked(lines), [lines]);
@@ -227,7 +221,6 @@ export function OverviewTab() {
                 .map((s) => <option key={s.id} value={s.id}>{s.test_name}</option>)}
             </select>
           )}
-          <TeamSwitcher />
         </div>
       </div>
 
