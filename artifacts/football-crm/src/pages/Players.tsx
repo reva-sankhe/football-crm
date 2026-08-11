@@ -9,7 +9,9 @@ import { SquadOverview } from "@/components/players/SquadOverview";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { AddButton } from "@/components/AddButton";
 import { CountPill, IconButton, SearchInput, TOOLBAR_MENU, TOOLBAR_SELECT } from "@/components/Toolbar";
-import { JERSEY_MAX, JERSEY_MIN, calcAgeRange, cn, parseJersey, playerLabel } from "@/lib/utils";
+import {
+  JERSEY_MAX, JERSEY_MIN, calcAgeRange, cn, jerseyClash, parseJersey, playerLabel,
+} from "@/lib/utils";
 import { PosBadge } from "@/components/PosBadge";
 import type { Player } from "@/lib/types";
 import { Users, Check, FileText, X, Pencil, SlidersHorizontal } from "lucide-react";
@@ -28,7 +30,32 @@ function generateCode(name: string): string {
   return name.trim().toUpperCase().replace(/\s+/g, "_");
 }
 
-function AddPlayerModal({ onClose, onSaved }: { onClose: () => void; onSaved: () => void }) {
+/**
+ * Says who already wears a number. Deliberately a hint, not a validation error —
+ * the form still saves, because a squad reusing a number is the coach's call.
+ */
+function JerseyHint({ roster, raw, selfId }: { roster: Player[]; raw: string; selfId?: string }) {
+  const parsed = parseJersey(raw);
+  if (parsed === "invalid" || parsed == null) return null;
+  const clash = jerseyClash(roster, parsed, selfId);
+  if (!clash) return null;
+  return (
+    <p className="text-[11px] text-status-warn mt-1" data-testid="hint-jersey-clash">
+      #{parsed} is already {clash.name}'s number
+    </p>
+  );
+}
+
+function AddPlayerModal({
+  roster,
+  onClose,
+  onSaved,
+}: {
+  /** Checked for a jersey clash — a warning only. */
+  roster: Player[];
+  onClose: () => void;
+  onSaved: () => void;
+}) {
   const { toast } = useToast();
   const { team: currentTeam } = useTeam();
   const [saving, setSaving] = useState(false);
@@ -149,16 +176,19 @@ function AddPlayerModal({ onClose, onSaved }: { onClose: () => void; onSaved: ()
           </div>
           <div className="grid grid-cols-3 gap-3">
             {field("Jersey #", (
-              <input
-                type="number"
-                min={JERSEY_MIN}
-                max={JERSEY_MAX}
-                value={form.jersey_number}
-                onChange={(e) => setForm({ ...form, jersey_number: e.target.value })}
-                placeholder="e.g. 12"
-                data-testid="input-jersey-number"
-                className={inputCls}
-              />
+              <>
+                <input
+                  type="number"
+                  min={JERSEY_MIN}
+                  max={JERSEY_MAX}
+                  value={form.jersey_number}
+                  onChange={(e) => setForm({ ...form, jersey_number: e.target.value })}
+                  placeholder="e.g. 12"
+                  data-testid="input-jersey-number"
+                  className={inputCls}
+                />
+                <JerseyHint roster={roster} raw={form.jersey_number} />
+              </>
             ))}
             {field("Year of Birth", (
               <input
@@ -218,10 +248,12 @@ function AddPlayerModal({ onClose, onSaved }: { onClose: () => void; onSaved: ()
 /** The handful of fields worth changing without leaving the roster table. */
 function QuickEditModal({
   player,
+  roster,
   onClose,
   onSaved,
 }: {
   player: Player;
+  roster: Player[];
   onClose: () => void;
   onSaved: (updated: Player) => void;
 }) {
@@ -298,6 +330,9 @@ function QuickEditModal({
                 className="w-full bg-muted border border-border rounded-md px-3 py-1.5 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
                 data-testid="quick-edit-jersey"
               />
+            </div>
+            <div className="col-span-3 -mt-2">
+              <JerseyHint roster={roster} raw={form.jersey_number} selfId={player.id} />
             </div>
           </div>
           <div className="grid grid-cols-2 gap-3">
@@ -698,11 +733,12 @@ function AllPlayersTab({
         )}
       </div>
 
-      {showAdd && <AddPlayerModal onClose={() => setShowAdd(false)} onSaved={reload} />}
+      {showAdd && <AddPlayerModal roster={players} onClose={() => setShowAdd(false)} onSaved={reload} />}
 
       {editPlayer && (
         <QuickEditModal
           player={editPlayer}
+          roster={players}
           onClose={() => setEditPlayer(null)}
           // Patch in place so the row updates without refetching the roster
           onSaved={(updated) => setPlayers((prev) => prev.map((p) => (p.id === updated.id ? updated : p)))}

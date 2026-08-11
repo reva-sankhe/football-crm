@@ -43,6 +43,24 @@ export function playerLabel(
 export const JERSEY_MIN = 1;
 export const JERSEY_MAX = 99;
 
+/**
+ * The active player already wearing `jersey`, or null when it's free.
+ *
+ * A warning, never a block: a number is only really taken while its owner is
+ * active, and two people sharing one is a mistake worth flagging rather than
+ * forbidding — squads do reuse a number mid-season.
+ */
+export function jerseyClash(
+  players: { id: string; name: string; jersey_number?: number | null; is_active: boolean }[],
+  jersey: number | null,
+  selfId?: string,
+): { id: string; name: string } | null {
+  if (jersey == null) return null;
+  return players.find(
+    (p) => p.is_active && p.jersey_number === jersey && p.id !== selfId,
+  ) ?? null;
+}
+
 /** null is valid — it means the player has no squad number yet. */
 export function isValidJersey(n: number | null): boolean {
   return n === null || (Number.isInteger(n) && n >= JERSEY_MIN && n <= JERSEY_MAX);

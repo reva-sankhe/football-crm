@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useLocation, useParams } from "wouter";
-import { ArrowLeft, ArrowRight, ChevronDown, Pencil } from "lucide-react";
+import { ArrowLeft, ArrowRight, ChevronDown, Download, Pencil } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useTheme } from "@/context/ThemeContext";
 import { useToast } from "@/hooks/use-toast";
@@ -16,6 +16,7 @@ import {
   type TournamentRecord,
 } from "@/lib/tournaments";
 import { formatShootout } from "@/lib/lineup";
+import { openReport, tournamentReportUrl } from "@/lib/reportLinks";
 import { formatDateShort } from "@/lib/attendance";
 import { SquadCard } from "@/components/tournaments/SquadCard";
 import { TournamentFormModal } from "@/components/tournaments/TournamentFormModal";
@@ -148,6 +149,15 @@ export default function TournamentDetail() {
             data-testid="button-edit-tournament"
           >
             <Pencil size={15} />
+          </button>
+          <button
+            onClick={() => openReport(tournamentReportUrl(tournament.id))}
+            aria-label="Download tournament report"
+            title="Download report"
+            className="p-1 rounded text-muted-foreground hover:text-foreground hover:bg-muted transition-colors shrink-0"
+            data-testid="button-download-tournament-report"
+          >
+            <Download size={15} />
           </button>
 
           {/* Read off the bracket, so it can't disagree with the results below */}

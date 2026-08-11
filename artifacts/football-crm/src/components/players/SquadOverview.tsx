@@ -1,102 +1,15 @@
-import { useMemo, useState } from "react";
+import { useMemo } from "react";
 import {
   Area, AreaChart, Bar, BarChart, CartesianGrid, Cell, ReferenceLine,
   ResponsiveContainer, Tooltip, XAxis, YAxis, LabelList,
 } from "recharts";
-import { cn } from "@/lib/utils";
 import { useTheme } from "@/context/ThemeContext";
 import { HIGHLIGHT, ink, posColor, type Mode } from "@/lib/viz";
 import {
   buildSquadOverview, interpretAge, interpretPositions, interpretSize,
 } from "@/lib/squad";
+import { MiniTable, OverviewCard, tooltipStyle } from "@/components/OverviewCard";
 import type { Player } from "@/lib/types";
-
-/**
- * A block on the Overview tab: a figure or chart, and underneath it the reading
- * of what that figure shows.
- *
- * `table` is not optional decoration — a chart whose values are only reachable
- * by hovering fails accessibility, so every plot here ships its numbers as a
- * table too.
- */
-function OverviewCard({
-  title, subtitle, interpretation, table, className, children,
-}: {
-  title: string;
-  subtitle?: string;
-  interpretation: string;
-  table?: React.ReactNode;
-  className?: string;
-  children: React.ReactNode;
-}) {
-  const [showTable, setShowTable] = useState(false);
-
-  return (
-    <div className={cn("bg-card border border-border rounded-2xl p-5 flex flex-col", className)}>
-      <div className="flex items-start justify-between gap-3 mb-4">
-        <div className="min-w-0">
-          <h2 className="text-sm font-semibold text-foreground">{title}</h2>
-          {subtitle && <p className="text-[11px] text-muted-foreground mt-0.5">{subtitle}</p>}
-        </div>
-        {table && (
-          <button
-            onClick={() => setShowTable((v) => !v)}
-            className="shrink-0 text-[11px] px-2 py-1 rounded-lg border border-border text-muted-foreground hover:text-foreground transition-colors"
-            aria-pressed={showTable}
-            data-testid={`toggle-table-${title.toLowerCase().replace(/\s+/g, "-")}`}
-          >
-            {showTable ? "Chart" : "Table"}
-          </button>
-        )}
-      </div>
-
-      <div className="flex-1">{showTable && table ? table : children}</div>
-
-      <div className="mt-4 pt-3 border-t border-border">
-        <div className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground mb-1.5">
-          Interpretation
-        </div>
-        <p className="text-xs text-muted-foreground leading-relaxed">{interpretation}</p>
-      </div>
-    </div>
-  );
-}
-
-/** Shared tooltip chrome, matching the charts on Analytics and the player profile. */
-function tooltipStyle(INK: ReturnType<typeof ink>) {
-  return {
-    contentStyle: {
-      background: INK.tooltipBg,
-      border: `1px solid ${INK.tooltipBorder}`,
-      borderRadius: 8,
-      fontSize: 12,
-    },
-    labelStyle: { color: INK.secondary },
-  };
-}
-
-function MiniTable({ head, rows }: { head: [string, string]; rows: [string, string][] }) {
-  return (
-    <div className="overflow-x-auto">
-      <table className="w-full text-xs">
-        <thead>
-          <tr className="text-[10px] uppercase tracking-widest text-muted-foreground">
-            <th className="text-left font-semibold pb-2">{head[0]}</th>
-            <th className="text-right font-semibold pb-2">{head[1]}</th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map(([k, v]) => (
-            <tr key={k} className="border-t border-border/50">
-              <td className="py-1.5 text-foreground">{k}</td>
-              <td className="py-1.5 text-right font-time text-muted-foreground">{v}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  );
-}
 
 export function SquadOverview({ players, loading }: { players: Player[]; loading: boolean }) {
   const { theme } = useTheme();

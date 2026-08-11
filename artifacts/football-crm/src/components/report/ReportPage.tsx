@@ -5,7 +5,7 @@ import { formatBronco, playerLabel } from "@/lib/utils";
 import { attendancePctFill, formatDateLong } from "@/lib/attendance";
 import { HIGHLIGHT, ink } from "@/lib/viz";
 import { FINISH_CFG, formatDateRange } from "@/lib/tournaments";
-import { ACWR_CONFIG, type PlayerReport } from "@/lib/report";
+import { ACWR_CONFIG, MATCH_RPE, type PlayerReport } from "@/lib/report";
 
 // Reports always print on white, so they pin the light ink set.
 const RINK = ink("light");
@@ -208,10 +208,12 @@ export function ReportPage({ report, generatedAt }: { report: PlayerReport; gene
                     <tr key={t.name} className="border-b border-slate-100 last:border-0">
                       <td className="py-0.5">
                         {t.name}
-                        {/* Printed in ink, not colour — the page is monochrome-safe */}
+                        {/* The word rides along so a screen reader and a copy-paste
+                            still get the placing if the glyph doesn't render */}
                         {t.finish && (
-                          <span className="ml-1.5 text-[9px] font-semibold uppercase tracking-wider text-slate-500">
-                            {FINISH_CFG[t.finish].label}
+                          <span className="ml-1.5" title={FINISH_CFG[t.finish].label}>
+                            <span aria-hidden>{FINISH_CFG[t.finish].medal}</span>
+                            <span className="sr-only">{FINISH_CFG[t.finish].label}</span>
                           </span>
                         )}
                       </td>
@@ -296,16 +298,18 @@ export function ReportPage({ report, generatedAt }: { report: PlayerReport; gene
 
       {/* ── Training load ─────────────────────────────────────────────────── */}
       <Section title="Training Load">
-        {load.sessionCount === 0 && load.acwr === null ? (
+        {load.sessionCount === 0 && load.matchCount === 0 && load.acwr === null ? (
           <Empty>No training load logged in this period.</Empty>
         ) : (
           <div className="grid grid-cols-4 gap-3">
             <Stat
               label="Total load"
               value={`${load.totalAu} AU`}
-              sub={load.plannedAu > 0
-                ? `${load.sessionCount} sessions · ${load.plannedAu} AU set`
-                : `${load.sessionCount} sessions`}
+              sub={[
+                `${load.sessionCount} session${load.sessionCount !== 1 ? "s" : ""}`,
+                load.matchCount > 0 && `${load.matchCount} match${load.matchCount !== 1 ? "es" : ""}`,
+                load.plannedAu > 0 && `${load.plannedAu} AU set`,
+              ].filter(Boolean).join(" · ")}
             />
             <Stat
               label="ACWR"
@@ -320,6 +324,7 @@ export function ReportPage({ report, generatedAt }: { report: PlayerReport; gene
         {load.acwr !== null && (
           <p className="text-[9px] text-slate-400 mt-1">
             ACWR as at {formatDateLong(load.asAt)} · rolling 7-day load ÷ 28-day weekly average.
+            {load.matchCount > 0 && ` Match load is minutes played × RPE ${MATCH_RPE}.`}
           </p>
         )}
       </Section>

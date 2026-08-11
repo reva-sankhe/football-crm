@@ -31,6 +31,12 @@ export interface ReportData {
   matchStats: PlayerMatchStat[];
   /** tournament id → where the team finished, derived from the bracket. */
   finishes: Map<string, TournamentFinish>;
+  /**
+   * Match sessions never linked to a `matches` row. Their load is estimated from
+   * attendance — see `buildLoadRows`. `fetchAdoptableSessions()` returns exactly
+   * this set.
+   */
+  orphanMatchSessions: TrainingSession[];
 }
 
 export interface MonthlyAttendance {
@@ -108,10 +114,13 @@ export interface PlayerReport {
     series: { label: string; mins: number }[];
   };
   load: {
+    /** Rated sessions and match minutes together. */
     totalAu: number;
-    /** Sum of the planned ("set") load for those same sessions. */
+    /** Sum of the planned ("set") load. Matches carry no plan, so they add nothing. */
     plannedAu: number;
     sessionCount: number;
+    /** Fixtures contributing minutes, counted apart from rated sessions. */
+    matchCount: number;
   } & AcwrResult;
 }
 
@@ -158,6 +167,152 @@ function isoOf(d: Date): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
+// ── Load ──────────────────────────────────────────────────────────────────────
+/**
+ * Matches are logged as minutes on the pitch, not as an effort rating, so they
+ * are all scored at the same assumed RPE. Change this and every load figure in
+ * the app moves with it.
+ */
+export const MATCH_RPE = 7;
+
+/**
+ * One unit of load, wherever it came from. Training carries the player's own
+ * rating; a match is `MATCH_RPE × minutes`.
+ */
+export interface LoadRow {
+  player_id: string;
+  date: string | null;
+  load_au: number;
+  /** "match" rows are synthesised at MATCH_RPE, "session" rows are as rated. */
+  source: "session" | "match";
+  /** What the session was planned for. Matches carry no plan. */
+  planned_load_au: number | null;
+}
+
+/**
+ * Folds rated sessions and match minutes into one list.
+ *
+ * Matches never use their logged RPE — a match is worth `MATCH_RPE × minutes`
+ * however hard it felt — so a match's `session_rpe` row is dropped once the
+ * match grid has covered that fixture. Two fallbacks catch match days the grid
+ * never saw, both scored at MATCH_RPE so no day silently drops to zero:
+ *
+ *  - a Match session with an RPE row but no grid row uses the minutes on that row;
+ *  - an **orphaned** Match session uses `duration_mins` for whoever turned up.
+ *
+ * `orphanMatchSessions` must be the sessions with no `matches` row at all — pass
+ * `fetchAdoptableSessions()`. It cannot be inferred from "this player has no grid
+ * row", because attendance is taken once per match *day* while grid rows are per
+ * fixture *and* squad: a player in the second squad has no stat row on the
+ * fixture that happens to hold the day's attendance, and would collect a phantom
+ * estimate on top of the minutes they really played.
+ */
+export function buildLoadRows(
+  rpe: RpeRow[],
+  matchStats: PlayerMatchStat[],
+  attendance: AttendanceRow[] = [],
+  orphanMatchSessions: TrainingSession[] = [],
+): LoadRow[] {
+  const out: LoadRow[] = [];
+  /** (player, session) pairs the match grid has already accounted for. */
+  const fromGrid = new Set<string>();
+
+  for (const s of matchStats) {
+    const sessionId = s.matches?.sessions?.id;
+    if (!sessionId) continue;
+    fromGrid.add(`${s.player_id}:${sessionId}`);
+    if (s.minutes_played <= 0) continue; // named in the squad but didn't play
+    out.push({
+      player_id: s.player_id,
+      date: s.matches?.sessions?.date ?? null,
+      load_au: MATCH_RPE * s.minutes_played,
+      source: "match",
+      planned_load_au: null,
+    });
+  }
+
+  for (const r of rpe) {
+    const isMatch = r.sessions ? isMatchSession(r.sessions) : false;
+    if (isMatch) {
+      // Already counted from the grid, or scored from the minutes on this row
+      if (fromGrid.has(`${r.player_id}:${r.session_id}`)) continue;
+      if (!r.minutes_played || r.minutes_played <= 0) continue;
+      out.push({
+        player_id: r.player_id,
+        date: r.sessions?.date ?? null,
+        load_au: MATCH_RPE * r.minutes_played,
+        source: "match",
+        planned_load_au: null,
+      });
+      continue;
+    }
+    out.push({
+      player_id: r.player_id,
+      date: r.sessions?.date ?? null,
+      load_au: r.load_au,
+      source: "session",
+      planned_load_au: r.sessions?.planned_load_au ?? null,
+    });
+  }
+
+  // Orphaned match days: no grid to take minutes from, so estimate from turnout.
+  const rated = new Set(rpe.map((r) => `${r.player_id}:${r.session_id}`));
+  const orphans = new Map(orphanMatchSessions.map((s) => [s.id, s] as const));
+  for (const a of attendance) {
+    const session = orphans.get(a.session_id);
+    if (!session) continue;
+    const key = `${a.player_id}:${a.session_id}`;
+    if (fromGrid.has(key) || rated.has(key)) continue;
+    // Absent and Injured did no work; Present and Late did
+    if (!countsAsAttended(a.status)) continue;
+    out.push({
+      player_id: a.player_id,
+      date: session.date,
+      load_au: MATCH_RPE * session.duration_mins,
+      source: "match",
+      planned_load_au: null,
+    });
+  }
+
+  return out;
+}
+
+/**
+ * One row per date, loads summed.
+ *
+ * A tournament day is four or five fixtures, and a player's body doesn't
+ * experience those as separate sessions — it experiences one hard day. Left
+ * uncollapsed, the load chart repeats the same date across several points and
+ * the rolling average silently becomes "last four fixtures" instead of "last
+ * four days". Totals are unchanged, so ACWR is identical either way; this is
+ * about the unit the load is expressed in.
+ *
+ * A day carrying any assumed match load is marked `"match"` — the flag says
+ * "part of this was scored at MATCH_RPE rather than rated", which stays true of
+ * a day that mixes a rated session with a fixture.
+ */
+export function collapseLoadByDay(rows: LoadRow[]): LoadRow[] {
+  const byDay = new Map<string, LoadRow>();
+  const undated: LoadRow[] = [];
+
+  for (const r of rows) {
+    if (r.date == null) { undated.push(r); continue; }
+    const key = `${r.player_id}:${r.date}`;
+    const day = byDay.get(key);
+    if (!day) {
+      byDay.set(key, { ...r });
+      continue;
+    }
+    day.load_au += r.load_au;
+    if (r.planned_load_au != null) {
+      day.planned_load_au = (day.planned_load_au ?? 0) + r.planned_load_au;
+    }
+    if (r.source === "match") day.source = "match";
+  }
+
+  return [...byDay.values(), ...undated];
+}
+
 // ── ACWR ──────────────────────────────────────────────────────────────────────
 export const ACWR_CONFIG: Record<AcwrResult["status"], { label: string; color: string; desc: string }> = {
   safe:    { label: "Safe Zone",       color: STATUS.good,     desc: "Optimal training load balance." },
@@ -172,12 +327,12 @@ export const ACWR_CONFIG: Record<AcwrResult["status"], { label: string; color: s
  * Reports anchor to the end of the selected range so the number matches the
  * period being printed rather than silently reflecting the present day.
  */
-export function computeAcwr(rows: RpeRow[], anchor?: Date): AcwrResult {
+export function computeAcwr(rows: LoadRow[], anchor?: Date): AcwrResult {
   const end = anchor ?? new Date();
   const days7 = new Date(end.getTime() - 7 * 86_400_000);
   const days28 = new Date(end.getTime() - 28 * 86_400_000);
 
-  const at = (r: RpeRow) => (r.sessions?.date ? new Date(r.sessions.date + "T00:00:00") : null);
+  const at = (r: LoadRow) => (r.date ? new Date(r.date + "T00:00:00") : null);
 
   const acute = rows.reduce((s, r) => {
     const d = at(r);
@@ -259,7 +414,7 @@ export function buildPlayerReport(
     const t = s.matches?.tournaments;
     const key = t?.id ?? "__none__";
     if (!byTournamentMap.has(key)) {
-      byTournamentMap.set(key, { name: t?.name ?? "Unassigned matches", rows: [] });
+      byTournamentMap.set(key, { name: t?.name ?? "Friendlies", rows: [] });
     }
     byTournamentMap.get(key)!.rows.push(s);
   }
@@ -321,8 +476,14 @@ export function buildPlayerReport(
   );
 
   // ── Load ────────────────────────────────────────────────────────────────
-  const playerRpe = data.rpe.filter((r) => r.player_id === player.id);
-  const scopedRpe = playerRpe.filter((r) => inRange(r.sessions?.date, range));
+  // Training and match minutes folded together — see buildLoadRows
+  const playerLoad = buildLoadRows(
+    data.rpe.filter((r) => r.player_id === player.id),
+    data.matchStats.filter((m) => m.player_id === player.id),
+    data.attendance.filter((a) => a.player_id === player.id),
+    data.orphanMatchSessions,
+  );
+  const scopedLoad = playerLoad.filter((r) => inRange(r.date, range));
   // ACWR needs the full history (its 28-day window may reach before the range).
   // An all-time report anchors to the last session on record rather than today,
   // so a report printed weeks after the last session doesn't read 0.00 for the
@@ -336,7 +497,8 @@ export function buildPlayerReport(
     : lastSessionDate
       ? new Date(lastSessionDate + "T00:00:00")
       : undefined;
-  const acwr = computeAcwr(playerRpe, anchor);
+  // Per day, matching the profile. Totals are the same either way; the unit isn't.
+  const acwr = computeAcwr(collapseLoadByDay(playerLoad), anchor);
 
   return {
     player,
@@ -383,9 +545,10 @@ export function buildPlayerReport(
         })),
     },
     load: {
-      totalAu: Math.round(scopedRpe.reduce((s, r) => s + r.load_au, 0)),
-      plannedAu: Math.round(scopedRpe.reduce((s, r) => s + (r.sessions?.planned_load_au ?? 0), 0)),
-      sessionCount: scopedRpe.length,
+      totalAu: Math.round(scopedLoad.reduce((s, r) => s + r.load_au, 0)),
+      plannedAu: Math.round(scopedLoad.reduce((s, r) => s + (r.planned_load_au ?? 0), 0)),
+      sessionCount: scopedLoad.filter((r) => r.source === "session").length,
+      matchCount: scopedLoad.filter((r) => r.source === "match").length,
       ...acwr,
     },
   };

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation } from "wouter";
-import { ArrowRight, Check, SlidersHorizontal, Trophy } from "lucide-react";
+import { ArrowRight, Check, Download, SlidersHorizontal, Trophy } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
 import { AddButton } from "@/components/AddButton";
@@ -12,6 +12,7 @@ import {
   fetchMatchCountsByTournament, fetchTournamentFinishes, fetchTournaments,
 } from "@/lib/queries";
 import { MATCH_FORMATS, formatDateRange, type TournamentFinish } from "@/lib/tournaments";
+import { openReport, tournamentReportUrl } from "@/lib/reportLinks";
 import { TournamentFormModal } from "@/components/tournaments/TournamentFormModal";
 import type { Tournament } from "@/lib/types";
 
@@ -233,6 +234,7 @@ export function TournamentsTab() {
                   <th className="px-2 py-2.5 text-left font-medium">Format</th>
                   <th className="px-2 py-2.5 text-right font-medium">Matches</th>
                   <th className="px-2 py-2.5 text-left font-medium">Finish</th>
+                  <th className="px-2 py-2.5 w-8"></th>
                   <th className="pr-4 pl-2 py-2.5 w-8"></th>
                 </tr>
               </thead>
@@ -256,6 +258,18 @@ export function TournamentsTab() {
                       </td>
                       <td className="px-2 py-2.5">
                         {finish ? <FinishBadge finish={finish} /> : <span className="text-muted-foreground/40">—</span>}
+                      </td>
+                      <td className="px-2 py-2.5 text-right">
+                        {/* Inside a clickable row, so the navigation has to be suppressed */}
+                        <button
+                          onClick={(e) => { e.stopPropagation(); openReport(tournamentReportUrl(t.id)); }}
+                          aria-label={`Download report for ${t.name}`}
+                          title="Download report"
+                          className="p-1 rounded text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+                          data-testid={`button-download-report-${t.id}`}
+                        >
+                          <Download size={13} />
+                        </button>
                       </td>
                       <td className="pr-4 pl-2 py-2.5 text-right">
                         <ArrowRight size={13} className="text-muted-foreground inline" />

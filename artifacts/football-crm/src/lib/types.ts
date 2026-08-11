@@ -2,11 +2,7 @@ export interface Player {
   id: string;
   code: string;
   name: string;
-  /**
-   * Permanent squad number, 1–99, null when unassigned. Distinct from
-   * `squad_players.shirt_number`, which is the number worn for one tournament
-   * squad and may differ from this one.
-   */
+  /** Permanent squad number, 1–99, null when unassigned. */
   jersey_number: number | null;
   primary_position: string;
   secondary_position: string | null;
@@ -192,7 +188,6 @@ export interface SquadPlayer {
   id: string;
   squad_id: string;
   player_id: string;
-  shirt_number: number | null;
   created_at: string;
 }
 

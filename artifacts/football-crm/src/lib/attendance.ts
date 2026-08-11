@@ -175,9 +175,19 @@ export function formatDateShort(iso: string): string {
   return new Date(iso + "T00:00:00").toLocaleDateString("en-GB", { day: "numeric", month: "short" });
 }
 
-export function todayISO(): string {
-  const d = new Date();
+function isoOf(d: Date): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+export function todayISO(): string {
+  return isoOf(new Date());
+}
+
+/** ISO date `days` before today, on the same local-time basis as `todayISO`. */
+export function isoDaysAgo(days: number): string {
+  const d = new Date();
+  d.setDate(d.getDate() - days);
+  return isoOf(d);
 }
 
 export function dayFromISO(iso: string): string {

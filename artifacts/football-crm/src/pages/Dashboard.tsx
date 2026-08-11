@@ -4,8 +4,11 @@ import { TeamSwitcher } from "@/components/TeamSwitcher";
 import { MetricCardSkeleton } from "@/components/Skeleton";
 import {
   fetchLatestSessionResults, fetchPlayers, fetchAllRPEWithSessions,
-  fetchAllAttendanceStats, fetchAllResults, fetchTrainingSessions,
+  fetchAllAttendanceStats, fetchAllResults, fetchTrainingSessions, fetchAllMatchStats,
+  fetchAdoptableSessions,
+  type PlayerMatchStat,
 } from "@/lib/queries";
+import { buildLoadRows, collapseLoadByDay, computeAcwr } from "@/lib/report";
 import { cn, formatBronco } from "@/lib/utils";
 import { STATUS } from "@/lib/viz";
 import { PosBadge } from "@/components/PosBadge";
@@ -86,16 +89,19 @@ export default function Dashboard() {
   const [attendanceData,   setAttendanceData]    = useState<AttRow[]>([]);
   const [allResults,       setAllResults]        = useState<ResultRow[]>([]);
   const [trainingSessions, setTrainingSessions]  = useState<TrainingSession[]>([]);
+  const [matchStats,       setMatchStats]        = useState<PlayerMatchStat[]>([]);
+  const [orphanSessions,   setOrphanSessions]    = useState<TrainingSession[]>([]);
   const [loading,          setLoading]           = useState(true);
   const [expanded,         setExpanded]          = useState<Set<AlertCategory>>(new Set(["injury_risk", "recovery", "attendance", "fitness"]));
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [ps, latest, rpe, att, results, sessions] = await Promise.all([
+      const [ps, latest, rpe, att, results, sessions, mStats, orphans] = await Promise.all([
         fetchPlayers(team), fetchLatestSessionResults(team),
         fetchAllRPEWithSessions(), fetchAllAttendanceStats(),
-        fetchAllResults(), fetchTrainingSessions(),
+        fetchAllResults(), fetchTrainingSessions(), fetchAllMatchStats(),
+        fetchAdoptableSessions(),
       ]);
       setPlayers(ps);
       setLatestData(latest);
@@ -103,6 +109,8 @@ export default function Dashboard() {
       setAttendanceData(att as AttRow[]);
       setAllResults(results as ResultRow[]);
       setTrainingSessions(sessions);
+      setMatchStats(mStats);
+      setOrphanSessions(orphans);
     } finally { setLoading(false); }
   }, [team]);
 
@@ -125,7 +133,6 @@ export default function Dashboard() {
 
     const now     = new Date();
     const days7   = new Date(now.getTime() - 7  * 86_400_000);
-    const days28  = new Date(now.getTime() - 28 * 86_400_000);
 
     // 1. ACWR + RPE vs planned gap
     const rpeByPlayer = new Map<string, RPERow[]>();
@@ -134,16 +141,41 @@ export default function Dashboard() {
       if (!rpeByPlayer.has(r.players.id)) rpeByPlayer.set(r.players.id, []);
       rpeByPlayer.get(r.players.id)!.push(r);
     }
-    for (const [pid, rows] of rpeByPlayer) {
-      const player = activePlayers.find((p) => p.id === pid);
-      if (!player) continue;
+    // Match minutes are load too, and a player can have them with no rated
+    // session at all — so the alert loop iterates players, not RPE rows.
+    const statsByPlayer = new Map<string, PlayerMatchStat[]>();
+    for (const s of matchStats) {
+      if (!statsByPlayer.has(s.player_id)) statsByPlayer.set(s.player_id, []);
+      statsByPlayer.get(s.player_id)!.push(s);
+    }
+    // Attendance backs the estimate for match days that never got a grid
+    const attByPlayer = new Map<string, AttRow[]>();
+    for (const a of teamAtt) {
+      if (!attByPlayer.has(a.player_id)) attByPlayer.set(a.player_id, []);
+      attByPlayer.get(a.player_id)!.push(a);
+    }
+
+    for (const player of activePlayers) {
+      const pid = player.id;
+      const rows = rpeByPlayer.get(pid) ?? [];
+      if (rows.length === 0 && !statsByPlayer.has(pid) && !attByPlayer.has(pid)) continue;
 
       // ── ACWR ────────────────────────────────────────────────────────────
+      // The same function the profile and the report use, so the three can't
+      // report different numbers for the same player.
+      const { acwr, acute, chronicWeeklyAvg: chronicAvg } = computeAcwr(
+        collapseLoadByDay(
+          buildLoadRows(
+            rows,
+            statsByPlayer.get(pid) ?? [],
+            attByPlayer.get(pid) ?? [],
+            orphanSessions,
+          ),
+        ),
+        now,
+      );
+      // Planned intensity is a property of rated sessions; matches carry no plan
       const acuteSessions = rows.filter((r) => r.sessions?.date && new Date(r.sessions.date + "T00:00:00") >= days7);
-      const acute      = acuteSessions.reduce((s, r) => s + r.load_au, 0);
-      const chronic28  = rows.filter((r) => r.sessions?.date && new Date(r.sessions.date + "T00:00:00") >= days28).reduce((s, r) => s + r.load_au, 0);
-      const chronicAvg = chronic28 / 4;
-      const acwr       = chronicAvg > 0 ? acute / chronicAvg : null;
 
       if (acwr !== null && acwr > 1.5) {
         // Downgrade severity if the spike was driven by planned high-intensity sessions

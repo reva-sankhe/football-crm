@@ -1,5 +1,5 @@
 import { supabase } from "./supabase";
-import { dayFromISO } from "./attendance";
+import { dayFromISO, isoDaysAgo } from "./attendance";
 import { tournamentFinish, type TournamentFinish } from "./tournaments";
 import type {
   Player, TestSession, TestResult, TrainingSession, SessionRPE, SessionAttendance, AttendanceStatus,
@@ -311,16 +311,24 @@ export async function insertSessionRPE(
   return data as SessionRPE;
 }
 
+/**
+ * A player's rated sessions over the last `sinceDays` days.
+ *
+ * Dated, not row-limited: ACWR needs a 28-day window, and a row cap silently
+ * truncates a heavy month into something that looks lighter than it was.
+ * PostgREST only filters an embedded table when the embed is an inner join,
+ * hence `sessions!inner` — with a plain embed the `.gte` is ignored.
+ */
 export async function fetchPlayerRecentSessions(
   playerId: string,
-  limit = 5
+  sinceDays = 35,
 ): Promise<(SessionRPE & { sessions: TrainingSession })[]> {
   const { data, error } = await supabase
     .from("session_rpe")
-    .select("*, sessions(*)")
+    .select("*, sessions!inner(*)")
     .eq("player_id", playerId)
-    .order("created_at", { ascending: false })
-    .limit(limit);
+    .gte("sessions.date", isoDaysAgo(sinceDays))
+    .order("created_at", { ascending: false });
   if (error) throw error;
   return data as (SessionRPE & { sessions: TrainingSession })[];
 }
@@ -622,6 +630,28 @@ export async function fetchMatch(id: string): Promise<MatchWithSession> {
   return data as MatchWithSession;
 }
 
+/** A match that also knows which competition it belongs to. */
+export type MatchWithTournament = MatchWithSession & {
+  tournaments: Pick<Tournament, "id" | "name"> | null;
+};
+
+/**
+ * Every match ever played, tournament and friendly alike, newest first — the one
+ * fetch the tournaments Overview reads its form, trend and filters from. Paged,
+ * since this is the table most likely to outgrow PostgREST's 1000-row cap.
+ */
+export async function fetchAllMatches(): Promise<MatchWithTournament[]> {
+  const rows = await fetchAllRows<MatchWithTournament>((from, to) =>
+    supabase
+      .from("matches")
+      .select(`${MATCH_SELECT}, tournaments(id, name)`)
+      .order("id")
+      .range(from, to),
+  );
+  // Date lives on the joined session, so ordering happens here rather than in SQL
+  return rows.sort((a, b) => (b.sessions?.date ?? "").localeCompare(a.sessions?.date ?? ""));
+}
+
 export interface CreateMatchInput {
   /** null for a standalone match that belongs to no tournament. */
   tournament_id: string | null;
@@ -757,6 +787,18 @@ export async function fetchPenaltyKicks(matchId: string): Promise<MatchPenaltyKi
   return (data ?? []) as MatchPenaltyKick[];
 }
 
+/**
+ * Every kick on record. Backs the Overview tab, which scopes its own slice out
+ * of one parent fetch rather than re-querying whenever the selection changes —
+ * a shootout is a handful of rows per tie, so the whole table is cheaper than
+ * the round trips it would replace.
+ */
+export async function fetchAllPenaltyKicks(): Promise<MatchPenaltyKick[]> {
+  return fetchAllRows<MatchPenaltyKick>((from, to) =>
+    supabase.from("match_penalty_kicks").select("*").order("id").range(from, to),
+  );
+}
+
 export async function replacePenaltyKicks(
   matchId: string,
   rows: MatchPenaltyKickInput[],
@@ -773,23 +815,40 @@ export async function replacePenaltyKicks(
   if (error) throw error;
 }
 
-/** One stat line per match a player featured in, newest first. */
+/**
+ * One stat line per match a player featured in, newest first.
+ *
+ * `squad_id` and the session's `duration_mins` are carried because the
+ * tournament report splits by squad and expresses minutes as a share of the
+ * minutes that were available to play.
+ */
 export type PlayerMatchStat = MatchPlayerStat & {
-  matches: (Pick<Match, "id" | "stage" | "opponent_id" | "goals_for" | "goals_against" | "tournament_id"> & {
+  matches: (Pick<
+    Match,
+    "id" | "stage" | "opponent_id" | "goals_for" | "goals_against" | "tournament_id" | "squad_id"
+  > & {
     tournaments: Pick<Tournament, "id" | "name"> | null;
-    sessions: Pick<TrainingSession, "id" | "date"> | null;
+    sessions: Pick<TrainingSession, "id" | "date" | "duration_mins"> | null;
     opponents: Pick<Opponent, "id" | "name"> | null;
   }) | null;
 };
 
-const PLAYER_MATCH_STAT_SELECT =
-  "*, matches(id, stage, opponent_id, goals_for, goals_against, tournament_id, tournaments(id, name), sessions(id, date), opponents(id, name))";
+const MATCH_EMBED =
+  "id, stage, opponent_id, goals_for, goals_against, tournament_id, squad_id, "
+  + "tournaments(id, name), sessions(id, date, duration_mins), opponents(id, name)";
 
-/** Every player's match stats in one request — backs the bulk report page. */
+const PLAYER_MATCH_STAT_SELECT = `*, matches(${MATCH_EMBED})`;
+
+/**
+ * Every player's match stats in one request — backs the bulk report page and the
+ * tournaments Overview. Paged: one row per player per fixture passes 1000 fast,
+ * and PostgREST truncates silently rather than erroring.
+ */
 export async function fetchAllMatchStats(): Promise<PlayerMatchStat[]> {
-  const { data, error } = await supabase.from("match_player_stats").select(PLAYER_MATCH_STAT_SELECT);
-  if (error) throw error;
-  return ((data ?? []) as PlayerMatchStat[]).sort((a, b) =>
+  const rows = await fetchAllRows<PlayerMatchStat>((from, to) =>
+    supabase.from("match_player_stats").select(PLAYER_MATCH_STAT_SELECT).order("id").range(from, to),
+  );
+  return rows.sort((a, b) =>
     (b.matches?.sessions?.date ?? "").localeCompare(a.matches?.sessions?.date ?? ""),
   );
 }
@@ -803,55 +862,6 @@ export async function fetchMatchStatsByPlayer(playerId: string): Promise<PlayerM
   // Match date lives on the joined session, so sort here rather than in SQL
   return ((data ?? []) as PlayerMatchStat[]).sort((a, b) =>
     (b.matches?.sessions?.date ?? "").localeCompare(a.matches?.sessions?.date ?? ""),
-  );
-}
-
-export interface TournamentLeader {
-  player: Pick<Player, "id" | "name" | "primary_position">;
-  minutes: number;
-  goals: number;
-  assists: number;
-  appearances: number;
-}
-
-/**
- * Per-player totals across a tournament's matches, best scorers first.
- * Pass `squadId` to scope the table to one squad — a tournament entered with
- * two squads has two independent sets of leaders.
- */
-export async function fetchTournamentLeaders(
-  tournamentId: string,
-  squadId?: string | null,
-): Promise<TournamentLeader[]> {
-  let q = supabase
-    .from("match_player_stats")
-    .select("*, players(id, name, primary_position), matches!inner(tournament_id, squad_id)")
-    .eq("matches.tournament_id", tournamentId);
-  if (squadId) q = q.eq("matches.squad_id", squadId);
-  const { data, error } = await q;
-  if (error) throw error;
-
-  const byPlayer = new Map<string, TournamentLeader>();
-  for (const row of (data ?? []) as (MatchPlayerStat & {
-    players: Pick<Player, "id" | "name" | "primary_position"> | null;
-  })[]) {
-    if (!row.players) continue;
-    const entry = byPlayer.get(row.player_id) ?? {
-      player: row.players,
-      minutes: 0,
-      goals: 0,
-      assists: 0,
-      appearances: 0,
-    };
-    entry.minutes += row.minutes_played;
-    entry.goals += row.goals;
-    entry.assists += row.assists;
-    if (row.minutes_played > 0) entry.appearances += 1;
-    byPlayer.set(row.player_id, entry);
-  }
-
-  return Array.from(byPlayer.values()).sort(
-    (a, b) => b.goals - a.goals || b.assists - a.assists || b.minutes - a.minutes,
   );
 }
 

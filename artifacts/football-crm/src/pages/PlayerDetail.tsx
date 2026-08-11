@@ -1,13 +1,27 @@
 import { useEffect, useState, useCallback, useMemo } from "react";
 import { useParams, useLocation } from "wouter";
 import {
-  fetchPlayer, fetchResultsByPlayer, updatePlayer, fetchAllResults, fetchPlayerRecentSessions,
-  fetchAttendanceByPlayer, fetchTrainingSessions, fetchMatchStatsByPlayer,
+  fetchPlayer, fetchPlayers, fetchResultsByPlayer, updatePlayer, fetchAllResults,
+  fetchPlayerRecentSessions,
+  fetchAttendanceByPlayer, fetchTrainingSessions, fetchMatchStatsByPlayer, fetchAdoptableSessions,
   fetchTournamentFinishes, type PlayerMatchStat,
 } from "@/lib/queries";
-import { JERSEY_MAX, JERSEY_MIN, formatBronco, cn, isValidJersey, playerLabel } from "@/lib/utils";
-import { attendancePctColor, collapseMatchDays, countsAsAttended, matchDayAttendance } from "@/lib/attendance";
-import { ACWR_CONFIG, computeAcwr, isMatchSession, teamBandFor } from "@/lib/report";
+import {
+  JERSEY_MAX, JERSEY_MIN, formatBronco, cn, isValidJersey, jerseyClash, playerLabel,
+} from "@/lib/utils";
+import {
+  attendancePctColor, collapseMatchDays, countsAsAttended, isoDaysAgo, matchDayAttendance,
+} from "@/lib/attendance";
+
+/**
+ * How far back the load chart and ACWR look. ACWR needs 28 days; the extra week
+ * gives the rolling average some run-up rather than starting mid-air.
+ */
+const LOAD_WINDOW_DAYS = 35;
+import {
+  ACWR_CONFIG, MATCH_RPE, buildLoadRows, collapseLoadByDay, computeAcwr, isMatchSession,
+  teamBandFor,
+} from "@/lib/report";
 import { ChartSkeleton, Skeleton } from "@/components/Skeleton";
 import { EmptyState } from "@/components/EmptyState";
 import { PlayerTournamentStats } from "@/components/tournaments/PlayerTournamentStats";
@@ -22,7 +36,7 @@ import {
 import { ArrowLeft, Edit, Save, X, Timer, Dumbbell } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useTheme } from "@/context/ThemeContext";
-import { HIGHLIGHT, ink, type Mode } from "@/lib/viz";
+import { HIGHLIGHT, ink, series, type Mode } from "@/lib/viz";
 
 const PRIMARY_POSITIONS = ["Goalkeeper", "Defender", "Midfielder", "Forward"];
 const SECONDARY_POSITIONS: Record<string, string[]> = {
@@ -57,6 +71,9 @@ export default function PlayerDetail() {
   const [playerAttendance, setPlayerAttendance] = useState<(SessionAttendance & { sessions: { id: string; date: string; session_type: string } })[]>([]);
   const [matchStats, setMatchStats] = useState<PlayerMatchStat[]>([]);
   const [finishes, setFinishes] = useState<Map<string, TournamentFinish>>(new Map());
+  /** The rest of the squad, so the jersey field can flag a clash. */
+  const [roster, setRoster] = useState<Player[]>([]);
+  const [orphanSessions, setOrphanSessions] = useState<TrainingSession[]>([]);
 
   const mode: Mode = isDark ? "dark" : "light";
   const INK = ink(mode);
@@ -73,17 +90,22 @@ export default function PlayerDetail() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [p, rs, allRs, loadHistory, attendance, sessions, mStats, placings] = await Promise.all([
-        fetchPlayer(id!),
-        fetchResultsByPlayer(id!),
-        fetchAllResults(),
-        fetchPlayerRecentSessions(id!, 28),
-        fetchAttendanceByPlayer(id!),
-        fetchTrainingSessions(),
-        fetchMatchStatsByPlayer(id!),
-        fetchTournamentFinishes(),
-      ]);
+      const [p, rs, allRs, loadHistory, attendance, sessions, mStats, placings, allPlayers, orphans] =
+        await Promise.all([
+          fetchPlayer(id!),
+          fetchResultsByPlayer(id!),
+          fetchAllResults(),
+          fetchPlayerRecentSessions(id!, LOAD_WINDOW_DAYS),
+          fetchAttendanceByPlayer(id!),
+          fetchTrainingSessions(),
+          fetchMatchStatsByPlayer(id!),
+          fetchTournamentFinishes(),
+          fetchPlayers(), // only to tell you a jersey number is taken
+          fetchAdoptableSessions(), // match days with no grid — load comes from turnout
+        ]);
       setFinishes(placings);
+      setRoster(allPlayers);
+      setOrphanSessions(orphans);
       setPlayer(p);
       setResults(rs as (TestResult & { test_sessions?: { test_date: string; test_name: string; type: string | null } })[]);
       setRecentLoad(loadHistory as (SessionRPE & { sessions: TrainingSession })[]);
@@ -150,18 +172,35 @@ export default function PlayerDetail() {
     }));
 
   // ── Training load ─────────────────────────────────────────────────────────
-  const loadChartData = [...recentLoad]
-    .sort((a, b) => (a.sessions?.date ?? "").localeCompare(b.sessions?.date ?? ""))
+  // Rated sessions and match minutes in one list — matches score at MATCH_RPE.
+  // Windowed here as well as in the query: match stats are fetched in full for
+  // the tournament history above, and without this the chart's axis would
+  // stretch back to the player's first ever fixture.
+  const loadRows = useMemo(() => {
+    const since = isoDaysAgo(LOAD_WINDOW_DAYS);
+    return buildLoadRows(recentLoad, matchStats, playerAttendance, orphanSessions)
+      .filter((r) => r.date != null && r.date >= since);
+  }, [recentLoad, matchStats, playerAttendance, orphanSessions]);
+
+  /**
+   * What the chart plots and ACWR reads: one entry per day, so a tournament day
+   * is a single hard day rather than five points stacked on one date. `loadRows`
+   * stays per fixture — the counts below still say how many matches there were.
+   */
+  const dailyLoad = useMemo(() => collapseLoadByDay(loadRows), [loadRows]);
+
+  const loadChartData = [...dailyLoad]
+    .sort((a, b) => (a.date ?? "").localeCompare(b.date ?? ""))
     .map((r) => ({
-      date: r.sessions?.date
-        ? new Date(r.sessions.date + "T00:00:00").toLocaleDateString("en-GB", { day: "numeric", month: "short" })
+      date: r.date
+        ? new Date(r.date + "T00:00:00").toLocaleDateString("en-GB", { day: "numeric", month: "short" })
         : "—",
       load: Math.round(r.load_au),
       // What the session was planned for, so over/under-shooting is visible.
-      // Matches carry no plan (load 0) — null skips them rather than drawing a
+      // Matches carry no plan — null skips them rather than drawing a
       // floor-scraping zero on the Set line.
-      planned: r.sessions?.planned_load_au ? Math.round(r.sessions.planned_load_au) : null,
-      rpe: r.rpe,
+      planned: r.planned_load_au ? Math.round(r.planned_load_au) : null,
+      source: r.source,
     }));
 
   const loadWithAvg = loadChartData.map((d, i, arr) => {
@@ -169,8 +208,13 @@ export default function PlayerDetail() {
     return { ...d, rollingAvg: Math.round(window.reduce((s, x) => s + x.load, 0) / window.length) };
   });
 
+  const sessionLoadCount = loadRows.filter((r) => r.source === "session").length;
+  const matchLoadCount = loadRows.filter((r) => r.source === "match").length;
+  /** Match points wear the second categorical slot; rated sessions keep the highlight. */
+  const MATCH_INK = series(mode, 1);
+
   // ACWR — shared with the printable report so the two can't disagree
-  const { acwr, acute: acuteLoad, chronicWeeklyAvg, status: acwrStatus } = computeAcwr(recentLoad);
+  const { acwr, acute: acuteLoad, chronicWeeklyAvg, status: acwrStatus } = computeAcwr(dailyLoad);
   const acwrCfg = ACWR_CONFIG[acwrStatus];
 
   // ── Attendance ────────────────────────────────────────────────────────────
@@ -307,6 +351,14 @@ export default function PlayerDetail() {
                 className="w-full bg-muted border border-border rounded-lg px-2 py-1.5 text-sm text-foreground"
                 data-testid="input-edit-jersey"
               />
+              {(() => {
+                const clash = jerseyClash(roster, editForm.jersey_number ?? null, player.id);
+                return clash ? (
+                  <p className="text-[11px] text-status-warn mt-1" data-testid="hint-jersey-clash">
+                    #{editForm.jersey_number} is already {clash.name}'s number
+                  </p>
+                ) : null;
+              })()}
             </div>
             <div>
               <label className="block text-xs text-muted-foreground mb-1">Primary Position</label>
@@ -430,7 +482,9 @@ export default function PlayerDetail() {
       </section>
 
       {/* ── Training load ──────────────────────────────────────────────────── */}
-      {recentLoad.length > 0 && (
+      {/* Not gated on rated sessions alone: a player whose only load is match
+          minutes still has a load to show. */}
+      {loadRows.length > 0 && (
         <section className="space-y-2">
           <SectionLabel>Training Load</SectionLabel>
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 items-stretch">
@@ -476,27 +530,68 @@ export default function PlayerDetail() {
                     <span className="flex items-center gap-1">
                       <span className="w-3 border-t border-dashed" style={{ borderColor: chartAxis }} /> Avg
                     </span>
-                    <span>{recentLoad.length} sessions</span>
+                    {/* Match load is assumed, not rated — say so rather than
+                        letting it pass as a logged RPE. */}
+                    {matchLoadCount > 0 && (
+                      <span className="flex items-center gap-1">
+                        <span className="w-2 h-2 rounded-full" style={{ background: MATCH_INK }} />
+                        Match (RPE {MATCH_RPE})
+                      </span>
+                    )}
+                    <span>
+                      {sessionLoadCount} session{sessionLoadCount !== 1 ? "s" : ""}
+                      {matchLoadCount > 0 && ` · ${matchLoadCount} match${matchLoadCount !== 1 ? "es" : ""}`}
+                    </span>
                   </div>
                 </div>
                 <div className="flex-1 min-h-0" style={{ minHeight: 150 }}>
                   <ResponsiveContainer width="100%" height="100%">
                     {/* Level date labels need no angled gutter, so the plot keeps
                         the ~26px the rotated ticks used to reserve. */}
-                    <LineChart data={loadWithAvg} margin={{ top: 4, right: 8, bottom: 0, left: -12 }}>
+                    {/* left:0 with a wider Y band — match load pushes the axis
+                        into 3 digits, which the old -12 gutter clipped. */}
+                    <LineChart data={loadWithAvg} margin={{ top: 4, right: 8, bottom: 0, left: 0 }}>
                       <CartesianGrid strokeDasharray="3 3" stroke={chartGrid} vertical={false} />
                       <XAxis dataKey="date" tick={{ fill: chartAxis, fontSize: 9 }} tickLine={false} interval="preserveStartEnd" minTickGap={24} />
-                      <YAxis tick={{ fill: chartAxis, fontSize: 9 }} width={32} tickLine={false} axisLine={false} />
+                      <YAxis tick={{ fill: chartAxis, fontSize: 9 }} width={34} tickLine={false} axisLine={false} />
                       <Tooltip
                         contentStyle={{ background: chartTooltipBg, border: `1px solid ${chartTooltipBorder}`, borderRadius: 8 }}
                         labelStyle={{ color: chartLabel, fontSize: 12 }}
-                        formatter={(v: number, key: string) => [
+                        formatter={(v: number, key: string, item) => [
                           `${v} AU`,
-                          key === "rollingAvg" ? "Rolling avg (4)" : key === "planned" ? "Set load" : "Actual load",
+                          key === "rollingAvg" ? "Rolling avg (4)"
+                            : key === "planned" ? "Set load"
+                            : (item?.payload as { source?: string })?.source === "match"
+                              ? `Match load (RPE ${MATCH_RPE} assumed)`
+                              : "Actual load",
                         ]}
                       />
                       <Line type="monotone" dataKey="planned" stroke={PLANNED_INK} strokeWidth={1.5} dot={false} connectNulls />
-                      <Line type="monotone" dataKey="load" stroke={HIGHLIGHT} strokeWidth={2} dot={{ fill: HIGHLIGHT, r: 2.5 }} />
+                      {/* One line, two kinds of point: the dot says where the
+                          load was rated and where it was assumed from minutes. */}
+                      <Line
+                        type="monotone"
+                        dataKey="load"
+                        stroke={HIGHLIGHT}
+                        strokeWidth={2}
+                        dot={(props) => {
+                          const { cx, cy, payload, index } = props as {
+                            cx: number; cy: number; payload: { source?: string }; index: number;
+                          };
+                          const isMatch = payload?.source === "match";
+                          return (
+                            <circle
+                              key={index}
+                              cx={cx}
+                              cy={cy}
+                              r={isMatch ? 3.5 : 2.5}
+                              fill={isMatch ? MATCH_INK : HIGHLIGHT}
+                              stroke={isMatch ? INK.surface : "none"}
+                              strokeWidth={isMatch ? 1.5 : 0}
+                            />
+                          );
+                        }}
+                      />
                       <Line type="monotone" dataKey="rollingAvg" stroke={chartAxis} strokeWidth={1.5} strokeDasharray="4 2" dot={false} />
                     </LineChart>
                   </ResponsiveContainer>

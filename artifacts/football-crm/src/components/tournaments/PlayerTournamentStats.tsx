@@ -29,7 +29,8 @@ export function PlayerTournamentStats({
       const t = r.matches?.tournaments;
       const key = t?.id ?? "__none__";
       if (!groups.has(key)) {
-        groups.set(key, { id: t?.id ?? "", name: t?.name ?? "Unassigned matches", rows: [] });
+        // No tournament means a standalone friendly — name it after the tab it lives on
+        groups.set(key, { id: t?.id ?? "", name: t?.name ?? "Friendlies", rows: [] });
       }
       groups.get(key)!.rows.push(r);
     }

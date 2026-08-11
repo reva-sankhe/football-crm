@@ -130,6 +130,52 @@ export function tournamentFinish(matches: OutcomeMatch[]): TournamentFinish | nu
   return null;
 }
 
+/** The club, as it should be named alongside the other teams on a podium. */
+export const CLUB_NAME = "Bombay Gymkhana";
+
+/** A match plus who it was against — a placing has to name the other team. */
+export type PlacingMatch = OutcomeMatch & { opponents: { name: string } | null };
+
+/**
+ * Who finished first, second and third — us and the sides we played.
+ *
+ * Read off the bracket like `tournamentFinish`, and just as limited: the only
+ * results in the database are our own, so a placing is knowable exactly when we
+ * played the tie that settled it. Win or lose the final and both of the top two
+ * are named; go out at the semi and nobody knows who lifted it, so those stay
+ * null rather than being guessed at.
+ */
+export interface TournamentPlacings {
+  first: string | null;
+  second: string | null;
+  third: string | null;
+}
+
+export function tournamentPlacings(
+  matches: PlacingMatch[],
+  us: string = CLUB_NAME,
+): TournamentPlacings {
+  const placings: TournamentPlacings = { first: null, second: null, third: null };
+  const opponent = (m: PlacingMatch) => m.opponents?.name ?? null;
+
+  const final = matches.find((m) => m.stage === "Final");
+  if (final) {
+    const won = tieWon(final);
+    if (won === true) { placings.first = us; placings.second = opponent(final); }
+    else if (won === false) { placings.first = opponent(final); placings.second = us; }
+  }
+
+  // A third-place playoff settles its own medal, whether or not we were in the final
+  const third = matches.find((m) => m.stage === "Third Place");
+  if (third) {
+    const won = tieWon(third);
+    if (won === true) placings.third = us;
+    else if (won === false) placings.third = opponent(third);
+  }
+
+  return placings;
+}
+
 export interface TournamentRecord {
   played: number;
   won: number;
