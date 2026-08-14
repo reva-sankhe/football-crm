@@ -101,15 +101,17 @@ export function OverviewTab() {
   const moved = useMemo(() => movers(lines), [lines]);
   const latestPoint = trend[trend.length - 1] ?? null;
 
-  /** Group averages sit on one common session, so they compare like with like. */
+  /** Group averages use each player's personal-best time (sessionId = null),
+   *  consistent with the scatter below. Filtering to a single session would
+   *  exclude anyone who missed that day and make "tested" misleadingly small. */
   const groups = useMemo(
     () => buildGroupBreakdown(
       lines,
       grouping === "age" ? AGE_ORDER : POSITION_ORDER,
       (l) => (grouping === "age" ? l.player.age_range : l.player.primary_position),
-      latestPoint?.sessionId ?? null,
+      null,
     ),
-    [lines, grouping, latestPoint],
+    [lines, grouping],
   );
 
   const bands = useMemo(() => buildBands(lines, mode), [lines, mode]);
