@@ -67,9 +67,13 @@ export function OverviewTab() {
     setLoading(true);
     try {
       const [rs, ss, ps] = await Promise.all([fetchAllResults(), fetchSessions(), fetchPlayers()]);
-      setResults(rs as ResultRow[]);
+      // Only the current squad: inactive players are excluded here — and their
+      // results with them, so the team trend can't average in departed players.
+      const active = ps.filter((p) => p.is_active);
+      const activeIds = new Set(active.map((p) => p.id));
+      setResults((rs as ResultRow[]).filter((r) => activeIds.has(r.player_id)));
       setSessions(ss);
-      setPlayers(ps);
+      setPlayers(active);
     } catch (err) {
       toast({ title: "Failed to load fitness analytics", description: String(err), variant: "destructive" });
     } finally {
