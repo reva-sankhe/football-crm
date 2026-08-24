@@ -8,7 +8,8 @@
     "build": "vite build --config vite.config.ts",
     "serve": "vite preview --config vite.config.ts --host 0.0.0.0",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test:fitness-precision": "node scripts/fitnessAnalytics.precision.test.mjs"
+    "test:fitness-precision": "node scripts/fitnessAnalytics.precision.test.mjs",
+    "test:workload-ratio": "node scripts/workloadRatio.test.mjs"
   },
   "devDependencies": {
     "@hookform/resolvers": "^3.10.0",

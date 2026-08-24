@@ -3,7 +3,6 @@ import { MetricCardSkeleton } from "@/components/Skeleton";
 import {
   fetchLatestSessionResults, fetchPlayers, fetchAllRPEWithSessions,
   fetchAllAttendanceStats, fetchAllResults, fetchTrainingSessions, fetchAllMatchStats,
-  fetchAdoptableSessions,
   type PlayerMatchStat,
 } from "@/lib/queries";
 import { buildLoadRows, collapseLoadByDay, computeAcwr } from "@/lib/report";
@@ -22,7 +21,7 @@ const BENCHMARK_MINS = 5 + 6 / 60;
 
 // ── Alert types ──────────────────────────────────────────────────────────────
 type AlertSeverity = "danger" | "warning" | "info";
-type AlertCategory = "injury_risk" | "recovery" | "attendance" | "fitness";
+type AlertCategory = "workload" | "recovery" | "attendance" | "fitness";
 
 interface AlertItem {
   id: string;
@@ -43,10 +42,10 @@ const SEV_COLOR: Record<AlertSeverity, string> = {
 
 // The 4 functional sections — each maps to one area a coach can act on
 const CAT_CFG: Record<AlertCategory, { label: string; description: string; color: string; dimBg: string; metricNote: string }> = {
-  injury_risk: {
-    label: "Injury Risk",
-    description: "Players whose recent training load has spiked beyond what their body is adapted to. The acute:chronic workload ratio (ACWR) compares this week's load against a 4-week rolling average — above 1.3 is the recognised caution zone, above 1.5 is high risk.",
-    metricNote: "ACWR = this week's load ÷ average weekly load over 28 days",
+  workload: {
+    label: "Workload Changes",
+    description: "Players whose latest seven-day workload is above their own previous three-week average. This ratio is a workload monitoring signal, not an injury prediction.",
+    metricNote: "Workload ratio = latest 7-day load ÷ prior 3-week average",
     color: "inherit",
     dimBg: "bg-muted/30",
   },
@@ -87,18 +86,16 @@ export default function Dashboard() {
   const [allResults,       setAllResults]        = useState<ResultRow[]>([]);
   const [trainingSessions, setTrainingSessions]  = useState<TrainingSession[]>([]);
   const [matchStats,       setMatchStats]        = useState<PlayerMatchStat[]>([]);
-  const [orphanSessions,   setOrphanSessions]    = useState<TrainingSession[]>([]);
   const [loading,          setLoading]           = useState(true);
-  const [expanded,         setExpanded]          = useState<Set<AlertCategory>>(new Set(["injury_risk", "recovery", "attendance", "fitness"]));
+  const [expanded,         setExpanded]          = useState<Set<AlertCategory>>(new Set(["workload", "recovery", "attendance", "fitness"]));
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [ps, latest, rpe, att, results, sessions, mStats, orphans] = await Promise.all([
+      const [ps, latest, rpe, att, results, sessions, mStats] = await Promise.all([
         fetchPlayers(), fetchLatestSessionResults(),
         fetchAllRPEWithSessions(), fetchAllAttendanceStats(),
         fetchAllResults(), fetchTrainingSessions(), fetchAllMatchStats(),
-        fetchAdoptableSessions(),
       ]);
       setPlayers(ps);
       setLatestData(latest);
@@ -107,7 +104,6 @@ export default function Dashboard() {
       setAllResults(results as ResultRow[]);
       setTrainingSessions(sessions);
       setMatchStats(mStats);
-      setOrphanSessions(orphans);
     } finally { setLoading(false); }
   }, []);
 
@@ -126,9 +122,9 @@ export default function Dashboard() {
     const activePlayers = players.filter((p) => p.is_active);
 
     const now     = new Date();
-    const days7   = new Date(now.getTime() - 7  * 86_400_000);
+    const days7   = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 6);
 
-    // 1. ACWR + RPE vs planned gap
+    // 1. Workload ratio + RPE vs planned gap
     const rpeByPlayer = new Map<string, RPERow[]>();
     for (const r of rpeData) {
       if (!r.players?.id) continue;
@@ -154,50 +150,33 @@ export default function Dashboard() {
       const rows = rpeByPlayer.get(pid) ?? [];
       if (rows.length === 0 && !statsByPlayer.has(pid) && !attByPlayer.has(pid)) continue;
 
-      // ── ACWR ────────────────────────────────────────────────────────────
+      // ── Workload ratio ──────────────────────────────────────────────────
       // The same function the profile and the report use, so the three can't
       // report different numbers for the same player.
-      const { acwr, acute, chronicWeeklyAvg: chronicAvg } = computeAcwr(
+      const { acwr, acute, baselineWeeklyAvg, status } = computeAcwr(
         collapseLoadByDay(
           buildLoadRows(
             rows,
             statsByPlayer.get(pid) ?? [],
-            attByPlayer.get(pid) ?? [],
-            orphanSessions,
           ),
         ),
         now,
       );
-      // Planned intensity is a property of rated sessions; matches carry no plan
-      const acuteSessions = rows.filter((r) => r.sessions?.date && new Date(r.sessions.date + "T00:00:00") >= days7);
-
-      if (acwr !== null && acwr > 1.5) {
-        // Downgrade severity if the spike was driven by planned high-intensity sessions
-        const acutePlannedRpes = acuteSessions.map((r) => r.sessions?.planned_rpe ?? 0).filter((v) => v > 0);
-        const acuteAvgPlannedRpe = acutePlannedRpes.length > 0
-          ? acutePlannedRpes.reduce((a, b) => a + b, 0) / acutePlannedRpes.length
-          : 0;
-        const isPlannedHighBlock = acuteAvgPlannedRpe >= 7;
+      if (acwr !== null && (status === "high_spike" || status === "very_high_spike")) {
         items.push({
           id: `acwr-${pid}`,
-          severity: isPlannedHighBlock ? "warning" : "danger",
-          category: "injury_risk",
+          severity: status === "very_high_spike" ? "danger" : "warning",
+          category: "workload",
           player,
-          headline: isPlannedHighBlock
-            ? `ACWR ${acwr.toFixed(2)} — Elevated during planned high-intensity block`
-            : `ACWR ${acwr.toFixed(2)} — Load spike not explained by session plan`,
-          detail: isPlannedHighBlock
-            ? `This week's load is ${Math.round(acwr * 100)}% of their 4-week average. The spike is driven by planned hard sessions (avg planned RPE ${acuteAvgPlannedRpe.toFixed(1)}), so it's expected — but still worth watching.`
-            : `This week's load is ${Math.round(acwr * 100)}% of their 4-week average (${Math.round(acute)} AU this week vs ${Math.round(chronicAvg)} AU/wk norm). The spike isn't explained by planned session intensity, which makes it more concerning.`,
-          action: isPlannedHighBlock
-            ? "Check in with players after the next session. If multiple players report heavy legs or excessive soreness, consider scaling back the following session's intensity."
-            : "Reduce session volume or intensity immediately. Schedule a recovery or low-intensity day before the next hard session. Reassess after 7 days.",
+          headline: `Workload ratio ${acwr.toFixed(2)} — ${status === "very_high_spike" ? "Very high spike" : "High spike"}`,
+          detail: `Last 7 days: ${Math.round(acute)} AU. Prior 3-week average: ${Math.round(baselineWeeklyAvg)} AU per week. Review recent workload, recovery, and upcoming sessions.`,
+          action: "Check in with the player and review the next few sessions. This workload ratio is a monitoring prompt, not an injury prediction.",
         });
-      } else if (acwr !== null && acwr > 1.3) {
-        items.push({ id: `acwr-${pid}`, severity: "warning", category: "injury_risk", player,
-          headline: `ACWR ${acwr.toFixed(2)} — Approaching the caution threshold`,
-          detail: `This week's load is ${Math.round(acwr * 100)}% of their 4-week average (${Math.round(acute)} AU this week vs ${Math.round(chronicAvg)} AU/wk norm). Above 130% is the recognised caution zone.`,
-          action: "Stick to the current plan — don't add extra sessions or unplanned intensity this week. If the player looks flat, pull back before it becomes a bigger issue." });
+      } else if (acwr !== null && status === "elevated") {
+        items.push({ id: `acwr-${pid}`, severity: "warning", category: "workload", player,
+          headline: `Workload ratio ${acwr.toFixed(2)} — Elevated`,
+          detail: `Last 7 days: ${Math.round(acute)} AU. Prior 3-week average: ${Math.round(baselineWeeklyAvg)} AU per week.`,
+          action: "Review recovery and upcoming sessions before adding unplanned workload." });
       }
 
       // ── RPE vs planned gap ───────────────────────────────────────────────
@@ -427,7 +406,7 @@ export default function Dashboard() {
             </div>
           ) : (
             <div className="divide-y divide-border">
-              {(["injury_risk", "recovery", "attendance", "fitness"] as AlertCategory[]).map((cat) => {
+              {(["workload", "recovery", "attendance", "fitness"] as AlertCategory[]).map((cat) => {
                 const catItems = alertsByCat(cat);
                 if (!catItems.length) return null;
                 const cfg    = CAT_CFG[cat];

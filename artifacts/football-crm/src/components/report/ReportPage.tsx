@@ -70,6 +70,10 @@ export function ReportPage({ report, generatedAt }: { report: PlayerReport; gene
   const rangeLabel = range ? formatDateRange(range.from, range.to) : "All time";
   const acwrCfg = ACWR_CONFIG[load.status];
   const monthLabel = new Date().toLocaleDateString("en-GB", { month: "short" });
+  const ratioEstimateWindows = [
+    load.acuteEstimatedMatchAu > 0 && `${load.acuteEstimatedMatchAu} AU in the last 7 days`,
+    load.baselineEstimatedMatchAu > 0 && `${load.baselineEstimatedMatchAu} AU in the prior 3-week baseline`,
+  ].filter(Boolean).join(" and ");
 
   return (
     <article className="report-page bg-white text-slate-900 mx-auto p-8 mb-6 shadow-sm print:shadow-none print:mb-0 print:p-0 w-[210mm] min-h-[297mm] print:w-auto print:min-h-0">
@@ -312,21 +316,21 @@ export function ReportPage({ report, generatedAt }: { report: PlayerReport; gene
               ].filter(Boolean).join(" · ")}
             />
             <Stat
-              label="ACWR"
+              label="Workload ratio"
               value={load.acwr !== null ? load.acwr.toFixed(2) : "—"}
               sub={acwrCfg.label}
               color={acwrCfg.color}
             />
             <Stat label="Acute (7d)" value={`${Math.round(load.acute)} AU`} />
-            <Stat label="Chronic /wk" value={`${Math.round(load.chronicWeeklyAvg)} AU`} />
+            <Stat label="Prior 3-wk avg" value={`${Math.round(load.baselineWeeklyAvg)} AU`} />
           </div>
         )}
-        {load.acwr !== null && (
-          <p className="text-[9px] text-slate-400 mt-1">
-            ACWR as at {formatDateLong(load.asAt)} · rolling 7-day load ÷ 28-day weekly average.
-            {load.matchCount > 0 && ` Match load is minutes played × RPE ${MATCH_RPE}.`}
-          </p>
-        )}
+        <p className="text-[9px] text-slate-400 mt-1">
+          Workload ratio as at {formatDateLong(load.asAt)} · latest 7-day load ÷ average weekly load
+          over the preceding 21 days. A complete 28-day workload history is required before it is classified.
+          {load.estimatedMatchAu > 0 && ` This report period includes ${load.estimatedMatchAu} AU from ${load.estimatedMatchCount} match${load.estimatedMatchCount === 1 ? "" : "es"} estimated at RPE ${MATCH_RPE}.`}
+          {ratioEstimateWindows && ` The workload ratio includes estimated match load: ${ratioEstimateWindows}.`}
+        </p>
       </Section>
 
       <footer className="mt-auto pt-4 text-[8px] text-slate-400 border-t border-slate-200 flex justify-between">

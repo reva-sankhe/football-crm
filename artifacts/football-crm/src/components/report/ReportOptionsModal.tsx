@@ -85,7 +85,7 @@ export function ReportOptionsModal({
               />
             </div>
             <p className="text-[11px] text-muted-foreground mt-2">
-              Scopes attendance, matches and fitness tests. ACWR is calculated as at the
+              Scopes attendance, matches and fitness tests. The workload ratio is calculated as at the
               end of the range.
             </p>
           </div>

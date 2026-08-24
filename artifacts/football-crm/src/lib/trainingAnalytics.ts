@@ -6,14 +6,10 @@ import type { Player } from "./types";
  *
  * Pure: no Supabase imports. It takes `LoadRow`s, which means it inherits the
  * one definition of load the rest of the app already uses — `buildLoadRows` in
- * lib/report.ts folds rated sessions and match minutes together, scoring every
- * match at `MATCH_RPE` however hard it felt. The player profile, the printed
- * report and the Dashboard alerts all read the same rows, so the team view here
- * cannot disagree with any of them.
- *
- * (The old Analytics page summed `session_rpe.load_au` directly, which counted a
- * match at whatever RPE the player rated it and missed match days nobody rated.
- * Figures here differ from that page for exactly that reason.)
+ * lib/report.ts folds rated sessions and match minutes together, using player
+ * match RPE where available and a marked fallback where it is not. The player
+ * profile, the printed report and the Dashboard alerts all read the same rows,
+ * so the team view here cannot disagree with any of them.
  *
  * The `interpret*` functions are deterministic and written from the figures they
  * name. Change a threshold and change the sentence that reports it.
@@ -95,15 +91,17 @@ export interface PlayerLoadLine {
   days: number;
   /** Share of the load that came from matches rather than rated sessions. */
   matchShare: number;
+  /** Share of total load estimated from match minutes because a player RPE was missing. */
+  estimatedMatchShare: number;
   acwr: AcwrResult;
 }
 
 /**
  * One line per player who did anything in the window, heaviest first.
  *
- * ACWR is computed from the *whole* set of rows for that player, not the
- * windowed ones: the ratio needs 28 days behind the anchor, and a 4-week window
- * would leave it comparing a period against itself.
+ * The workload ratio is computed from the *whole* set of rows for that player,
+ * not the windowed ones: it needs 28 days behind the anchor, and a 4-week
+ * display window must not truncate that history.
  */
 export function buildPlayerLoadDistribution(
   windowed: LoadRow[],
@@ -135,6 +133,10 @@ export function buildPlayerLoadDistribution(
     const days = collapseLoadByDay(rows);
     const totalAu = rows.reduce((s, r) => s + r.load_au, 0);
     const matchAu = rows.reduce((s, r) => (r.source === "match" ? s + r.load_au : s), 0);
+    const estimatedMatchAu = rows.reduce(
+      (s, r) => (r.source === "match" && r.estimated ? s + r.load_au : s),
+      0,
+    );
 
     lines.push({
       player,
@@ -142,6 +144,7 @@ export function buildPlayerLoadDistribution(
       perDayAu: days.length > 0 ? Math.round(totalAu / days.length) : 0,
       days: days.length,
       matchShare: totalAu > 0 ? matchAu / totalAu : 0,
+      estimatedMatchShare: totalAu > 0 ? estimatedMatchAu / totalAu : 0,
       acwr: computeAcwr(collapseLoadByDay(allByPlayer.get(playerId) ?? []), now),
     });
   }
@@ -189,7 +192,7 @@ export function interpretWeeklyLoad(weeks: WeekLoad[]): string {
   return parts.join(" ");
 }
 
-/** Who is carrying the load, and who the ratio says to watch. */
+/** Who is carrying the load, and whose current week is above their recent baseline. */
 export function interpretLoadDistribution(lines: PlayerLoadLine[]): string {
   if (lines.length === 0) {
     return "Nobody has load logged in this window.";
@@ -220,23 +223,23 @@ export function interpretLoadDistribution(lines: PlayerLoadLine[]): string {
     );
   }
 
-  // The ratio is the actual injury-risk signal, and it reads the full history
-  const flagged = lines.filter((l) => l.acwr.status === "danger" || l.acwr.status === "caution");
+  const flagged = lines.filter((l) =>
+    l.acwr.status === "elevated" || l.acwr.status === "high_spike" || l.acwr.status === "very_high_spike",
+  );
   if (flagged.length > 0) {
     parts.push(
       `${flagged.map((l) => `${l.player.name} (${round1(l.acwr.acwr ?? 0)})`).join(", ")} `
-      + `${flagged.length === 1 ? "is" : "are"} above the 1.3 acute:chronic ratio — the last week is `
-      + "heavy against their own four-week baseline.",
+      + `${flagged.length === 1 ? "is" : "are"} above their typical workload range — the last seven days `
+      + "are high against their own previous three-week baseline.",
     );
   } else {
-    parts.push("Nobody is above the 1.3 acute:chronic ratio.");
+    parts.push("Nobody with a completed baseline is above their typical workload range.");
   }
 
-  const matchHeavy = lines.filter((l) => l.matchShare >= 0.5);
+  const matchHeavy = lines.filter((l) => l.estimatedMatchShare > 0);
   if (matchHeavy.length > 0) {
     parts.push(
-      `${plural(matchHeavy.length, "player")} took at least half their load from matches, which are `
-      + "scored at a fixed intensity rather than rated.",
+      `${plural(matchHeavy.length, "player")} have match load estimated at RPE 7 because their match RPE was not logged.`,
     );
   }
 

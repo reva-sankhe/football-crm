@@ -31,12 +31,6 @@ export interface ReportData {
   matchStats: PlayerMatchStat[];
   /** tournament id → where the team finished, derived from the bracket. */
   finishes: Map<string, TournamentFinish>;
-  /**
-   * Match sessions never linked to a `matches` row. Their load is estimated from
-   * attendance — see `buildLoadRows`. `fetchAdoptableSessions()` returns exactly
-   * this set.
-   */
-  orphanMatchSessions: TrainingSession[];
 }
 
 export interface MonthlyAttendance {
@@ -61,10 +55,22 @@ export function isMatchSession(s: { session_type: string }): boolean {
 export interface AcwrResult {
   acwr: number | null;
   acute: number;
-  chronicWeeklyAvg: number;
-  status: "safe" | "caution" | "danger" | "low" | "unknown";
+  /** Average weekly load over the 21 days before the acute week. */
+  baselineWeeklyAvg: number;
+  /** Calendar days from the first logged workload through the anchor date. */
+  historyDays: number;
+  /** A ratio is only meaningful after a complete 28-day workload history. */
+  hasBaseline: boolean;
+  status: "below_baseline" | "typical" | "elevated" | "high_spike" | "very_high_spike" | "building";
   /** The date the rolling windows were measured back from. */
   asAt: string;
+}
+
+export interface WorkloadRatioWindows {
+  end: Date;
+  acuteStart: Date;
+  baselineStart: Date;
+  baselineEnd: Date;
 }
 
 export interface PlayerReport {
@@ -121,6 +127,12 @@ export interface PlayerReport {
     sessionCount: number;
     /** Fixtures contributing minutes, counted apart from rated sessions. */
     matchCount: number;
+    /** Estimated match load inside the selected report range. */
+    estimatedMatchAu: number;
+    estimatedMatchCount: number;
+    /** Estimated match load affecting the current ratio, by ratio window. */
+    acuteEstimatedMatchAu: number;
+    baselineEstimatedMatchAu: number;
   } & AcwrResult;
 }
 
@@ -169,22 +181,26 @@ function isoOf(d: Date): string {
 
 // ── Load ──────────────────────────────────────────────────────────────────────
 /**
- * Matches are logged as minutes on the pitch, not as an effort rating, so they
- * are all scored at the same assumed RPE. Change this and every load figure in
- * the app moves with it.
+ * Fallback used only when minutes are known but that player did not submit a
+ * match RPE. Kept in one place so estimated match load is consistent everywhere.
  */
 export const MATCH_RPE = 7;
 
 /**
  * One unit of load, wherever it came from. Training carries the player's own
- * rating; a match is `MATCH_RPE × minutes`.
+ * rating; matches use the player's RPE when it is logged, otherwise a clearly
+ * marked `MATCH_RPE × minutes` estimate.
  */
 export interface LoadRow {
   player_id: string;
   date: string | null;
   load_au: number;
-  /** "match" rows are synthesised at MATCH_RPE, "session" rows are as rated. */
+  /** "match" rows use known match minutes; "session" rows are rated sessions. */
   source: "session" | "match";
+  /** Individual RPE used for this row; 7 only when an estimated match fallback was used. */
+  rpe: number | null;
+  /** True when a match has minutes but no player-rated match RPE. */
+  estimated: boolean;
   /** What the session was planned for. Matches carry no plan. */
   planned_load_au: number | null;
 }
@@ -192,41 +208,45 @@ export interface LoadRow {
 /**
  * Folds rated sessions and match minutes into one list.
  *
- * Matches never use their logged RPE — a match is worth `MATCH_RPE × minutes`
- * however hard it felt — so a match's `session_rpe` row is dropped once the
- * match grid has covered that fixture. Two fallbacks catch match days the grid
- * never saw, both scored at MATCH_RPE so no day silently drops to zero:
+ * The match grid is the source of truth for minutes. When a player has rated
+ * that match, their RPE is paired with those minutes; otherwise the fallback
+ * RPE is flagged as estimated. A match-session RPE row is used when no grid
+ * row exists:
  *
- *  - a Match session with an RPE row but no grid row uses the minutes on that row;
- *  - an **orphaned** Match session uses `duration_mins` for whoever turned up.
- *
- * `orphanMatchSessions` must be the sessions with no `matches` row at all — pass
- * `fetchAdoptableSessions()`. It cannot be inferred from "this player has no grid
- * row", because attendance is taken once per match *day* while grid rows are per
- * fixture *and* squad: a player in the second squad has no stat row on the
- * fixture that happens to hold the day's attendance, and would collect a phantom
- * estimate on top of the minutes they really played.
+ * Attendance alone does not establish minutes played, so it never creates an
+ * estimated full-match load. This avoids turning an unused substitute or an
+ * unknown appearance into a 90-minute workload.
  */
 export function buildLoadRows(
   rpe: RpeRow[],
   matchStats: PlayerMatchStat[],
-  attendance: AttendanceRow[] = [],
-  orphanMatchSessions: TrainingSession[] = [],
 ): LoadRow[] {
   const out: LoadRow[] = [];
   /** (player, session) pairs the match grid has already accounted for. */
   const fromGrid = new Set<string>();
+  /** A player-rated match RPE, keyed so the match grid can supply its minutes. */
+  const ratedMatchRpe = new Map<string, RpeRow>();
+
+  for (const row of rpe) {
+    if (!row.sessions || !isMatchSession(row.sessions) || row.rpe <= 0) continue;
+    ratedMatchRpe.set(`${row.player_id}:${row.session_id}`, row);
+  }
 
   for (const s of matchStats) {
     const sessionId = s.matches?.sessions?.id;
     if (!sessionId) continue;
-    fromGrid.add(`${s.player_id}:${sessionId}`);
+    const key = `${s.player_id}:${sessionId}`;
+    fromGrid.add(key);
     if (s.minutes_played <= 0) continue; // named in the squad but didn't play
+    const rated = ratedMatchRpe.get(key);
+    const effort = rated?.rpe ?? MATCH_RPE;
     out.push({
       player_id: s.player_id,
       date: s.matches?.sessions?.date ?? null,
-      load_au: MATCH_RPE * s.minutes_played,
+      load_au: Math.round(effort * s.minutes_played),
       source: "match",
+      rpe: effort,
+      estimated: rated === undefined,
       planned_load_au: null,
     });
   }
@@ -240,8 +260,10 @@ export function buildLoadRows(
       out.push({
         player_id: r.player_id,
         date: r.sessions?.date ?? null,
-        load_au: MATCH_RPE * r.minutes_played,
+        load_au: Math.round(r.rpe * r.minutes_played),
         source: "match",
+        rpe: r.rpe,
+        estimated: false,
         planned_load_au: null,
       });
       continue;
@@ -251,26 +273,9 @@ export function buildLoadRows(
       date: r.sessions?.date ?? null,
       load_au: r.load_au,
       source: "session",
+      rpe: r.rpe,
+      estimated: false,
       planned_load_au: r.sessions?.planned_load_au ?? null,
-    });
-  }
-
-  // Orphaned match days: no grid to take minutes from, so estimate from turnout.
-  const rated = new Set(rpe.map((r) => `${r.player_id}:${r.session_id}`));
-  const orphans = new Map(orphanMatchSessions.map((s) => [s.id, s] as const));
-  for (const a of attendance) {
-    const session = orphans.get(a.session_id);
-    if (!session) continue;
-    const key = `${a.player_id}:${a.session_id}`;
-    if (fromGrid.has(key) || rated.has(key)) continue;
-    // Absent and Injured did no work; Present and Late did
-    if (!countsAsAttended(a.status)) continue;
-    out.push({
-      player_id: a.player_id,
-      date: session.date,
-      load_au: MATCH_RPE * session.duration_mins,
-      source: "match",
-      planned_load_au: null,
     });
   }
 
@@ -284,12 +289,11 @@ export function buildLoadRows(
  * experience those as separate sessions — it experiences one hard day. Left
  * uncollapsed, the load chart repeats the same date across several points and
  * the rolling average silently becomes "last four fixtures" instead of "last
- * four days". Totals are unchanged, so ACWR is identical either way; this is
+ * four days". Totals are unchanged, so the workload ratio is identical either way; this is
  * about the unit the load is expressed in.
  *
- * A day carrying any assumed match load is marked `"match"` — the flag says
- * "part of this was scored at MATCH_RPE rather than rated", which stays true of
- * a day that mixes a rated session with a fixture.
+ * A day carrying any match load is marked `"match"`. Its `estimated` flag stays
+ * true when any match minutes on that day used the RPE 7 fallback.
  */
 export function collapseLoadByDay(rows: LoadRow[]): LoadRow[] {
   const byDay = new Map<string, LoadRow>();
@@ -307,53 +311,80 @@ export function collapseLoadByDay(rows: LoadRow[]): LoadRow[] {
     if (r.planned_load_au != null) {
       day.planned_load_au = (day.planned_load_au ?? 0) + r.planned_load_au;
     }
-    if (r.source === "match") day.source = "match";
+    if (r.source === "match") {
+      day.source = "match";
+      day.estimated ||= r.estimated;
+    }
   }
 
   return [...byDay.values(), ...undated];
 }
 
-// ── ACWR ──────────────────────────────────────────────────────────────────────
+// ── Workload ratio (uncoupled ACWR) ────────────────────────────────────────────
 export const ACWR_CONFIG: Record<AcwrResult["status"], { label: string; color: string; desc: string }> = {
-  safe:    { label: "Safe Zone",       color: STATUS.good,     desc: "Optimal training load balance." },
-  caution: { label: "Caution",         color: STATUS.warning,  desc: "High load — monitor recovery closely." },
-  danger:  { label: "High Risk",       color: STATUS.critical, desc: "Injury risk elevated. Consider reducing load." },
-  low:     { label: "Underloaded",     color: "#94a3b8",       desc: "Below baseline — may indicate detraining." },
-  unknown: { label: "Not enough data", color: "#94a3b8",       desc: "Need 28 days of session data to calculate." },
+  below_baseline: { label: "Below Baseline", color: "#94a3b8",       desc: "Recent workload is lower than the previous three-week average." },
+  typical:        { label: "Typical Range",  color: STATUS.good,     desc: "Recent workload is broadly in line with the previous three weeks." },
+  elevated:       { label: "Elevated",       color: STATUS.warning,  desc: "Recent workload is above the previous three-week average. Review recovery and upcoming sessions." },
+  high_spike:     { label: "High Spike",     color: STATUS.warning,  desc: "Recent workload is substantially above the previous three-week average. Review the next few days." },
+  very_high_spike:{ label: "Very High Spike",color: STATUS.critical, desc: "Recent workload is more than twice the previous three-week average. Review workload, recovery, and upcoming sessions." },
+  building:       { label: "Building Baseline", color: "#94a3b8",    desc: "A complete 28-day workload history is needed before this ratio is classified." },
 };
 
+export function workloadRatioWindows(anchor?: Date): WorkloadRatioWindows {
+  const supplied = anchor ?? new Date();
+  const end = new Date(supplied.getFullYear(), supplied.getMonth(), supplied.getDate());
+  const shift = (days: number) => new Date(end.getFullYear(), end.getMonth(), end.getDate() + days);
+  return {
+    end,
+    acuteStart: shift(-6),
+    baselineStart: shift(-27),
+    baselineEnd: shift(-7),
+  };
+}
+
 /**
- * Acute:chronic workload ratio, measured back from `anchor` (defaults to today).
- * Reports anchor to the end of the selected range so the number matches the
- * period being printed rather than silently reflecting the present day.
+ * Uncoupled acute:chronic workload ratio, measured back from `anchor`
+ * (defaults to today). The acute period is exactly the latest 7 calendar days
+ * (anchor − 6 through anchor); the baseline is the preceding 21 calendar days
+ * (anchor − 27 through anchor − 7), averaged into a weekly value.
+ *
+ * Excluding the acute week from its own denominator makes the result easier to
+ * read: "this week compared with what the player averaged over the prior three
+ * weeks." Reports anchor to the end of the selected range so the number matches
+ * the period being printed rather than silently reflecting the present day.
  */
 export function computeAcwr(rows: LoadRow[], anchor?: Date): AcwrResult {
-  const end = anchor ?? new Date();
-  const days7 = new Date(end.getTime() - 7 * 86_400_000);
-  const days28 = new Date(end.getTime() - 28 * 86_400_000);
-
+  const { end, acuteStart, baselineStart, baselineEnd } = workloadRatioWindows(anchor);
   const at = (r: LoadRow) => (r.date ? new Date(r.date + "T00:00:00") : null);
+  const dated = rows.flatMap((r) => {
+    const date = at(r);
+    return date ? [{ ...r, at: date }] : [];
+  });
 
-  const acute = rows.reduce((s, r) => {
-    const d = at(r);
-    return d && d >= days7 && d <= end ? s + r.load_au : s;
-  }, 0);
-  const chronic28 = rows.reduce((s, r) => {
-    const d = at(r);
-    return d && d >= days28 && d <= end ? s + r.load_au : s;
-  }, 0);
-
-  const chronicWeeklyAvg = chronic28 / 4;
-  const acwr = chronicWeeklyAvg > 0 ? acute / chronicWeeklyAvg : null;
+  const acute = dated.reduce((sum, row) =>
+    row.at >= acuteStart && row.at <= end ? sum + row.load_au : sum, 0);
+  const baselineTotal = dated.reduce((sum, row) =>
+    row.at >= baselineStart && row.at <= baselineEnd ? sum + row.load_au : sum, 0);
+  const baselineWeeklyAvg = baselineTotal / 3;
+  const firstLogged = dated.reduce<Date | null>(
+    (earliest, row) => earliest === null || row.at < earliest ? row.at : earliest,
+    null,
+  );
+  const historyDays = firstLogged
+    ? Math.floor((end.getTime() - firstLogged.getTime()) / 86_400_000) + 1
+    : 0;
+  const hasBaseline = firstLogged !== null && firstLogged <= baselineStart && baselineWeeklyAvg > 0;
+  const acwr = hasBaseline ? acute / baselineWeeklyAvg : null;
 
   const status: AcwrResult["status"] =
-    acwr === null ? "unknown"
-    : acwr < 0.5  ? "low"
-    : acwr <= 1.3 ? "safe"
-    : acwr <= 1.5 ? "caution"
-    : "danger";
+    acwr === null ? "building"
+    : acwr < 0.8 ? "below_baseline"
+    : acwr <= 1.3 ? "typical"
+    : acwr <= 1.5 ? "elevated"
+    : acwr <= 2 ? "high_spike"
+    : "very_high_spike";
 
-  return { acwr, acute, chronicWeeklyAvg, status, asAt: isoOf(end) };
+  return { acwr, acute, baselineWeeklyAvg, historyDays, hasBaseline, status, asAt: isoOf(end) };
 }
 
 // ── Report builder ────────────────────────────────────────────────────────────
@@ -480,8 +511,6 @@ export function buildPlayerReport(
   const playerLoad = buildLoadRows(
     data.rpe.filter((r) => r.player_id === player.id),
     data.matchStats.filter((m) => m.player_id === player.id),
-    data.attendance.filter((a) => a.player_id === player.id),
-    data.orphanMatchSessions,
   );
   const scopedLoad = playerLoad.filter((r) => inRange(r.date, range));
   // ACWR needs the full history (its 28-day window may reach before the range).
@@ -499,6 +528,13 @@ export function buildPlayerReport(
       : undefined;
   // Per day, matching the profile. Totals are the same either way; the unit isn't.
   const acwr = computeAcwr(collapseLoadByDay(playerLoad), anchor);
+  const ratioWindows = workloadRatioWindows(anchor);
+  const estimatedMatchRows = playerLoad.filter((r) => r.source === "match" && r.estimated && r.date !== null);
+  const estimatedIn = (from: Date, to: Date) => estimatedMatchRows.reduce((sum, row) => {
+    const date = new Date(`${row.date}T00:00:00`);
+    return date >= from && date <= to ? sum + row.load_au : sum;
+  }, 0);
+  const estimatedInScopedRange = scopedLoad.filter((r) => r.source === "match" && r.estimated);
 
   return {
     player,
@@ -549,6 +585,10 @@ export function buildPlayerReport(
       plannedAu: Math.round(scopedLoad.reduce((s, r) => s + (r.planned_load_au ?? 0), 0)),
       sessionCount: scopedLoad.filter((r) => r.source === "session").length,
       matchCount: scopedLoad.filter((r) => r.source === "match").length,
+      estimatedMatchAu: Math.round(estimatedInScopedRange.reduce((s, r) => s + r.load_au, 0)),
+      estimatedMatchCount: estimatedInScopedRange.length,
+      acuteEstimatedMatchAu: Math.round(estimatedIn(ratioWindows.acuteStart, ratioWindows.end)),
+      baselineEstimatedMatchAu: Math.round(estimatedIn(ratioWindows.baselineStart, ratioWindows.baselineEnd)),
       ...acwr,
     },
   };

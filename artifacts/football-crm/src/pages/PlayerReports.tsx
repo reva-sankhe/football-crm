@@ -4,7 +4,6 @@ import { ArrowLeft, Printer, RefreshCw } from "lucide-react";
 import {
   fetchAllAttendanceStats, fetchAllMatchStats, fetchAllResults,
   fetchAllRPEWithSessions, fetchPlayers, fetchTournamentFinishes, fetchTrainingSessions,
-  fetchAdoptableSessions,
 } from "@/lib/queries";
 import { buildPlayerReport, type ReportData, type ReportRange } from "@/lib/report";
 import { formatDateLong } from "@/lib/attendance";
@@ -55,9 +54,8 @@ export default function PlayerReports() {
       fetchAllRPEWithSessions(),
       fetchAllMatchStats(),
       fetchTournamentFinishes(),
-      fetchAdoptableSessions(),
     ])
-      .then(([ps, sessions, attendance, results, rpe, matchStats, finishes, orphans]) => {
+      .then(([ps, sessions, attendance, results, rpe, matchStats, finishes]) => {
         if (cancelled) return;
         setPlayers(ps);
         setData({
@@ -67,7 +65,6 @@ export default function PlayerReports() {
           rpe: rpe as ReportData["rpe"],
           matchStats,
           finishes,
-          orphanMatchSessions: orphans,
         });
       })
       .catch((err) => { if (!cancelled) setError(String(err)); })

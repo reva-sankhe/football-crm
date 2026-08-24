@@ -9,16 +9,13 @@ import { useTheme } from "@/context/ThemeContext";
 import { useToast } from "@/hooks/use-toast";
 import { MiniTable, OverviewCard, tooltipStyle } from "@/components/OverviewCard";
 import { HIGHLIGHT, ink, posColor, type Mode } from "@/lib/viz";
-import {
-  fetchAdoptableSessions, fetchAllAttendanceStats, fetchAllMatchStats, fetchAllRPEWithSessions,
-  fetchPlayers,
-} from "@/lib/queries";
-import { ACWR_CONFIG, MATCH_RPE, buildLoadRows, type LoadRow } from "@/lib/report";
+import { fetchAllMatchStats, fetchAllRPEWithSessions, fetchPlayers } from "@/lib/queries";
+import { ACWR_CONFIG, buildLoadRows, type LoadRow } from "@/lib/report";
 import {
   buildPlayerLoadDistribution, buildWeeklyTeamLoad, interpretLoadDistribution,
   interpretWeeklyLoad, withinWeeks, type PlayerLoadLine,
 } from "@/lib/trainingAnalytics";
-import type { Player, TrainingSession } from "@/lib/types";
+import type { Player } from "@/lib/types";
 
 /**
  * Training → Overview: what the load actually says.
@@ -26,9 +23,8 @@ import type { Player, TrainingSession } from "@/lib/types";
  * The same object as the other Overview tabs — a chart, and underneath it the
  * reading of what it shows. Load comes from `buildLoadRows`, the pipeline the
  * player profile, the printed report and the Dashboard alerts already use, so
- * the team view here cannot disagree with any of them. That means matches are
- * scored at MATCH_RPE × minutes rather than at whatever the player rated them,
- * which is why these figures differ from the old Analytics page.
+ * the team view here cannot disagree with any of them. Matches use player-rated
+ * RPE when available, and a marked RPE 7 estimate only when it is missing.
  */
 
 const WINDOWS: { label: string; weeks: number | null }[] = [
@@ -54,14 +50,10 @@ export function OverviewTab() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      // The same five reads the Dashboard makes, for the same reason: load is
-      // rated sessions plus match minutes plus the match days nobody rated
-      const [ps, rpe, matchStats, attendance, orphans] = await Promise.all([
+      const [ps, rpe, matchStats] = await Promise.all([
         fetchPlayers(),
         fetchAllRPEWithSessions(),
         fetchAllMatchStats(),
-        fetchAllAttendanceStats(),
-        fetchAdoptableSessions(),
       ]);
       const squad = new Set(ps.map((p) => p.id));
       setPlayers(ps);
@@ -69,8 +61,6 @@ export function OverviewTab() {
         buildLoadRows(
           rpe.filter((r) => squad.has(r.player_id)),
           matchStats.filter((s) => squad.has(s.player_id)),
-          attendance.filter((a) => squad.has(a.player_id)),
-          orphans as TrainingSession[],
         ),
       );
     } catch (err) {
@@ -85,14 +75,16 @@ export function OverviewTab() {
   const windowed = useMemo(() => withinWeeks(rows, weeks), [rows, weeks]);
   const weekly = useMemo(() => buildWeeklyTeamLoad(windowed), [windowed]);
   const distribution = useMemo(
-    // ACWR reads the full history: a 4-week window can't hold a 4-week baseline
+    // The ratio reads full history: a display window cannot truncate its baseline.
     () => buildPlayerLoadDistribution(windowed, rows, players),
     [windowed, rows, players],
   );
 
   const totalAu = weekly.reduce((s, w) => s + w.totalAu, 0);
   const avgPerWeek = weekly.length > 0 ? Math.round(totalAu / weekly.length) : 0;
-  const flagged = distribution.filter((l) => l.acwr.status === "danger" || l.acwr.status === "caution");
+  const flagged = distribution.filter((l) =>
+    l.acwr.status === "elevated" || l.acwr.status === "high_spike" || l.acwr.status === "very_high_spike",
+  );
 
   if (loading) {
     return (
@@ -152,10 +144,10 @@ export function OverviewTab() {
           sub={distribution[0]?.player.name}
         />
         <Stat
-          label="Above 1.3 ACWR"
+          label="Above typical range"
           value={flagged.length}
           tone={flagged.length > 0 ? "text-status-warn" : undefined}
-          sub="acute vs 4-week base"
+          sub="last 7 days vs prior 3 weeks"
         />
       </div>
 
@@ -222,7 +214,7 @@ export function OverviewTab() {
         interpretation={interpretLoadDistribution(distribution)}
         table={
           <MiniTable
-            head={["Player", "Total", "Days", "Per day", "ACWR"]}
+            head={["Player", "Total", "Days", "Per day", "Ratio"]}
             rows={distribution.map((l) => [
               l.player.name,
               `${l.totalAu.toLocaleString()} AU`,
@@ -271,6 +263,7 @@ export function OverviewTab() {
                     acwr: l.acwr.acwr,
                     status: l.acwr.status,
                     matchShare: l.matchShare,
+                    estimatedMatchShare: l.estimatedMatchShare,
                     fill: posColor(mode, l.player.primary_position),
                   }))}
                   isAnimationActive={false}
@@ -315,7 +308,7 @@ export function OverviewTab() {
                 <span className="w-2 h-2 rounded-full" style={{ background: ACWR_CONFIG[l.acwr.status].color }} />
                 <span className="text-foreground font-medium">{l.player.name}</span>
                 <span className="font-time text-muted-foreground">
-                  ACWR {l.acwr.acwr?.toFixed(2) ?? "—"} · {ACWR_CONFIG[l.acwr.status].label}
+                  Ratio {l.acwr.acwr?.toFixed(2) ?? "—"} · {ACWR_CONFIG[l.acwr.status].label}
                 </span>
               </Link>
             ))}
@@ -324,10 +317,10 @@ export function OverviewTab() {
       )}
 
       <p className="text-[11px] text-muted-foreground">
-        Load is rated sessions plus match minutes, with every match scored at RPE {MATCH_RPE} however
-        hard it felt — the same rows the player profile and the printed report read, so no two screens
-        can disagree. ACWR always reads the full history rather than the window above: the ratio needs
-        four weeks of baseline behind it.
+        Load is rated sessions plus match minutes. Match minutes use the player’s RPE when logged, or a
+        clearly marked RPE 7 estimate when it is missing. The workload ratio compares the latest 7 days
+        with the prior 3-week average and needs 28 calendar days of history; it is a monitoring signal,
+        not an injury prediction.
       </p>
     </div>
   );
@@ -358,6 +351,7 @@ interface LoadPoint {
   acwr: number | null;
   status: PlayerLoadLine["acwr"]["status"];
   matchShare: number;
+  estimatedMatchShare: number;
 }
 
 function LoadTooltip({ active, payload, INK }: {
@@ -378,11 +372,12 @@ function LoadTooltip({ active, payload, INK }: {
         {d.totalAu.toLocaleString()} AU over {d.days} {d.days === 1 ? "day" : "days"} · {d.perDayAu.toLocaleString()} a day
       </div>
       <div className="font-time" style={{ color: ACWR_CONFIG[d.status].color }}>
-        ACWR {d.acwr?.toFixed(2) ?? "—"} · {ACWR_CONFIG[d.status].label}
+        Ratio {d.acwr?.toFixed(2) ?? "—"} · {ACWR_CONFIG[d.status].label}
       </div>
       {d.matchShare > 0 && (
         <div className="font-time" style={{ color: INK.muted }}>
           {Math.round(d.matchShare * 100)}% from matches
+          {d.estimatedMatchShare > 0 && ` · ${Math.round(d.estimatedMatchShare * 100)}% estimated at RPE 7`}
         </div>
       )}
     </div>

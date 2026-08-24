@@ -3,7 +3,7 @@ import { useParams, useLocation } from "wouter";
 import {
   fetchPlayer, fetchPlayers, fetchResultsByPlayer, updatePlayer, fetchAllResults,
   fetchPlayerRecentSessions,
-  fetchAttendanceByPlayer, fetchTrainingSessions, fetchMatchStatsByPlayer, fetchAdoptableSessions,
+  fetchAttendanceByPlayer, fetchTrainingSessions, fetchMatchStatsByPlayer,
   fetchTournamentFinishes, type PlayerMatchStat,
 } from "@/lib/queries";
 import {
@@ -14,8 +14,8 @@ import {
 } from "@/lib/attendance";
 
 /**
- * How far back the load chart and ACWR look. ACWR needs 28 days; the extra week
- * gives the rolling average some run-up rather than starting mid-air.
+ * How far back the load chart and workload ratio look. The ratio needs 28 days;
+ * the extra week gives the player profile a small visual run-up.
  */
 const LOAD_WINDOW_DAYS = 35;
 import {
@@ -74,7 +74,6 @@ export default function PlayerDetail() {
   const [finishes, setFinishes] = useState<Map<string, TournamentFinish>>(new Map());
   /** The rest of the squad, so the jersey field can flag a clash. */
   const [roster, setRoster] = useState<Player[]>([]);
-  const [orphanSessions, setOrphanSessions] = useState<TrainingSession[]>([]);
 
   const mode: Mode = isDark ? "dark" : "light";
   const INK = ink(mode);
@@ -91,7 +90,7 @@ export default function PlayerDetail() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [p, rs, allRs, loadHistory, attendance, sessions, mStats, placings, allPlayers, orphans] =
+      const [p, rs, allRs, loadHistory, attendance, sessions, mStats, placings, allPlayers] =
         await Promise.all([
           fetchPlayer(id!),
           fetchResultsByPlayer(id!),
@@ -102,11 +101,9 @@ export default function PlayerDetail() {
           fetchMatchStatsByPlayer(id!),
           fetchTournamentFinishes(),
           fetchPlayers(), // only to tell you a jersey number is taken
-          fetchAdoptableSessions(), // match days with no grid — load comes from turnout
         ]);
       setFinishes(placings);
       setRoster(allPlayers);
-      setOrphanSessions(orphans);
       setPlayer(p);
       setResults(rs as (TestResult & { test_sessions?: { test_date: string; test_name: string; type: string | null } })[]);
       setRecentLoad(loadHistory as (SessionRPE & { sessions: TrainingSession })[]);
@@ -172,18 +169,19 @@ export default function PlayerDetail() {
     }));
 
   // ── Training load ─────────────────────────────────────────────────────────
-  // Rated sessions and match minutes in one list — matches score at MATCH_RPE.
+  // Rated sessions and match minutes in one list. Matches use a player RPE when
+  // available, otherwise the row is explicitly marked as an RPE 7 estimate.
   // Windowed here as well as in the query: match stats are fetched in full for
   // the tournament history above, and without this the chart's axis would
   // stretch back to the player's first ever fixture.
   const loadRows = useMemo(() => {
     const since = isoDaysAgo(LOAD_WINDOW_DAYS);
-    return buildLoadRows(recentLoad, matchStats, playerAttendance, orphanSessions)
+    return buildLoadRows(recentLoad, matchStats)
       .filter((r) => r.date != null && r.date >= since);
-  }, [recentLoad, matchStats, playerAttendance, orphanSessions]);
+  }, [recentLoad, matchStats]);
 
   /**
-   * What the chart plots and ACWR reads: one entry per day, so a tournament day
+   * What the chart plots and the workload ratio reads: one entry per day, so a tournament day
    * is a single hard day rather than five points stacked on one date. `loadRows`
    * stays per fixture — the counts below still say how many matches there were.
    */
@@ -201,6 +199,7 @@ export default function PlayerDetail() {
       // floor-scraping zero on the Set line.
       planned: r.planned_load_au ? Math.round(r.planned_load_au) : null,
       source: r.source,
+      estimated: r.estimated,
     }));
 
   const loadWithAvg = loadChartData.map((d, i, arr) => {
@@ -210,11 +209,14 @@ export default function PlayerDetail() {
 
   const sessionLoadCount = loadRows.filter((r) => r.source === "session").length;
   const matchLoadCount = loadRows.filter((r) => r.source === "match").length;
+  const estimatedMatchLoadCount = loadRows.filter((r) => r.source === "match" && r.estimated).length;
   /** Match points wear the second categorical slot; rated sessions keep the highlight. */
   const MATCH_INK = series(mode, 1);
 
-  // ACWR — shared with the printable report so the two can't disagree
-  const { acwr, acute: acuteLoad, chronicWeeklyAvg, status: acwrStatus } = computeAcwr(dailyLoad);
+  // Shared with the printable report so workload figures cannot disagree.
+  const {
+    acwr, acute: acuteLoad, baselineWeeklyAvg, historyDays, status: acwrStatus,
+  } = computeAcwr(dailyLoad);
   const acwrCfg = ACWR_CONFIG[acwrStatus];
 
   // ── Attendance ────────────────────────────────────────────────────────────
@@ -524,30 +526,35 @@ export default function PlayerDetail() {
         <section className="space-y-2">
           <SectionLabel>Training Load</SectionLabel>
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 items-stretch">
-            {/* ACWR */}
+            {/* Workload ratio */}
             <div className="bg-card border border-border rounded-2xl p-5 flex flex-col">
               <div className="flex items-start justify-between mb-2">
                 <div>
-                  <div className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground mb-1">ACWR</div>
+                  <div className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground mb-1">Workload Ratio</div>
                   <div className="text-3xl font-bold font-time leading-none" style={{ color: acwrCfg.color }}>
                     {acwr !== null ? acwr.toFixed(2) : "—"}
                   </div>
                   <div className="text-xs font-medium mt-1" style={{ color: acwrCfg.color }}>{acwrCfg.label}</div>
                 </div>
                 <div className="text-right text-[11px] text-muted-foreground space-y-1">
-                  <div>Acute (7d) <span className="text-foreground font-time font-bold">{Math.round(acuteLoad)}</span></div>
-                  <div>Chronic /wk <span className="text-foreground font-time font-bold">{Math.round(chronicWeeklyAvg)}</span></div>
+                  <div>Last 7 days <span className="text-foreground font-time font-bold">{Math.round(acuteLoad)}</span></div>
+                  <div>Prior 3-wk avg <span className="text-foreground font-time font-bold">{Math.round(baselineWeeklyAvg)}</span></div>
                 </div>
               </div>
-              <p className="text-xs text-muted-foreground mb-3">{acwrCfg.desc}</p>
+              <p className="text-xs text-muted-foreground mb-3">
+                {acwrStatus === "building"
+                  ? `${acwrCfg.desc} ${historyDays} of 28 calendar days of workload history are currently available.`
+                  : `${acwrCfg.desc} This is a workload monitoring signal, not an injury prediction.`}
+              </p>
               <div className="flex h-1.5 rounded-full overflow-hidden gap-px mt-auto">
-                <div className="w-[10%] bg-slate-400/40" title="< 0.5 Underloaded" />
-                <div className="w-[60%] bg-status-good" title="0.5–1.3 Safe" />
-                <div className="w-[15%] bg-status-warn" title="1.3–1.5 Caution" />
-                <div className="w-[15%] bg-status-bad" title="> 1.5 High risk" />
+                <div className="w-[25%] bg-slate-400/40" title="< 0.8 Below baseline" />
+                <div className="w-[25%] bg-status-good" title="0.8–1.3 Typical range" />
+                <div className="w-[15%] bg-status-warn" title="1.3–1.5 Elevated" />
+                <div className="w-[20%] bg-status-warn/70" title="1.5–2.0 High spike" />
+                <div className="w-[15%] bg-status-bad" title="> 2.0 Very high spike" />
               </div>
               <div className="flex justify-between text-[10px] text-muted-foreground mt-1">
-                <span>0.5</span><span>0.8</span><span>1.3</span><span>1.5</span><span>2.0+</span>
+                <span>0.8</span><span>1.3</span><span>1.5</span><span>2.0+</span>
               </div>
             </div>
 
@@ -566,12 +573,12 @@ export default function PlayerDetail() {
                     <span className="flex items-center gap-1">
                       <span className="w-3 border-t border-dashed" style={{ borderColor: chartAxis }} /> Avg
                     </span>
-                    {/* Match load is assumed, not rated — say so rather than
-                        letting it pass as a logged RPE. */}
                     {matchLoadCount > 0 && (
                       <span className="flex items-center gap-1">
                         <span className="w-2 h-2 rounded-full" style={{ background: MATCH_INK }} />
-                        Match (RPE {MATCH_RPE})
+                        Match{estimatedMatchLoadCount > 0
+                          ? ` (${estimatedMatchLoadCount} est. RPE ${MATCH_RPE})`
+                          : " (player RPE)"}
                       </span>
                     )}
                     <span>
@@ -597,14 +604,15 @@ export default function PlayerDetail() {
                           `${v} AU`,
                           key === "rollingAvg" ? "Rolling avg (4)"
                             : key === "planned" ? "Set load"
-                            : (item?.payload as { source?: string })?.source === "match"
-                              ? `Match load (RPE ${MATCH_RPE} assumed)`
+                            : (item?.payload as { source?: string; estimated?: boolean })?.source === "match"
+                              ? (item?.payload as { estimated?: boolean })?.estimated
+                                ? `Match load (RPE ${MATCH_RPE} estimate)`
+                                : "Match load (player RPE)"
                               : "Actual load",
                         ]}
                       />
                       <Line type="monotone" dataKey="planned" stroke={PLANNED_INK} strokeWidth={1.5} dot={false} connectNulls />
-                      {/* One line, two kinds of point: the dot says where the
-                          load was rated and where it was assumed from minutes. */}
+                      {/* Match points distinguish days that include match minutes. */}
                       <Line
                         type="monotone"
                         dataKey="load"
