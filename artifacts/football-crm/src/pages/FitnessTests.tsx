@@ -20,11 +20,8 @@ interface CsvRow {
   bronco_mins?: number;
   mas_ms?: number;
   ten_m_1?: number;
-  ten_m_2?: number;
   twenty_m_1?: number;
-  twenty_m_2?: number;
   forty_m_1?: number;
-  forty_m_2?: number;
   notes?: string;
   errors: string[];
 }
@@ -46,11 +43,8 @@ const METRIC_KEYS: MetricKey[] = [
   "bronco_mins",
   "mas_ms",
   "ten_m_1",
-  "ten_m_2",
   "twenty_m_1",
-  "twenty_m_2",
   "forty_m_1",
-  "forty_m_2",
 ];
 
 function normalizeHeader(header: string): string {
@@ -69,16 +63,15 @@ function normalizeHeader(header: string): string {
   if (["bronco", "broncotime", "broncomins", "broncominutes"].includes(compact)) return "bronco_mins";
   if (["mas", "masms", "masspeed"].includes(compact)) return "mas_ms";
 
-  const documentedSprint = compact.match(/^(ten|twenty|forty)m([12])$/);
+  const documentedSprint = compact.match(/^(ten|twenty|forty)m1$/);
   if (documentedSprint) {
-    return `${documentedSprint[1]}_m_${documentedSprint[2]}`;
+    return `${documentedSprint[1]}_m_1`;
   }
 
-  const sprintMatch = normalized.match(/^(10m|20m|40m)(?: sprint)?(?:\s*(?:(?:x|attempt|run|trial|time)\s*)?([12]))?$/);
+  const sprintMatch = normalized.match(/^(10m|20m|40m)(?: sprint)?$/);
   if (sprintMatch) {
     const distance = sprintMatch[1];
-    const attempt = sprintMatch[2] === "2" ? "2" : "1";
-    return `${distance === "10m" ? "ten" : distance === "20m" ? "twenty" : "forty"}_m_${attempt}`;
+    return `${distance === "10m" ? "ten" : distance === "20m" ? "twenty" : "forty"}_m_1`;
   }
 
   return normalized;
@@ -171,17 +164,14 @@ interface EditForm {
   bronco_mins: string;
   mas_ms: string;
   ten_m_1: string;
-  ten_m_2: string;
   twenty_m_1: string;
-  twenty_m_2: string;
   forty_m_1: string;
-  forty_m_2: string;
   notes: string;
 }
 
 const BLANK_FORM: EditForm = {
-  bronco_mins: "", mas_ms: "", ten_m_1: "", ten_m_2: "",
-  twenty_m_1: "", twenty_m_2: "", forty_m_1: "", forty_m_2: "", notes: "",
+  bronco_mins: "", mas_ms: "", ten_m_1: "",
+  twenty_m_1: "", forty_m_1: "", notes: "",
 };
 
 const blankCsvRow = (): CsvRow => ({ code: "", name: "", errors: [] });
@@ -191,11 +181,8 @@ function resultToForm(r: TestResult): EditForm {
     bronco_mins: r.bronco_mins != null ? String(r.bronco_mins) : "",
     mas_ms: r.mas_ms != null ? String(r.mas_ms) : "",
     ten_m_1: r.ten_m_1 != null ? String(r.ten_m_1) : "",
-    ten_m_2: r.ten_m_2 != null ? String(r.ten_m_2) : "",
     twenty_m_1: r.twenty_m_1 != null ? String(r.twenty_m_1) : "",
-    twenty_m_2: r.twenty_m_2 != null ? String(r.twenty_m_2) : "",
     forty_m_1: r.forty_m_1 != null ? String(r.forty_m_1) : "",
-    forty_m_2: r.forty_m_2 != null ? String(r.forty_m_2) : "",
     notes: r.notes ?? "",
   };
 }
@@ -206,11 +193,8 @@ function formToUpdates(f: EditForm): Partial<TestResult> {
     bronco_mins: pn(f.bronco_mins),
     mas_ms: pn(f.mas_ms),
     ten_m_1: pn(f.ten_m_1),
-    ten_m_2: pn(f.ten_m_2),
     twenty_m_1: pn(f.twenty_m_1),
-    twenty_m_2: pn(f.twenty_m_2),
     forty_m_1: pn(f.forty_m_1),
-    forty_m_2: pn(f.forty_m_2),
     notes: f.notes.trim() || null,
   };
 }
@@ -253,11 +237,6 @@ function InlineEditForm({
         {inp("10m", "ten_m_1", "sec")}
         {inp("20m", "twenty_m_1", "sec")}
         {inp("40m", "forty_m_1", "sec")}
-      </div>
-      <div className="grid grid-cols-3 gap-2">
-        {inp("10m ×2", "ten_m_2", "sec")}
-        {inp("20m ×2", "twenty_m_2", "sec")}
-        {inp("40m ×2", "forty_m_2", "sec")}
       </div>
       <div>
         <label className="block text-[10px] text-muted-foreground mb-0.5">Notes</label>
@@ -395,11 +374,11 @@ function SessionDetail({
         mas_ms: updates.mas_ms ?? null,
         seconds: null,
         ten_m_1: updates.ten_m_1 ?? null,
-        ten_m_2: updates.ten_m_2 ?? null,
+        ten_m_2: null,
         twenty_m_1: updates.twenty_m_1 ?? null,
-        twenty_m_2: updates.twenty_m_2 ?? null,
+        twenty_m_2: null,
         forty_m_1: updates.forty_m_1 ?? null,
-        forty_m_2: updates.forty_m_2 ?? null,
+        forty_m_2: null,
         eighty_m_runs: null,
         sixty_m_runs: null,
         forty_m_runs: null,
@@ -459,11 +438,11 @@ function SessionDetail({
         mas_ms: updates.mas_ms ?? null,
         seconds: null,
         ten_m_1: updates.ten_m_1 ?? null,
-        ten_m_2: updates.ten_m_2 ?? null,
+        ten_m_2: null,
         twenty_m_1: updates.twenty_m_1 ?? null,
-        twenty_m_2: updates.twenty_m_2 ?? null,
+        twenty_m_2: null,
         forty_m_1: updates.forty_m_1 ?? null,
-        forty_m_2: updates.forty_m_2 ?? null,
+        forty_m_2: null,
         eighty_m_runs: null,
         sixty_m_runs: null,
         forty_m_runs: null,
@@ -1034,11 +1013,11 @@ export default function FitnessTests() {
           mas_ms: m.row.mas_ms ?? null,
           seconds: null,
           ten_m_1: m.row.ten_m_1 ?? null,
-          ten_m_2: m.row.ten_m_2 ?? null,
+          ten_m_2: null,
           twenty_m_1: m.row.twenty_m_1 ?? null,
-          twenty_m_2: m.row.twenty_m_2 ?? null,
+          twenty_m_2: null,
           forty_m_1: m.row.forty_m_1 ?? null,
-          forty_m_2: m.row.forty_m_2 ?? null,
+          forty_m_2: null,
           eighty_m_runs: null,
           sixty_m_runs: null,
           forty_m_runs: null,
@@ -1131,8 +1110,8 @@ export default function FitnessTests() {
           {!useManual ? (
             <div className="space-y-3">
               <div className="text-xs text-muted-foreground space-y-1">
-                <p>CSV columns: code or name, bronco_mins, mas_ms, ten_m_1, ten_m_2, twenty_m_1, twenty_m_2, forty_m_1, forty_m_2, notes.</p>
-                <p>Bronco accepts decimal minutes (<span className="font-time">5.633</span>) or minutes:seconds (<span className="font-time">5:38</span>). Sprint headers can also use <span className="font-time">10m, 10m x2, 20m, 20m x2, 40m, 40m x2</span>.</p>
+                <p>CSV columns: name (or code), bronco_mins, 10m, 20m, 40m, notes. MAS is optional as <span className="font-time">mas_ms</span>.</p>
+                <p>Bronco accepts decimal minutes (<span className="font-time">5.633</span>) or minutes:seconds (<span className="font-time">5:38</span>). Enter one score for each sprint.</p>
               </div>
               <div>
                 <label className="block text-xs text-muted-foreground mb-1">Upload CSV file</label>
@@ -1147,7 +1126,7 @@ export default function FitnessTests() {
               <div>
                 <label className="block text-xs text-muted-foreground mb-1">Or paste CSV text</label>
                 <textarea value={csvText} onChange={(e) => setCsvText(e.target.value)} rows={8}
-                  placeholder={"code,name,bronco_mins,10m,10m x2,20m,20m x2,40m,40m x2\nP001,Jane,5:38,1.82,1.79,3.11,3.08,5.42,5.38"}
+                  placeholder={"name,bronco_mins,10m,20m,40m,notes\nJane,5:38,1.82,3.11,5.42,optional note"}
                   className="w-full bg-muted border border-border rounded px-3 py-2 text-sm font-mono text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary"
                   data-testid="textarea-csv" />
               </div>
@@ -1200,12 +1179,9 @@ export default function FitnessTests() {
                   <th className="px-3 py-2 text-left font-medium">Matched Player</th>
                   <th className="px-3 py-2 text-right font-medium">Bronco</th>
                   <th className="px-3 py-2 text-right font-medium">MAS</th>
-                  <th className="px-3 py-2 text-right font-medium">10m ×1</th>
-                  <th className="px-3 py-2 text-right font-medium">10m ×2</th>
-                  <th className="px-3 py-2 text-right font-medium">20m ×1</th>
-                  <th className="px-3 py-2 text-right font-medium">20m ×2</th>
-                  <th className="px-3 py-2 text-right font-medium">40m ×1</th>
-                  <th className="px-3 py-2 text-right font-medium">40m ×2</th>
+                  <th className="px-3 py-2 text-right font-medium">10m</th>
+                  <th className="px-3 py-2 text-right font-medium">20m</th>
+                  <th className="px-3 py-2 text-right font-medium">40m</th>
                   <th className="px-3 py-2 text-left font-medium">Validation</th>
                 </tr>
               </thead>
@@ -1222,11 +1198,8 @@ export default function FitnessTests() {
                     <td className="px-3 py-2 text-right font-time">{formatBronco(m.row.bronco_mins ?? null)}</td>
                     <td className="px-3 py-2 text-right font-time">{m.row.mas_ms == null ? "—" : `${m.row.mas_ms.toFixed(2)} m/s`}</td>
                     <td className="px-3 py-2 text-right font-time">{formatSprint(m.row.ten_m_1)}</td>
-                    <td className="px-3 py-2 text-right font-time">{formatSprint(m.row.ten_m_2)}</td>
                     <td className="px-3 py-2 text-right font-time">{formatSprint(m.row.twenty_m_1)}</td>
-                    <td className="px-3 py-2 text-right font-time">{formatSprint(m.row.twenty_m_2)}</td>
                     <td className="px-3 py-2 text-right font-time">{formatSprint(m.row.forty_m_1)}</td>
-                    <td className="px-3 py-2 text-right font-time">{formatSprint(m.row.forty_m_2)}</td>
                     <td className="px-3 py-2 text-xs">{hasErrors ? <span className="text-status-bad">{m.row.errors.join(" • ")}</span> : <span className="text-muted-foreground">Ready</span>}</td>
                   </tr>
                   );
