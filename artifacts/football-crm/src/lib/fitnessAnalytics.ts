@@ -11,22 +11,49 @@ import type { Mode } from "./viz";
  * already scoped to the team and to whichever test sessions are selected; this
  * module never decides who is in scope.
  *
- * Everything is keyed on the **bronco** time, and lower is faster — a negative
+ * Everything is keyed on one selected metric, and lower is faster — a negative
  * change is an improvement in the athlete's terms and a positive `deltaSecs`
- * here. Every comparison in this module respects that, so read the sign twice
- * before changing anything.
+ * here. Bronco remains the default metric for backwards-compatible callers.
  *
  * The `interpret*` functions are deterministic and written from the figures they
  * name, so the prose can never claim what the data doesn't show. Change a
  * threshold and change the sentence that reports it.
  */
 
-/** A player's result in one test session. Only bronco-bearing rows get here. */
+export type FitnessMetric = "bronco" | "10m" | "20m" | "40m";
+
+export const FITNESS_METRIC_LABELS: Record<FitnessMetric, string> = {
+  bronco: "Bronco",
+  "10m": "10m",
+  "20m": "20m",
+  "40m": "40m",
+};
+
+export function metricLabel(metric: FitnessMetric): string {
+  return FITNESS_METRIC_LABELS[metric];
+}
+
+export function formatMetric(value: number | null | undefined, metric: FitnessMetric): string {
+  if (value == null) return "—";
+  return metric === "bronco" ? formatBronco(value) : `${value.toFixed(2)}s`;
+}
+
+export function formatMetricChangeMagnitude(deltaSecs: number, metric: FitnessMetric): string {
+  return metric === "bronco"
+    ? String(Math.round(Math.abs(deltaSecs)))
+    : Math.abs(deltaSecs).toFixed(2);
+}
+
+export function formatMetricDelta(deltaSecs: number, metric: FitnessMetric): string {
+  return `${deltaSecs > 0 ? "−" : "+"}${formatMetricChangeMagnitude(deltaSecs, metric)}s`;
+}
+
+/** A player's result in one test session for the selected metric. */
 export interface FitnessResult {
   sessionId: string;
   sessionName: string;
   date: string;
-  bronco: number;
+  value: number;
   mas: number | null;
 }
 
@@ -41,9 +68,10 @@ export interface FitnessLine {
    * they have fewer than two tests, which is different from having not improved.
    */
   deltaSecs: number | null;
-  /** The tier their latest time falls in. */
+  /** The tier their latest time falls in; sprint metrics have no global tier. */
   tier: BroncoTier | null;
   tested: number;
+  metric: FitnessMetric;
 }
 
 /**
@@ -51,11 +79,23 @@ export interface FitnessLine {
  * timing noise, not a fitness change, so movement inside ±3s counts as neither.
  */
 export const IMPROVEMENT_SECS = 3;
+export const SPRINT_IMPROVEMENT_SECS = 0.05;
 
-const round1 = (n: number) => Math.round(n * 10) / 10;
+export function improvementThreshold(metric: FitnessMetric): number {
+  return metric === "bronco" ? IMPROVEMENT_SECS : SPRINT_IMPROVEMENT_SECS;
+}
+
+const round2 = (n: number) => Math.round(n * 100) / 100;
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 const avg = (ns: number[]): number | null =>
   ns.length === 0 ? null : ns.reduce((s, n) => s + n, 0) / ns.length;
+
+function valueForMetric(row: TestResult, metric: FitnessMetric): number | null {
+  if (metric === "bronco") return row.bronco_mins;
+  if (metric === "10m") return row.ten_m_1;
+  if (metric === "20m") return row.twenty_m_1;
+  return row.forty_m_1;
+}
 
 // ── Per-player lines ──────────────────────────────────────────────────────────
 type ResultRow = TestResult & { test_sessions?: Pick<TestSession, "test_date" | "test_name" | "type"> | null };
@@ -71,13 +111,14 @@ export function buildFitnessLines(
   players: Player[],
   results: ResultRow[],
   sessions: TestSession[],
+  metric: FitnessMetric = "bronco",
 ): FitnessLine[] {
   const chronological = [...sessions].sort((a, b) => a.test_date.localeCompare(b.test_date));
 
   // One pass into a per-player, per-session index rather than a scan per cell
   const byPlayerSession = new Map<string, ResultRow>();
   for (const r of results) {
-    if (r.bronco_mins == null) continue;
+    if (valueForMetric(r, metric) == null) continue;
     byPlayerSession.set(`${r.player_id}:${r.session_id}`, r);
   }
 
@@ -86,11 +127,13 @@ export function buildFitnessLines(
     for (const s of chronological) {
       const r = byPlayerSession.get(`${player.id}:${s.id}`);
       if (!r) continue;
+      const value = valueForMetric(r, metric);
+      if (value == null) continue;
       playerResults.push({
         sessionId: s.id,
         sessionName: s.test_name,
         date: s.test_date,
-        bronco: r.bronco_mins!,
+        value,
         mas: r.mas_ms,
       });
     }
@@ -102,12 +145,15 @@ export function buildFitnessLines(
       results: playerResults,
       first,
       latest,
-      // Lower bronco is faster, so first − latest is the improvement
+      // Lower values are faster, so first − latest is the improvement
       deltaSecs: first && latest && playerResults.length > 1
-        ? Math.round((first.bronco - latest.bronco) * 60)
+        ? metric === "bronco"
+          ? Math.round((first.value - latest.value) * 60)
+          : round2(first.value - latest.value)
         : null,
-      tier: latest ? getBroncoTier(latest.bronco) : null,
+      tier: metric === "bronco" && latest ? getBroncoTier(latest.value) : null,
       tested: playerResults.length,
+      metric,
     };
   });
 }
@@ -116,7 +162,7 @@ export function buildFitnessLines(
 export function ranked(lines: FitnessLine[]): FitnessLine[] {
   return lines
     .filter((l) => l.latest)
-    .sort((a, b) => a.latest!.bronco - b.latest!.bronco || a.player.name.localeCompare(b.player.name));
+    .sort((a, b) => a.latest!.value - b.latest!.value || a.player.name.localeCompare(b.player.name));
 }
 
 /** Players with two or more tests in scope — the only ones a change applies to. */
@@ -134,10 +180,11 @@ export interface Movers {
 /** Who moved, biggest change first. Sorted by seconds, not by percentage. */
 export function movers(lines: FitnessLine[]): Movers {
   const rows = comparable(lines);
+  const threshold = improvementThreshold(rows[0]?.metric ?? "bronco");
   return {
-    improved: rows.filter((l) => l.deltaSecs! > IMPROVEMENT_SECS).sort((a, b) => b.deltaSecs! - a.deltaSecs!),
-    declined: rows.filter((l) => l.deltaSecs! < -IMPROVEMENT_SECS).sort((a, b) => a.deltaSecs! - b.deltaSecs!),
-    steady: rows.filter((l) => Math.abs(l.deltaSecs!) <= IMPROVEMENT_SECS),
+    improved: rows.filter((l) => l.deltaSecs! > threshold).sort((a, b) => b.deltaSecs! - a.deltaSecs!),
+    declined: rows.filter((l) => l.deltaSecs! < -threshold).sort((a, b) => a.deltaSecs! - b.deltaSecs!),
+    steady: rows.filter((l) => Math.abs(l.deltaSecs!) <= threshold),
   };
 }
 
@@ -147,6 +194,7 @@ export interface FitnessTrendPoint {
   name: string;
   date: string;
   tested: number;
+  /** Average value for the selected metric. Kept under this name for chart compatibility. */
   avgBronco: number;
 }
 
@@ -154,21 +202,25 @@ export interface FitnessTrendPoint {
  * Squad average per test session, oldest → newest. Sessions nobody was tested in
  * are dropped rather than plotted at zero, which would read as a catastrophe.
  */
-export function buildTeamTrend(results: ResultRow[], sessions: TestSession[]): FitnessTrendPoint[] {
+export function buildTeamTrend(
+  results: ResultRow[],
+  sessions: TestSession[],
+  metric: FitnessMetric = "bronco",
+): FitnessTrendPoint[] {
   const chronological = [...sessions].sort((a, b) => a.test_date.localeCompare(b.test_date));
   const points: FitnessTrendPoint[] = [];
 
   for (const s of chronological) {
-    const broncos = results
-      .filter((r) => r.session_id === s.id && r.bronco_mins != null)
-      .map((r) => r.bronco_mins!);
-    const mean = avg(broncos);
+    const values = results
+      .filter((r) => r.session_id === s.id && valueForMetric(r, metric) != null)
+      .map((r) => valueForMetric(r, metric)!);
+    const mean = avg(values);
     if (mean == null) continue;
     points.push({
       sessionId: s.id,
       name: s.test_name,
       date: s.test_date,
-      tested: broncos.length,
+      tested: values.length,
       avgBronco: mean,
     });
   }
@@ -224,7 +276,7 @@ export function buildGroupBreakdown<T extends string>(
   const groups = order
     .map((group) => {
       const inGroup = inScope.filter((l) => groupOf(l) === group);
-      const mean = avg(inGroup.map((l) => pointFor(l, sessionId)!.bronco));
+      const mean = avg(inGroup.map((l) => pointFor(l, sessionId)!.value));
       if (mean == null) return null;
       const moved = movers(inGroup);
       return {
@@ -234,7 +286,7 @@ export function buildGroupBreakdown<T extends string>(
         improved: moved.improved.length,
         declined: moved.declined.length,
         fastest: [...inGroup].sort(
-          (a, b) => pointFor(a, sessionId)!.bronco - pointFor(b, sessionId)!.bronco,
+          (a, b) => pointFor(a, sessionId)!.value - pointFor(b, sessionId)!.value,
         )[0] ?? null,
       };
     })
@@ -260,11 +312,11 @@ export interface BandLine {
  */
 export function buildBands(lines: FitnessLine[], mode: Mode): BandLine[] {
   const rows = ranked(lines);
-  const squadBroncos = rows.map((l) => l.latest!.bronco);
+  const squadValues = rows.map((l) => l.latest!.value);
   const byLabel = new Map<string, BandLine>();
 
   for (const line of rows) {
-    const band = teamBandFor(line.latest!.bronco, squadBroncos, mode);
+    const band = teamBandFor(line.latest!.value, squadValues, mode);
     if (!band) continue;
     const held = byLabel.get(band.label);
     if (held) held.players.push(line);
@@ -290,33 +342,38 @@ export function buildTierDistribution(lines: FitnessLine[]): TierLine[] {
 
 // ── Readings ──────────────────────────────────────────────────────────────────
 /** What the trend line says. Names the sessions, never "recent performance". */
-export function interpretTrend(points: FitnessTrendPoint[]): string {
+export function interpretTrend(points: FitnessTrendPoint[], metric: FitnessMetric = "bronco"): string {
+  const label = metricLabel(metric).toLowerCase();
+  const threshold = improvementThreshold(metric);
   if (points.length === 0) {
-    return "No bronco times logged yet. Record a test session and the trend fills in.";
+    return `No ${label} times logged yet. Record a test session and the trend fills in.`;
   }
   const latest = points[points.length - 1];
   if (points.length === 1) {
     return `One session on record: ${latest.name}, ${plural(latest.tested, "player")} averaging `
-      + `${formatBronco(latest.avgBronco)}.`;
+      + `${formatMetric(latest.avgBronco, metric)}.`;
   }
 
   const previous = points[points.length - 2];
-  const deltaSecs = Math.round((previous.avgBronco - latest.avgBronco) * 60);
+  const deltaSecs = metric === "bronco"
+    ? Math.round((previous.avgBronco - latest.avgBronco) * 60)
+    : round2(previous.avgBronco - latest.avgBronco);
+  const deltaLabel = formatMetricChangeMagnitude(deltaSecs, metric);
   const parts: string[] = [];
   parts.push(
-    Math.abs(deltaSecs) <= IMPROVEMENT_SECS
-      ? `The squad averaged ${formatBronco(latest.avgBronco)} at ${latest.name}, level with ${previous.name} `
-        + `(${formatBronco(previous.avgBronco)}).`
-      : `The squad averaged ${formatBronco(latest.avgBronco)} at ${latest.name}, `
-        + `${Math.abs(deltaSecs)}s ${deltaSecs > 0 ? "faster" : "slower"} than ${previous.name} `
-        + `(${formatBronco(previous.avgBronco)}).`,
+    Math.abs(deltaSecs) <= threshold
+      ? `The squad averaged ${formatMetric(latest.avgBronco, metric)} at ${latest.name}, level with ${previous.name} `
+        + `(${formatMetric(previous.avgBronco, metric)}).`
+      : `The squad averaged ${formatMetric(latest.avgBronco, metric)} at ${latest.name}, `
+        + `${deltaLabel}s ${deltaSecs > 0 ? "faster" : "slower"} than ${previous.name} `
+        + `(${formatMetric(previous.avgBronco, metric)}).`,
   );
 
   const best = [...points].sort((a, b) => a.avgBronco - b.avgBronco)[0];
   parts.push(
     best.sessionId === latest.sessionId
       ? "That is the squad's fastest average on record."
-      : `The fastest average on record is ${best.name} at ${formatBronco(best.avgBronco)}.`,
+      : `The fastest average on record is ${best.name} at ${formatMetric(best.avgBronco, metric)}.`,
   );
 
   // Turnout drives the average as much as fitness does, so it belongs in the reading
@@ -330,7 +387,7 @@ export function interpretTrend(points: FitnessTrendPoint[]): string {
 }
 
 /** Who moved, and by how much. */
-export function interpretMovers(lines: FitnessLine[]): string {
+export function interpretMovers(lines: FitnessLine[], metric: FitnessMetric = "bronco"): string {
   const rows = comparable(lines);
   if (rows.length === 0) {
     return "Nobody has two tests in this selection yet, so there's no change to report. "
@@ -338,25 +395,26 @@ export function interpretMovers(lines: FitnessLine[]): string {
   }
 
   const { improved, declined, steady } = movers(lines);
+  const threshold = improvementThreshold(metric);
   const parts: string[] = [];
   parts.push(
     `${plural(rows.length, "player")} have been tested twice or more: `
     + `${improved.length} faster, ${declined.length} slower, ${steady.length} unchanged `
-    + `(a change under ${IMPROVEMENT_SECS}s counts as unchanged).`,
+    + `(a change under ${threshold}s counts as unchanged).`,
   );
 
   if (improved.length > 0) {
     const best = improved[0];
     parts.push(
-      `${best.player.name} has improved the most, ${best.deltaSecs}s faster — `
-      + `${formatBronco(best.first!.bronco)} to ${formatBronco(best.latest!.bronco)}.`,
+      `${best.player.name} has improved the most, ${formatMetricChangeMagnitude(best.deltaSecs!, metric)}s faster — `
+      + `${formatMetric(best.first!.value, metric)} to ${formatMetric(best.latest!.value, metric)}.`,
     );
   }
   if (declined.length > 0) {
     const worst = declined[0];
     parts.push(
-      `${worst.player.name} has dropped off the most, ${Math.abs(worst.deltaSecs!)}s slower — `
-      + `${formatBronco(worst.first!.bronco)} to ${formatBronco(worst.latest!.bronco)}. `
+      `${worst.player.name} has dropped off the most, ${formatMetricChangeMagnitude(worst.deltaSecs!, metric)}s slower — `
+      + `${formatMetric(worst.first!.value, metric)} to ${formatMetric(worst.latest!.value, metric)}. `
       + "Worth checking for illness, load or a missed block.",
     );
   }
@@ -364,10 +422,15 @@ export function interpretMovers(lines: FitnessLine[]): string {
 }
 
 /** What the position or age split says. */
-export function interpretGroups(breakdown: GroupBreakdown, label: string): string {
+export function interpretGroups(
+  breakdown: GroupBreakdown,
+  label: string,
+  metric: FitnessMetric = "bronco",
+): string {
+  const metricName = metricLabel(metric).toLowerCase();
   const { groups, sessionName, excluded } = breakdown;
   if (groups.length === 0) {
-    return `No bronco times to break down by ${label} yet.`;
+    return `No ${metricName} times to break down by ${label} yet.`;
   }
 
   const basis = sessionName
@@ -377,16 +440,18 @@ export function interpretGroups(breakdown: GroupBreakdown, label: string): strin
   if (groups.length === 1) {
     const only = groups[0];
     return `Only ${only.group} has times on record — ${plural(only.tested, "player")} averaging `
-      + `${formatBronco(only.avgBronco)}.${basis}`;
+      + `${formatMetric(only.avgBronco, metric)}.${basis}`;
   }
 
   const sorted = [...groups].sort((a, b) => a.avgBronco - b.avgBronco);
   const fastest = sorted[0], slowest = sorted[sorted.length - 1];
-  const gapSecs = Math.round((slowest.avgBronco - fastest.avgBronco) * 60);
+  const gapSecs = metric === "bronco"
+    ? Math.round((slowest.avgBronco - fastest.avgBronco) * 60)
+    : round2(slowest.avgBronco - fastest.avgBronco);
   const parts: string[] = [];
   parts.push(
-    `${fastest.group} is the fastest group at ${formatBronco(fastest.avgBronco)}, `
-    + `${gapSecs}s clear of ${slowest.group} at ${formatBronco(slowest.avgBronco)}.`,
+    `${fastest.group} is the fastest group at ${formatMetric(fastest.avgBronco, metric)}, `
+    + `${formatMetricChangeMagnitude(gapSecs, metric)}s clear of ${slowest.group} at ${formatMetric(slowest.avgBronco, metric)}.`,
   );
 
   parts.push(basis.trim());
@@ -411,7 +476,11 @@ export function interpretGroups(breakdown: GroupBreakdown, label: string): strin
 }
 
 /** What the quartile split says — a reading of the squad's own spread. */
-export function interpretBands(bands: BandLine[], lines: FitnessLine[]): string {
+export function interpretBands(
+  bands: BandLine[],
+  lines: FitnessLine[],
+  metric: FitnessMetric = "bronco",
+): string {
   const rows = ranked(lines);
   if (rows.length === 0) return "No latest times to band yet.";
   if (rows.length < 4) {
@@ -420,12 +489,14 @@ export function interpretBands(bands: BandLine[], lines: FitnessLine[]): string 
   }
 
   const fastest = rows[0], slowest = rows[rows.length - 1];
-  const spreadSecs = Math.round((slowest.latest!.bronco - fastest.latest!.bronco) * 60);
+  const spreadSecs = metric === "bronco"
+    ? Math.round((slowest.latest!.value - fastest.latest!.value) * 60)
+    : round2(slowest.latest!.value - fastest.latest!.value);
   const parts: string[] = [];
   parts.push(
-    `${plural(rows.length, "player")} have a time, from ${formatBronco(fastest.latest!.bronco)} `
-    + `(${fastest.player.name}) to ${formatBronco(slowest.latest!.bronco)} (${slowest.player.name}) — `
-    + `a spread of ${spreadSecs}s.`,
+    `${plural(rows.length, "player")} have a time, from ${formatMetric(fastest.latest!.value, metric)} `
+    + `(${fastest.player.name}) to ${formatMetric(slowest.latest!.value, metric)} (${slowest.player.name}) — `
+    + `a spread of ${formatMetricChangeMagnitude(spreadSecs, metric)}s.`,
   );
   parts.push(
     "Bands are quartiles of this squad on this selection, so they move as the squad moves — "
@@ -468,32 +539,35 @@ export function interpretTiers(tiers: TierLine[], lines: FitnessLine[]): string 
 }
 
 /** What separates the players picked for comparison. */
-export function interpretCompare(picked: FitnessLine[]): string {
+export function interpretCompare(picked: FitnessLine[], metric: FitnessMetric = "bronco"): string {
   const withTimes = picked.filter((l) => l.latest);
   if (withTimes.length === 0) return "Pick players to compare their test results.";
   if (withTimes.length === 1) {
     const only = withTimes[0];
-    return `${only.player.name} last ran ${formatBronco(only.latest!.bronco)} at ${only.latest!.sessionName}`
-      + `${only.deltaSecs !== null ? `, ${Math.abs(only.deltaSecs)}s ${only.deltaSecs > 0 ? "faster" : "slower"} than their first test` : ""}. `
+    return `${only.player.name} last ran ${formatMetric(only.latest!.value, metric)} at ${only.latest!.sessionName}`
+      + `${only.deltaSecs !== null ? `, ${formatMetricChangeMagnitude(only.deltaSecs, metric)}s ${only.deltaSecs > 0 ? "faster" : "slower"} than their first test` : ""}. `
       + "Add another player to compare.";
   }
 
-  const sorted = [...withTimes].sort((a, b) => a.latest!.bronco - b.latest!.bronco);
+  const sorted = [...withTimes].sort((a, b) => a.latest!.value - b.latest!.value);
   const fastest = sorted[0], slowest = sorted[sorted.length - 1];
-  const gapSecs = Math.round((slowest.latest!.bronco - fastest.latest!.bronco) * 60);
+  const gapSecs = metric === "bronco"
+    ? Math.round((slowest.latest!.value - fastest.latest!.value) * 60)
+    : round2(slowest.latest!.value - fastest.latest!.value);
   const parts: string[] = [];
   parts.push(
     gapSecs === 0
-      ? `${fastest.player.name} and ${slowest.player.name} last ran the same time, ${formatBronco(fastest.latest!.bronco)}.`
-      : `${fastest.player.name} is fastest of the ${withTimes.length} at ${formatBronco(fastest.latest!.bronco)}, `
-        + `${gapSecs}s ahead of ${slowest.player.name} (${formatBronco(slowest.latest!.bronco)}).`,
+      ? `${fastest.player.name} and ${slowest.player.name} last ran the same time, ${formatMetric(fastest.latest!.value, metric)}.`
+      : `${fastest.player.name} is fastest of the ${withTimes.length} at ${formatMetric(fastest.latest!.value, metric)}, `
+        + `${formatMetricChangeMagnitude(gapSecs, metric)}s ahead of ${slowest.player.name} (${formatMetric(slowest.latest!.value, metric)}).`,
   );
 
-  const moving = withTimes.filter((l) => l.deltaSecs !== null && Math.abs(l.deltaSecs) > IMPROVEMENT_SECS);
+  const threshold = improvementThreshold(metric);
+  const moving = withTimes.filter((l) => l.deltaSecs !== null && Math.abs(l.deltaSecs) > threshold);
   if (moving.length > 0) {
     parts.push(
       moving
-        .map((l) => `${l.player.name} is ${Math.abs(l.deltaSecs!)}s ${l.deltaSecs! > 0 ? "faster" : "slower"} than their first test`)
+        .map((l) => `${l.player.name} is ${formatMetricChangeMagnitude(l.deltaSecs!, metric)}s ${l.deltaSecs! > 0 ? "faster" : "slower"} than their first test`)
         .join(", ") + ".",
     );
   }
@@ -506,10 +580,15 @@ export function interpretCompare(picked: FitnessLine[]): string {
 }
 
 /** The one-line summary above the whole tab. */
-export function interpretSquadFitness(lines: FitnessLine[], trend: FitnessTrendPoint[]): string {
+export function interpretSquadFitness(
+  lines: FitnessLine[],
+  trend: FitnessTrendPoint[],
+  metric: FitnessMetric = "bronco",
+): string {
+  const metricName = metricLabel(metric).toLowerCase();
   const rows = ranked(lines);
   if (rows.length === 0) {
-    return "No bronco times in this selection. Record a test session and this fills in.";
+    return `No ${metricName} times in this selection. Record a test session and this fills in.`;
   }
   const latest = trend[trend.length - 1];
   const { improved, declined } = movers(lines);
@@ -517,7 +596,7 @@ export function interpretSquadFitness(lines: FitnessLine[], trend: FitnessTrendP
   // "has a time on record" is not "was tested at the most recent session"
   const parts: string[] = [
     `${plural(rows.length, "player")} have a time on record, averaging `
-    + `${formatBronco(avg(rows.map((l) => l.latest!.bronco))!)} on their latest.`,
+    + `${formatMetric(avg(rows.map((l) => l.latest!.value))!, metric)} on their latest.`,
   ];
   if (latest) {
     parts.push(`The most recent session was ${latest.name}, with ${plural(latest.tested, "player")} tested.`);

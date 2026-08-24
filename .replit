@@ -39,3 +39,6 @@ externalPort = 3000
 
 [userenv.shared]
 VITE_SUPABASE_URL = "https://ljxsclpmidkyqaujesio.supabase.co"
+
+[nix]
+channel = "stable-25_05"

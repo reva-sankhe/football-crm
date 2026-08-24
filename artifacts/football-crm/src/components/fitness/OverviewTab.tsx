@@ -5,7 +5,6 @@ import {
   ReferenceLine, ResponsiveContainer, Scatter, ScatterChart, Tooltip, XAxis, YAxis, ZAxis,
 } from "recharts";
 import { cn } from "@/lib/utils";
-import { formatBronco } from "@/lib/utils";
 import { useTheme } from "@/context/ThemeContext";
 import { useToast } from "@/hooks/use-toast";
 import { MiniTable, OverviewCard, tooltipStyle } from "@/components/OverviewCard";
@@ -16,8 +15,9 @@ import { BRONCO_TIERS, type Player, type TestResult, type TestSession } from "@/
 import {
   buildBands, buildFitnessLines, buildGroupBreakdown, buildTeamTrend, buildTierDistribution,
   comparable, interpretBands, interpretCompare, interpretGroups, interpretMovers,
-  interpretSquadFitness, interpretTiers, interpretTrend, movers, ranked,
-  type FitnessLine,
+  interpretSquadFitness, interpretTiers, interpretTrend, formatMetric, formatMetricDelta,
+  formatMetricChangeMagnitude, improvementThreshold,
+  metricLabel, movers, ranked, type FitnessLine, type FitnessMetric,
 } from "@/lib/fitnessAnalytics";
 
 /**
@@ -44,6 +44,7 @@ const COMPARE_SLOTS = 5;
 
 type Grouping = "all" | "position" | "age";
 type Placing = "bands" | "tiers";
+type OverviewMode = "bronco" | "sprints";
 
 export function OverviewTab() {
   const { theme } = useTheme();
@@ -61,7 +62,15 @@ export function OverviewTab() {
   const [pickedSession, setPickedSession] = useState("");
   const [grouping, setGrouping] = useState<Grouping>("all");
   const [placing, setPlacing] = useState<Placing>("bands");
+  const [overviewMode, setOverviewMode] = useState<OverviewMode>("bronco");
+  const [sprintMetric, setSprintMetric] = useState<Exclude<FitnessMetric, "bronco">>("10m");
   const [slots, setSlots] = useState<(string | null)[]>(Array(COMPARE_SLOTS).fill(null));
+
+  const metric: FitnessMetric = overviewMode === "bronco" ? "bronco" : sprintMetric;
+  const isBronco = metric === "bronco";
+  const metricName = metricLabel(metric);
+  const formatValue = (value: number | null | undefined) => formatMetric(value, metric);
+  const noiseThreshold = improvementThreshold(metric);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -89,12 +98,12 @@ export function OverviewTab() {
   );
 
   const lines = useMemo(
-    () => buildFitnessLines(players, results, scopedSessions),
-    [players, results, scopedSessions],
+    () => buildFitnessLines(players, results, scopedSessions, metric),
+    [players, results, scopedSessions, metric],
   );
   const trend = useMemo(
-    () => buildTeamTrend(results, scopedSessions),
-    [results, scopedSessions],
+    () => buildTeamTrend(results, scopedSessions, metric),
+    [results, scopedSessions, metric],
   );
 
   const withTime = useMemo(() => ranked(lines), [lines]);
@@ -115,7 +124,7 @@ export function OverviewTab() {
   );
 
   const bands = useMemo(() => buildBands(lines, mode), [lines, mode]);
-  const tiers = useMemo(() => buildTierDistribution(lines), [lines]);
+  const tiers = useMemo(() => (isBronco ? buildTierDistribution(lines) : []), [lines, isBronco]);
 
   const picked = useMemo(
     () => slots.map((id) => (id ? lines.find((l) => l.player.id === id) ?? null : null)),
@@ -149,13 +158,13 @@ export function OverviewTab() {
       const spread = grouping === "all" ? 0.45 : 0.32;
       return inColumn.map((l, i) => ({
         x: columns.indexOf(column) + (inColumn.length > 1 ? (i / (inColumn.length - 1) - 0.5) * spread : 0),
-        y: l.latest!.bronco,
+        y: l.latest!.value,
         name: l.player.name,
         initials: l.player.name.split(" ").map((w) => w[0]).join("").slice(0, 2).toUpperCase(),
         color: grouping === "position" ? posColor(mode, column)
           : grouping === "age" ? ageColor(mode, column)
-          : l.tier!.color,
-        tier: l.tier!.label,
+          : l.tier?.color ?? HIGHLIGHT,
+        tier: l.tier?.label,
         deltaSecs: l.deltaSecs,
       }));
     });
@@ -166,17 +175,17 @@ export function OverviewTab() {
     : ["All"];
 
   const squadAvg = withTime.length > 0
-    ? withTime.reduce((s, l) => s + l.latest!.bronco, 0) / withTime.length
+    ? withTime.reduce((s, l) => s + l.latest!.value, 0) / withTime.length
     : null;
 
-  /** Bronco per picked player across the sessions in scope. */
+  /** Selected metric per picked player across the sessions in scope. */
   const compareSeries = useMemo(() => {
     const chronological = [...scopedSessions].sort((a, b) => a.test_date.localeCompare(b.test_date));
     return chronological
       .map((s) => {
         const row: Record<string, string | number | null> = { session: s.test_name };
         for (const line of pickedLines) {
-          row[line.player.id] = line.results.find((r) => r.sessionId === s.id)?.bronco ?? null;
+          row[line.player.id] = line.results.find((r) => r.sessionId === s.id)?.value ?? null;
         }
         return row;
       })
@@ -208,11 +217,27 @@ export function OverviewTab() {
             {pickedSession ? sessions.find((s) => s.id === pickedSession)?.test_name ?? "Session" : "All test sessions"}
           </div>
           <div className="text-[11px] text-muted-foreground mt-0.5">
-            {interpretSquadFitness(lines, trend)}
+            {interpretSquadFitness(lines, trend, metric)}
           </div>
         </div>
 
         <div className="ml-auto flex flex-wrap items-center gap-2">
+          <Toggle
+            options={[["bronco", "Bronco"], ["sprints", "Sprints"]]}
+            value={overviewMode}
+            onChange={(value) => {
+              const next = value as OverviewMode;
+              setOverviewMode(next);
+              if (next === "sprints") setPlacing("bands");
+            }}
+          />
+          {!isBronco && (
+            <Toggle
+              options={[["10m", "10m"], ["20m", "20m"], ["40m", "40m"]]}
+              value={sprintMetric}
+              onChange={(value) => setSprintMetric(value as Exclude<FitnessMetric, "bronco">)}
+            />
+          )}
           {sessions.length > 1 && (
             <select
               value={pickedSession}
@@ -233,10 +258,10 @@ export function OverviewTab() {
       {/* ── Snapshot ───────────────────────────────────────────────────────── */}
       <div className="flex flex-wrap gap-px bg-border border border-border rounded-2xl overflow-hidden">
         <Stat label="Squad" value={players.length} sub="registered" />
-        <Stat label="With a time" value={withTime.length} sub={`of ${players.length}`} />
+        <Stat label={`With ${metricName}`} value={withTime.length} sub={`of ${players.length}`} />
         <Stat
-          label="Avg bronco"
-          value={squadAvg ? formatBronco(squadAvg) : "—"}
+          label={`Avg ${metricName}`}
+          value={squadAvg == null ? "—" : formatValue(squadAvg)}
           sub="latest per player"
         />
         <Stat label="Comparable" value={comparable(lines).length} sub="2+ tests" />
@@ -247,20 +272,20 @@ export function OverviewTab() {
       {/* ── Trend and movers ───────────────────────────────────────────────── */}
       <div className="grid gap-4 lg:grid-cols-3">
         <OverviewCard
-          title="Team fitness trend"
-          subtitle="Squad average bronco per session, oldest first"
+          title={`Team ${metricName} trend`}
+          subtitle={`Squad average ${metricName.toLowerCase()} per session, oldest first`}
           className="lg:col-span-2"
-          interpretation={interpretTrend(trend)}
+          interpretation={interpretTrend(trend, metric)}
           table={
             <MiniTable
-              head={["Session", "Tested", "Avg bronco"]}
-              rows={trend.map((p) => [p.name, String(p.tested), formatBronco(p.avgBronco)])}
+              head={["Session", "Tested", `Avg ${metricName}`]}
+              rows={trend.map((p) => [p.name, String(p.tested), formatValue(p.avgBronco)])}
             />
           }
         >
           <div className="h-56">
             {trend.length === 0 ? (
-              <p className="text-sm text-muted-foreground py-16 text-center">No bronco times recorded</p>
+              <p className="text-sm text-muted-foreground py-16 text-center">No {metricName} times recorded</p>
             ) : (
               <ResponsiveContainer width="100%" height="100%">
                 <AreaChart data={trend} margin={{ top: 8, right: 8, left: -6, bottom: 0 }}>
@@ -276,7 +301,7 @@ export function OverviewTab() {
                   <YAxis
                     reversed
                     domain={["auto", "auto"]}
-                    tickFormatter={(v: number) => formatBronco(v)}
+                    tickFormatter={(v: number) => formatValue(v)}
                     tick={{ fill: INK.muted, fontSize: 10 }}
                     width={46}
                     axisLine={false}
@@ -285,7 +310,7 @@ export function OverviewTab() {
                   <Tooltip
                     {...tip}
                     formatter={(v: number, _n, item) =>
-                      [`${formatBronco(v)} · ${(item?.payload as { tested: number })?.tested} tested`, "Squad average"]}
+                      [`${formatValue(v)} · ${(item?.payload as { tested: number })?.tested} tested`, "Squad average"]}
                   />
                   <Area
                     type="monotone"
@@ -305,15 +330,15 @@ export function OverviewTab() {
         <OverviewCard
           title="Movers"
           subtitle="Change since each player's first test in scope"
-          interpretation={interpretMovers(lines)}
+          interpretation={interpretMovers(lines, metric)}
           table={
             <MiniTable
               head={["Player", "First", "Latest", "Change"]}
               rows={[...moved.improved, ...moved.declined].map((l) => [
                 l.player.name,
-                formatBronco(l.first!.bronco),
-                formatBronco(l.latest!.bronco),
-                `${l.deltaSecs! > 0 ? "−" : "+"}${Math.abs(l.deltaSecs!)}s`,
+                formatValue(l.first!.value),
+                formatValue(l.latest!.value),
+                formatMetricDelta(l.deltaSecs!, metric),
               ])}
             />
           }
@@ -323,8 +348,8 @@ export function OverviewTab() {
               <p className="text-sm text-muted-foreground py-16 text-center">Nobody has two tests yet</p>
             ) : (
               <>
-                <MoverList title="Faster" lines={moved.improved} tone="text-status-good" sign="−" />
-                <MoverList title="Slower" lines={moved.declined} tone="text-status-bad" sign="+" />
+                <MoverList title="Faster" lines={moved.improved} tone="text-status-good" metric={metric} />
+                <MoverList title="Slower" lines={moved.declined} tone="text-status-bad" metric={metric} />
               </>
             )}
           </div>
@@ -336,10 +361,14 @@ export function OverviewTab() {
         title="Squad distribution"
         subtitle={
           grouping === "all"
-            ? "Every player with a time · lower is faster · coloured by benchmark tier"
+            ? isBronco
+              ? "Every player with a time · lower is faster · coloured by benchmark tier"
+              : `Every player with a ${metricName} time · lower is faster`
             : `Grouped by ${grouping}${groups.sessionName ? ` · measured on ${groups.sessionName}` : ""}`
         }
-        interpretation={grouping === "all" ? interpretBands(bands, lines) : interpretGroups(groups, grouping)}
+        interpretation={grouping === "all"
+          ? interpretBands(bands, lines, metric)
+          : interpretGroups(groups, grouping, metric)}
         action={
           <Toggle
             options={[["all", "All"], ["position", "Position"], ["age", "Age"]]}
@@ -351,14 +380,18 @@ export function OverviewTab() {
           grouping === "all"
             ? (
               <MiniTable
-                head={["Player", "Bronco", "Tier"]}
-                rows={withTime.map((l) => [l.player.name, formatBronco(l.latest!.bronco), l.tier!.label])}
+                head={isBronco ? ["Player", "Bronco", "Tier"] : ["Player", metricName, "Rank"]}
+                rows={withTime.map((l, index) => [
+                  l.player.name,
+                  formatValue(l.latest!.value),
+                  isBronco ? l.tier?.label ?? "—" : String(index + 1),
+                ])}
               />
             ) : (
               <MiniTable
-                head={["Group", "Tested", "Avg bronco", "Faster", "Slower"]}
+                head={["Group", "Tested", `Avg ${metricName}`, "Faster", "Slower"]}
                 rows={groups.groups.map((g) => [
-                  g.group, String(g.tested), formatBronco(g.avgBronco), String(g.improved), String(g.declined),
+                  g.group, String(g.tested), formatValue(g.avgBronco), String(g.improved), String(g.declined),
                 ])}
               />
             )
@@ -366,7 +399,7 @@ export function OverviewTab() {
       >
         <div className={grouping === "all" ? "h-72" : "h-80"}>
           {scatter.length === 0 ? (
-            <p className="text-sm text-muted-foreground py-24 text-center">No bronco times recorded</p>
+            <p className="text-sm text-muted-foreground py-24 text-center">No {metricName} times recorded</p>
           ) : (
             <ResponsiveContainer width="100%" height="100%">
               <ScatterChart margin={{ top: 16, right: 16, bottom: 8, left: 6 }}>
@@ -386,20 +419,20 @@ export function OverviewTab() {
                   dataKey="y"
                   reversed
                   domain={["dataMin - 0.08", "dataMax + 0.08"]}
-                  tickFormatter={(v: number) => formatBronco(v)}
+                  tickFormatter={(v: number) => formatValue(v)}
                   tick={{ fill: INK.muted, fontSize: 10 }}
                   width={46}
                   axisLine={false}
                   tickLine={false}
                 />
                 <ZAxis range={[1, 1]} />
-                <Tooltip cursor={false} content={<PlayerDot.Tooltip INK={INK} />} />
+                  <Tooltip cursor={false} content={<PlayerDot.Tooltip INK={INK} metric={metric} />} />
                 {squadAvg !== null && (
                   <ReferenceLine
                     y={squadAvg}
                     stroke={HIGHLIGHT}
                     strokeDasharray="5 3"
-                    label={{ value: `Avg ${formatBronco(squadAvg)}`, position: "insideTopRight", fill: HIGHLIGHT, fontSize: 9, fontWeight: 600 }}
+                    label={{ value: `Avg ${formatValue(squadAvg)}`, position: "insideTopRight", fill: HIGHLIGHT, fontSize: 9, fontWeight: 600 }}
                   />
                 )}
                 <Scatter data={scatter} shape={<PlayerDot />} isAnimationActive={false} />
@@ -410,7 +443,7 @@ export function OverviewTab() {
 
         {/* Colour carries the tier when ungrouped, so it needs naming. Grouped,
             the x-axis already names each column and the legend would repeat it. */}
-        {grouping === "all" && scatter.length > 0 && (
+        {isBronco && grouping === "all" && scatter.length > 0 && (
           <div className="flex flex-wrap gap-x-3 gap-y-1 mt-2">
             {BRONCO_TIERS.filter((t) => scatter.some((d) => d.tier === t.label)).map((t) => (
               <span key={t.label} className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
@@ -426,13 +459,15 @@ export function OverviewTab() {
       <OverviewCard
         title="Where the squad sits"
         subtitle={
-          placing === "bands"
+          !isBronco || placing === "bands"
             ? "Quartiles of this squad — relative, and it moves as the squad moves"
             : "Against the published bronco benchmarks — absolute"
         }
-        interpretation={placing === "bands" ? interpretBands(bands, lines) : interpretTiers(tiers, lines)}
+        interpretation={!isBronco || placing === "bands"
+          ? interpretBands(bands, lines, metric)
+          : interpretTiers(tiers, lines)}
         action={
-          <Toggle
+          isBronco && <Toggle
             options={[["bands", "Team quartiles"], ["tiers", "Global tiers"]]}
             value={placing}
             onChange={(v) => setPlacing(v as Placing)}
@@ -440,8 +475,8 @@ export function OverviewTab() {
         }
         table={
           <MiniTable
-            head={[placing === "bands" ? "Band" : "Tier", "Players", "Names"]}
-            rows={(placing === "bands"
+            head={[!isBronco || placing === "bands" ? "Band" : "Tier", "Players", "Names"]}
+            rows={(!isBronco || placing === "bands"
               ? bands.map((b) => [b.band.label, b.players] as const)
               : tiers.map((t) => [`${t.tier.label} (${t.tier.displayRange})`, t.players] as const)
             ).map(([label, ls]) => [label, String(ls.length), ls.map((l) => l.player.name).join(", ")])}
@@ -450,11 +485,11 @@ export function OverviewTab() {
       >
         <div className="h-56">
           {withTime.length === 0 ? (
-            <p className="text-sm text-muted-foreground py-16 text-center">No bronco times recorded</p>
+            <p className="text-sm text-muted-foreground py-16 text-center">No {metricName} times recorded</p>
           ) : (
             <ResponsiveContainer width="100%" height="100%">
               <BarChart
-                data={placing === "bands"
+                data={!isBronco || placing === "bands"
                   ? bands.map((b) => ({ name: b.band.label, players: b.players.length, color: b.band.color }))
                   : tiers.map((t) => ({ name: t.tier.label, players: t.players.length, color: t.tier.color }))}
                 margin={{ top: 16, right: 8, left: -18, bottom: 0 }}
@@ -464,7 +499,7 @@ export function OverviewTab() {
                 <YAxis allowDecimals={false} tick={{ fill: INK.muted, fontSize: 11 }} axisLine={false} tickLine={false} />
                 <Tooltip {...tip} cursor={{ fill: INK.grid }} formatter={(v: number) => [`${v}`, "Players"]} />
                 <Bar dataKey="players" radius={[4, 4, 0, 0]} maxBarSize={54}>
-                  {(placing === "bands" ? bands : tiers).map((row, i) => (
+                  {(!isBronco || placing === "bands" ? bands : tiers).map((row, i) => (
                     <Cell key={i} fill={"band" in row ? row.band.color : row.tier.color} />
                   ))}
                   <LabelList dataKey="players" position="top" offset={6} style={{ fill: INK.secondary, fontSize: 11, fontWeight: 600 }} />
@@ -479,16 +514,16 @@ export function OverviewTab() {
       <OverviewCard
         title="Compare players"
         subtitle={`Pick up to ${COMPARE_SLOTS} · every test in scope`}
-        interpretation={interpretCompare(pickedLines)}
+        interpretation={interpretCompare(pickedLines, metric)}
         table={
           <MiniTable
-            head={["Player", "First", "Latest", "Change", "Tier"]}
+            head={isBronco ? ["Player", "First", "Latest", "Change", "Tier"] : ["Player", "First", "Latest", "Change"]}
             rows={pickedLines.map((l) => [
               l.player.name,
-              l.first ? formatBronco(l.first.bronco) : "—",
-              l.latest ? formatBronco(l.latest.bronco) : "—",
-              l.deltaSecs === null ? "—" : `${l.deltaSecs > 0 ? "−" : "+"}${Math.abs(l.deltaSecs)}s`,
-              l.tier?.label ?? "—",
+              l.first ? formatValue(l.first.value) : "—",
+              l.latest ? formatValue(l.latest.value) : "—",
+              l.deltaSecs === null ? "—" : formatMetricDelta(l.deltaSecs, metric),
+              ...(isBronco ? [l.tier?.label ?? "—"] : []),
             ])}
           />
         }
@@ -531,13 +566,13 @@ export function OverviewTab() {
                   <YAxis
                     reversed
                     domain={["auto", "auto"]}
-                    tickFormatter={(v: number) => formatBronco(v)}
+                    tickFormatter={(v: number) => formatValue(v)}
                     tick={{ fill: INK.muted, fontSize: 10 }}
                     width={46}
                     axisLine={false}
                     tickLine={false}
                   />
-                  <Tooltip {...tip} formatter={(v: number, name) => [formatBronco(v), String(name)]} />
+                  <Tooltip {...tip} formatter={(v: number, name) => [formatValue(v), String(name)]} />
                   {/* Colour follows the slot, not the rank — dropping one player
                       never recolours the others */}
                   {picked.map((line, slot) => line && (
@@ -569,7 +604,7 @@ export function OverviewTab() {
                   <PosBadge pos={line.player.primary_position} />
                   <span className="text-foreground font-medium">{line.player.name}</span>
                   <span className="font-time text-muted-foreground">
-                    {line.latest ? formatBronco(line.latest.bronco) : "—"}
+                      {line.latest ? formatValue(line.latest.value) : "—"}
                   </span>
                 </Link>
               ))}
@@ -579,9 +614,9 @@ export function OverviewTab() {
       </OverviewCard>
 
       <p className="text-[11px] text-muted-foreground">
-        Bronco is a time, so lower is faster and every chart here plots it that way — the vertical
-        axes are reversed, and up always means fitter. A change under 3 seconds counts as unchanged;
-        across a five-minute effort that is timing noise rather than fitness.
+        {metricName} is a time, so lower is faster and every chart here plots it that way — the vertical
+        axes are reversed, and up always means faster. A change under {noiseThreshold}s counts as unchanged;
+        this prevents small timing differences from being over-read.
       </p>
     </div>
   );
@@ -629,11 +664,11 @@ function Toggle({ options, value, onChange }: {
   );
 }
 
-function MoverList({ title, lines, tone, sign }: {
+function MoverList({ title, lines, tone, metric }: {
   title: string;
   lines: FitnessLine[];
   tone: string;
-  sign: string;
+  metric: FitnessMetric;
 }) {
   if (lines.length === 0) return null;
   return (
@@ -650,10 +685,10 @@ function MoverList({ title, lines, tone, sign }: {
           >
             <span className="text-foreground truncate flex-1 min-w-0">{l.player.name}</span>
             <span className="font-time text-muted-foreground">
-              {formatBronco(l.first!.bronco)} → {formatBronco(l.latest!.bronco)}
+              {formatMetric(l.first!.value, metric)} → {formatMetric(l.latest!.value, metric)}
             </span>
             <span className={cn("font-time font-semibold w-10 text-right", tone)}>
-              {sign}{Math.abs(l.deltaSecs!)}s
+              {formatMetricDelta(l.deltaSecs!, metric)}
             </span>
           </Link>
         ))}
@@ -667,7 +702,7 @@ interface DotPayload {
   name: string;
   initials: string;
   color: string;
-  tier: string;
+  tier?: string;
   y: number;
   deltaSecs: number | null;
 }
@@ -693,10 +728,11 @@ function PlayerDot(props: { cx?: number; cy?: number; payload?: DotPayload }) {
   );
 }
 
-PlayerDot.Tooltip = function DotTooltip({ active, payload, INK }: {
+PlayerDot.Tooltip = function DotTooltip({ active, payload, INK, metric }: {
   active?: boolean;
   payload?: { payload: DotPayload }[];
   INK: ReturnType<typeof ink>;
+  metric: FitnessMetric;
 }) {
   if (!active || !payload?.length) return null;
   const d = payload[0].payload;
@@ -706,11 +742,15 @@ PlayerDot.Tooltip = function DotTooltip({ active, payload, INK }: {
       style={{ background: INK.tooltipBg, border: `1px solid ${INK.tooltipBorder}` }}
     >
       <div className="font-semibold" style={{ color: INK.primary }}>{d.name}</div>
-      <div style={{ color: d.color }}>{d.tier}</div>
-      <div className="font-time" style={{ color: INK.secondary }}>{formatBronco(d.y)}</div>
+      {d.tier && <div style={{ color: d.color }}>{d.tier}</div>}
+      <div className="font-time" style={{ color: INK.secondary }}>{formatMetric(d.y, metric)}</div>
       {d.deltaSecs !== null && (
         <div className="font-time" style={{ color: INK.muted }}>
-          {d.deltaSecs > 0 ? `${d.deltaSecs}s faster` : d.deltaSecs < 0 ? `${Math.abs(d.deltaSecs)}s slower` : "unchanged"} than first test
+          {d.deltaSecs > 0
+            ? `${formatMetricChangeMagnitude(d.deltaSecs, metric)}s faster`
+            : d.deltaSecs < 0
+              ? `${formatMetricChangeMagnitude(d.deltaSecs, metric)}s slower`
+              : "unchanged"} than first test
         </div>
       )}
     </div>
