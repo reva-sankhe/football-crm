@@ -45,6 +45,7 @@ const COMPARE_SLOTS = 5;
 type Grouping = "all" | "position" | "age";
 type Placing = "bands" | "tiers";
 type OverviewMode = "bronco" | "sprints";
+const SPRINT_METRICS: Exclude<FitnessMetric, "bronco">[] = ["10m", "20m", "40m"];
 
 export function OverviewTab() {
   const { theme } = useTheme();
@@ -102,12 +103,13 @@ export function OverviewTab() {
     [players, results, scopedSessions, metric],
   );
   const trend = useMemo(
-    () => buildTeamTrend(results, scopedSessions, metric),
-    [results, scopedSessions, metric],
+    () => buildTeamTrend(results, sessions, metric),
+    [results, sessions, metric],
   );
 
   const withTime = useMemo(() => ranked(lines), [lines]);
   const moved = useMemo(() => movers(lines), [lines]);
+  const recentlyCompared = moved.improved.length + moved.declined.length + moved.steady.length;
   const latestPoint = trend[trend.length - 1] ?? null;
 
   /** Group averages use each player's personal-best time (sessionId = null),
@@ -126,11 +128,38 @@ export function OverviewTab() {
   const bands = useMemo(() => buildBands(lines, mode), [lines, mode]);
   const tiers = useMemo(() => (isBronco ? buildTierDistribution(lines) : []), [lines, isBronco]);
 
-  const picked = useMemo(
-    () => slots.map((id) => (id ? lines.find((l) => l.player.id === id) ?? null : null)),
-    [slots, lines],
+  /** Player comparison always uses every session, not the overview session filter. */
+  const compareLinesByMetric = useMemo<Record<FitnessMetric, FitnessLine[]>>(
+    () => ({
+      bronco: buildFitnessLines(players, results, sessions, "bronco"),
+      "10m": buildFitnessLines(players, results, sessions, "10m"),
+      "20m": buildFitnessLines(players, results, sessions, "20m"),
+      "40m": buildFitnessLines(players, results, sessions, "40m"),
+    }),
+    [players, results, sessions],
   );
-  const pickedLines = picked.filter(Boolean) as FitnessLine[];
+  const compareMetrics = isBronco ? (["bronco"] as FitnessMetric[]) : SPRINT_METRICS;
+  const compareRoster = useMemo(
+    () => players
+      .filter((player) => compareMetrics.some((m) =>
+        compareLinesByMetric[m].some((line) => line.player.id === player.id && line.latest),
+      ))
+      .sort((a, b) => a.name.localeCompare(b.name)),
+    [players, compareLinesByMetric, compareMetrics],
+  );
+  const pickedPlayers = useMemo(
+    () => slots.map((id, slot) => {
+      const player = id ? players.find((p) => p.id === id) : null;
+      return player ? { player, slot } : null;
+    }).filter(Boolean) as { player: Player; slot: number }[],
+    [slots, players],
+  );
+  const pickedLines = useMemo(
+    () => pickedPlayers
+      .map(({ player }) => compareLinesByMetric[metric].find((line) => line.player.id === player.id) ?? null)
+      .filter(Boolean) as FitnessLine[],
+    [pickedPlayers, compareLinesByMetric, metric],
+  );
 
   const toggleCompare = (id: string) => {
     setSlots((prev) => {
@@ -178,19 +207,25 @@ export function OverviewTab() {
     ? withTime.reduce((s, l) => s + l.latest!.value, 0) / withTime.length
     : null;
 
-  /** Selected metric per picked player across the sessions in scope. */
-  const compareSeries = useMemo(() => {
-    const chronological = [...scopedSessions].sort((a, b) => a.test_date.localeCompare(b.test_date));
-    return chronological
-      .map((s) => {
-        const row: Record<string, string | number | null> = { session: s.test_name };
-        for (const line of pickedLines) {
-          row[line.player.id] = line.results.find((r) => r.sessionId === s.id)?.value ?? null;
-        }
-        return row;
-      })
-      .filter((row) => pickedLines.some((l) => row[l.player.id] != null));
-  }, [scopedSessions, pickedLines]);
+  /** Each comparison chart uses every recorded session, independent of the filter above. */
+  const compareSeriesByMetric = useMemo(() => {
+    const chronological = [...sessions].sort((a, b) => a.test_date.localeCompare(b.test_date));
+    return Object.fromEntries((["bronco", ...SPRINT_METRICS] as FitnessMetric[]).map((compareMetric) => {
+      const linesForMetric = compareLinesByMetric[compareMetric];
+      const rows = chronological
+        .map((s) => {
+          const row: Record<string, string | number | null> = { session: s.test_name };
+          for (const { player } of pickedPlayers) {
+            row[player.id] = linesForMetric
+              .find((line) => line.player.id === player.id)
+              ?.results.find((result) => result.sessionId === s.id)?.value ?? null;
+          }
+          return row;
+        })
+        .filter((row) => pickedPlayers.some(({ player }) => row[player.id] != null));
+      return [compareMetric, rows];
+    })) as Record<FitnessMetric, Record<string, string | number | null>[]>;
+  }, [sessions, compareLinesByMetric, pickedPlayers]);
 
   if (loading) {
     return (
@@ -265,15 +300,15 @@ export function OverviewTab() {
           sub="latest per player"
         />
         <Stat label="Comparable" value={comparable(lines).length} sub="2+ tests" />
-        <Stat label="Improved" value={moved.improved.length} tone="text-status-good" sub={`of ${comparable(lines).length}`} />
-        <Stat label="Declined" value={moved.declined.length} tone="text-status-bad" sub={`of ${comparable(lines).length}`} />
+        <Stat label="Improved" value={moved.improved.length} tone="text-status-good" sub={`of ${recentlyCompared} recent`} />
+        <Stat label="Declined" value={moved.declined.length} tone="text-status-bad" sub={`of ${recentlyCompared} recent`} />
       </div>
 
       {/* ── Trend and movers ───────────────────────────────────────────────── */}
       <div className="grid gap-4 lg:grid-cols-3">
         <OverviewCard
           title={`Team ${metricName} trend`}
-          subtitle={`Squad average ${metricName.toLowerCase()} per session, oldest first`}
+          subtitle={`Squad average ${metricName.toLowerCase()} per session, oldest first · every test on record`}
           className="lg:col-span-2"
           interpretation={interpretTrend(trend, metric)}
           table={
@@ -329,23 +364,23 @@ export function OverviewTab() {
 
         <OverviewCard
           title="Movers"
-          subtitle="Change since each player's first test in scope"
+          subtitle="Latest test compared with each player's previous test"
           interpretation={interpretMovers(lines, metric)}
           table={
             <MiniTable
-              head={["Player", "First", "Latest", "Change"]}
+              head={["Player", "Previous", "Latest", "Change"]}
               rows={[...moved.improved, ...moved.declined].map((l) => [
                 l.player.name,
-                formatValue(l.first!.value),
+                formatValue(l.previous!.value),
                 formatValue(l.latest!.value),
-                formatMetricDelta(l.deltaSecs!, metric),
+                formatMetricDelta(l.recentDeltaSecs!, metric),
               ])}
             />
           }
         >
           <div className="h-56 overflow-y-auto space-y-3">
-            {comparable(lines).length === 0 ? (
-              <p className="text-sm text-muted-foreground py-16 text-center">Nobody has two tests yet</p>
+            {recentlyCompared === 0 ? (
+              <p className="text-sm text-muted-foreground py-16 text-center">Nobody has two recent tests yet</p>
             ) : (
               <>
                 <MoverList title="Faster" lines={moved.improved} tone="text-status-good" metric={metric} />
@@ -513,98 +548,117 @@ export function OverviewTab() {
       {/* ── Compare ────────────────────────────────────────────────────────── */}
       <OverviewCard
         title="Compare players"
-        subtitle={`Pick up to ${COMPARE_SLOTS} · every test in scope`}
-        interpretation={interpretCompare(pickedLines, metric)}
+        subtitle={isBronco
+          ? `Pick up to ${COMPARE_SLOTS} · every test on record`
+          : `Pick up to ${COMPARE_SLOTS} · 10m, 20m and 40m across every test on record`}
+        interpretation={isBronco
+          ? interpretCompare(pickedLines, metric)
+          : pickedPlayers.length === 0
+            ? "Pick players above to compare their 10m, 20m and 40m sprint times."
+            : `Comparing all three sprint distances for ${pickedPlayers.length} selected ${pickedPlayers.length === 1 ? "player" : "players"}.`}
         table={
           <MiniTable
-            head={isBronco ? ["Player", "First", "Latest", "Change", "Tier"] : ["Player", "First", "Latest", "Change"]}
-            rows={pickedLines.map((l) => [
-              l.player.name,
-              l.first ? formatValue(l.first.value) : "—",
-              l.latest ? formatValue(l.latest.value) : "—",
-              l.deltaSecs === null ? "—" : formatMetricDelta(l.deltaSecs, metric),
-              ...(isBronco ? [l.tier?.label ?? "—"] : []),
-            ])}
+            head={isBronco ? ["Player", "First", "Latest", "Change", "Tier"] : ["Player", "10m latest", "20m latest", "40m latest"]}
+            rows={isBronco
+              ? pickedLines.map((l) => [
+                l.player.name,
+                l.first ? formatValue(l.first.value) : "—",
+                l.latest ? formatValue(l.latest.value) : "—",
+                l.deltaSecs === null ? "—" : formatMetricDelta(l.deltaSecs, metric),
+                l.tier?.label ?? "—",
+              ])
+              : pickedPlayers.map(({ player }) => [
+                player.name,
+                ...SPRINT_METRICS.map((sprint) => {
+                  const line = compareLinesByMetric[sprint].find((l) => l.player.id === player.id);
+                  return line?.latest ? formatMetric(line.latest.value, sprint) : "—";
+                }),
+              ])}
           />
         }
       >
         <div className="space-y-3">
           <div className="flex flex-wrap gap-1.5 max-h-28 overflow-y-auto">
-            {withTime.map((l) => {
-              const slot = slotOf(l.player.id);
+            {compareRoster.map((player) => {
+              const slot = slotOf(player.id);
               const isPicked = slot !== -1;
               return (
                 <button
-                  key={l.player.id}
-                  onClick={() => toggleCompare(l.player.id)}
+                  key={player.id}
+                  onClick={() => toggleCompare(player.id)}
                   className={cn(
                     "px-2.5 h-7 rounded-lg text-xs font-medium border transition-colors",
                     isPicked ? "text-foreground" : "border-border text-muted-foreground hover:text-foreground",
                   )}
                   style={isPicked ? { borderColor: series(mode, slot), background: `${series(mode, slot)}22` } : undefined}
-                  data-testid={`button-compare-${l.player.id}`}
+                  data-testid={`button-compare-${player.id}`}
                 >
-                  {l.player.name}
+                  {player.name}
                 </button>
               );
             })}
-            {withTime.length === 0 && (
+            {compareRoster.length === 0 && (
               <p className="text-sm text-muted-foreground">No players with a time to compare</p>
             )}
           </div>
 
-          <div className="h-56">
-            {pickedLines.length === 0 || compareSeries.length === 0 ? (
+          {pickedPlayers.length === 0 ? (
+            <div className="h-56">
               <p className="text-sm text-muted-foreground py-16 text-center">
-                {pickedLines.length === 0 ? "Pick players above to compare them" : "No shared sessions to plot"}
+                Pick players above to compare them
               </p>
-            ) : (
-              <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={compareSeries} margin={{ top: 8, right: 12, left: -6, bottom: 0 }}>
-                  <CartesianGrid stroke={INK.grid} vertical={false} />
-                  <XAxis dataKey="session" tick={{ fill: INK.secondary, fontSize: 11 }} axisLine={{ stroke: INK.axis }} tickLine={false} />
-                  <YAxis
-                    reversed
-                    domain={["auto", "auto"]}
-                    tickFormatter={(v: number) => formatValue(v)}
-                    tick={{ fill: INK.muted, fontSize: 10 }}
-                    width={46}
-                    axisLine={false}
-                    tickLine={false}
+            </div>
+          ) : isBronco ? (
+            <CompareChart
+              data={compareSeriesByMetric.bronco}
+              pickedPlayers={pickedPlayers}
+              metric="bronco"
+              mode={mode}
+              INK={INK}
+              tip={tip}
+            />
+          ) : (
+            <div className="grid gap-3 lg:grid-cols-3">
+              {SPRINT_METRICS.map((sprint) => (
+                <div key={sprint} className="h-48 border border-border rounded-lg p-2">
+                  <div className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground mb-1">
+                    {sprint}
+                  </div>
+                  <CompareChart
+                    data={compareSeriesByMetric[sprint]}
+                    pickedPlayers={pickedPlayers}
+                    metric={sprint}
+                    mode={mode}
+                    INK={INK}
+                    tip={tip}
+                    compact
                   />
-                  <Tooltip {...tip} formatter={(v: number, name) => [formatValue(v), String(name)]} />
-                  {/* Colour follows the slot, not the rank — dropping one player
-                      never recolours the others */}
-                  {picked.map((line, slot) => line && (
-                    <Line
-                      key={line.player.id}
-                      type="monotone"
-                      dataKey={line.player.id}
-                      name={line.player.name}
-                      stroke={series(mode, slot)}
-                      strokeWidth={2}
-                      dot={{ r: 3, fill: series(mode, slot), strokeWidth: 0 }}
-                      connectNulls
-                    />
-                  ))}
-                </LineChart>
-              </ResponsiveContainer>
-            )}
-          </div>
+                </div>
+              ))}
+            </div>
+          )}
 
-          {pickedLines.length > 0 && (
+          {pickedPlayers.length > 0 && (
             <div className="flex flex-wrap gap-2">
-              {picked.map((line, slot) => line && (
+              {pickedPlayers.map(({ player, slot }) => (
                 <Link
-                  key={line.player.id}
-                  href={`/players/${line.player.id}`}
+                  key={player.id}
+                  href={`/players/${player.id}`}
                   className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg border border-border text-[11px] hover:border-indigo-500/40 transition-colors"
                 >
                   <span className="w-2 h-2 rounded-full" style={{ background: series(mode, slot) }} />
-                  <PosBadge pos={line.player.primary_position} />
-                  <span className="text-foreground font-medium">{line.player.name}</span>
+                  <PosBadge pos={player.primary_position} />
+                  <span className="text-foreground font-medium">{player.name}</span>
                   <span className="font-time text-muted-foreground">
-                      {line.latest ? formatValue(line.latest.value) : "—"}
+                    {isBronco
+                      ? (() => {
+                        const line = compareLinesByMetric.bronco.find((l) => l.player.id === player.id);
+                        return line?.latest ? formatMetric(line.latest.value, "bronco") : "—";
+                      })()
+                      : SPRINT_METRICS.map((sprint) => {
+                        const line = compareLinesByMetric[sprint].find((l) => l.player.id === player.id);
+                        return `${sprint} ${line?.latest ? formatMetric(line.latest.value, sprint) : "—"}`;
+                      }).join(" · ")}
                   </span>
                 </Link>
               ))}
@@ -685,14 +739,70 @@ function MoverList({ title, lines, tone, metric }: {
           >
             <span className="text-foreground truncate flex-1 min-w-0">{l.player.name}</span>
             <span className="font-time text-muted-foreground">
-              {formatMetric(l.first!.value, metric)} → {formatMetric(l.latest!.value, metric)}
+              {formatMetric(l.previous!.value, metric)} → {formatMetric(l.latest!.value, metric)}
             </span>
             <span className={cn("font-time font-semibold w-10 text-right", tone)}>
-              {formatMetricDelta(l.deltaSecs!, metric)}
+              {formatMetricDelta(l.recentDeltaSecs!, metric)}
             </span>
           </Link>
         ))}
       </div>
+    </div>
+  );
+}
+
+function CompareChart({ data, pickedPlayers, metric, mode, INK, tip, compact = false }: {
+  data: Record<string, string | number | null>[];
+  pickedPlayers: { player: Player; slot: number }[];
+  metric: FitnessMetric;
+  mode: Mode;
+  INK: ReturnType<typeof ink>;
+  tip: ReturnType<typeof tooltipStyle>;
+  compact?: boolean;
+}) {
+  if (data.length === 0) {
+    return (
+      <div className={cn("flex items-center justify-center text-center text-xs text-muted-foreground", compact ? "h-36" : "h-56")}>
+        No {metricLabel(metric)} times to plot
+      </div>
+    );
+  }
+
+  return (
+    <div className={compact ? "h-36" : "h-56"}>
+      <ResponsiveContainer width="100%" height="100%">
+        <LineChart data={data} margin={{ top: 8, right: 12, left: -6, bottom: 0 }}>
+          <CartesianGrid stroke={INK.grid} vertical={false} />
+          <XAxis
+            dataKey="session"
+            tick={{ fill: INK.secondary, fontSize: compact ? 9 : 11 }}
+            axisLine={{ stroke: INK.axis }}
+            tickLine={false}
+          />
+          <YAxis
+            reversed
+            domain={["auto", "auto"]}
+            tickFormatter={(v: number) => formatMetric(v, metric)}
+            tick={{ fill: INK.muted, fontSize: compact ? 9 : 10 }}
+            width={compact ? 40 : 46}
+            axisLine={false}
+            tickLine={false}
+          />
+          <Tooltip {...tip} formatter={(v: number, name) => [formatMetric(v, metric), String(name)]} />
+          {pickedPlayers.map(({ player, slot }) => (
+            <Line
+              key={player.id}
+              type="monotone"
+              dataKey={player.id}
+              name={player.name}
+              stroke={series(mode, slot)}
+              strokeWidth={2}
+              dot={{ r: compact ? 2 : 3, fill: series(mode, slot), strokeWidth: 0 }}
+              connectNulls
+            />
+          ))}
+        </LineChart>
+      </ResponsiveContainer>
     </div>
   );
 }

@@ -62,12 +62,15 @@ export interface FitnessLine {
   /** Chronological, oldest first. */
   results: FitnessResult[];
   first: FitnessResult | null;
+  previous: FitnessResult | null;
   latest: FitnessResult | null;
   /**
-   * Seconds knocked off since their first test — positive is faster. null when
-   * they have fewer than two tests, which is different from having not improved.
+   * Seconds knocked off since their first test — positive is faster. Compare
+   * uses this overall change; Movers uses recentDeltaSecs.
    */
   deltaSecs: number | null;
+  /** Seconds knocked off since the immediately previous test — positive is faster. */
+  recentDeltaSecs: number | null;
   /** The tier their latest time falls in; sprint metrics have no global tier. */
   tier: BroncoTier | null;
   tested: number;
@@ -139,17 +142,24 @@ export function buildFitnessLines(
     }
 
     const first = playerResults[0] ?? null;
+    const previous = playerResults[playerResults.length - 2] ?? null;
     const latest = playerResults[playerResults.length - 1] ?? null;
     return {
       player,
       results: playerResults,
       first,
+      previous,
       latest,
       // Lower values are faster, so first − latest is the improvement
       deltaSecs: first && latest && playerResults.length > 1
         ? metric === "bronco"
           ? Math.round((first.value - latest.value) * 60)
           : round2(first.value - latest.value)
+        : null,
+      recentDeltaSecs: previous && latest
+        ? metric === "bronco"
+          ? Math.round((previous.value - latest.value) * 60)
+          : round2(previous.value - latest.value)
         : null,
       tier: metric === "bronco" && latest ? getBroncoTier(latest.value) : null,
       tested: playerResults.length,
@@ -177,14 +187,14 @@ export interface Movers {
   steady: FitnessLine[];
 }
 
-/** Who moved, biggest change first. Sorted by seconds, not by percentage. */
+/** Who moved since their immediately previous test, biggest change first. */
 export function movers(lines: FitnessLine[]): Movers {
-  const rows = comparable(lines);
+  const rows = lines.filter((l) => l.recentDeltaSecs !== null);
   const threshold = improvementThreshold(rows[0]?.metric ?? "bronco");
   return {
-    improved: rows.filter((l) => l.deltaSecs! > threshold).sort((a, b) => b.deltaSecs! - a.deltaSecs!),
-    declined: rows.filter((l) => l.deltaSecs! < -threshold).sort((a, b) => a.deltaSecs! - b.deltaSecs!),
-    steady: rows.filter((l) => Math.abs(l.deltaSecs!) <= threshold),
+    improved: rows.filter((l) => l.recentDeltaSecs! > threshold).sort((a, b) => b.recentDeltaSecs! - a.recentDeltaSecs!),
+    declined: rows.filter((l) => l.recentDeltaSecs! < -threshold).sort((a, b) => a.recentDeltaSecs! - b.recentDeltaSecs!),
+    steady: rows.filter((l) => Math.abs(l.recentDeltaSecs!) <= threshold),
   };
 }
 
@@ -388,17 +398,17 @@ export function interpretTrend(points: FitnessTrendPoint[], metric: FitnessMetri
 
 /** Who moved, and by how much. */
 export function interpretMovers(lines: FitnessLine[], metric: FitnessMetric = "bronco"): string {
-  const rows = comparable(lines);
+  const rows = lines.filter((l) => l.recentDeltaSecs !== null);
   if (rows.length === 0) {
-    return "Nobody has two tests in this selection yet, so there's no change to report. "
-      + "A second session is what makes a time a trend.";
+    return "Nobody has two recent tests in this selection yet, so there's no latest change to report. "
+      + "A second recorded time is what makes a player a mover.";
   }
 
   const { improved, declined, steady } = movers(lines);
   const threshold = improvementThreshold(metric);
   const parts: string[] = [];
   parts.push(
-    `${plural(rows.length, "player")} have been tested twice or more: `
+    `${plural(rows.length, "player")} have a latest-versus-previous comparison: `
     + `${improved.length} faster, ${declined.length} slower, ${steady.length} unchanged `
     + `(a change under ${threshold}s counts as unchanged).`,
   );
@@ -406,15 +416,15 @@ export function interpretMovers(lines: FitnessLine[], metric: FitnessMetric = "b
   if (improved.length > 0) {
     const best = improved[0];
     parts.push(
-      `${best.player.name} has improved the most, ${formatMetricChangeMagnitude(best.deltaSecs!, metric)}s faster — `
-      + `${formatMetric(best.first!.value, metric)} to ${formatMetric(best.latest!.value, metric)}.`,
+      `${best.player.name} has improved the most, ${formatMetricChangeMagnitude(best.recentDeltaSecs!, metric)}s faster — `
+      + `${formatMetric(best.previous!.value, metric)} to ${formatMetric(best.latest!.value, metric)}.`,
     );
   }
   if (declined.length > 0) {
     const worst = declined[0];
     parts.push(
-      `${worst.player.name} has dropped off the most, ${formatMetricChangeMagnitude(worst.deltaSecs!, metric)}s slower — `
-      + `${formatMetric(worst.first!.value, metric)} to ${formatMetric(worst.latest!.value, metric)}. `
+      `${worst.player.name} has dropped off the most, ${formatMetricChangeMagnitude(worst.recentDeltaSecs!, metric)}s slower — `
+      + `${formatMetric(worst.previous!.value, metric)} to ${formatMetric(worst.latest!.value, metric)}. `
       + "Worth checking for illness, load or a missed block.",
     );
   }
