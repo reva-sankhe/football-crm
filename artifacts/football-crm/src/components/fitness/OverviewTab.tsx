@@ -14,7 +14,7 @@ import { fetchAllResults, fetchPlayers, fetchSessions } from "@/lib/queries";
 import { BRONCO_TIERS, type Player, type TestResult, type TestSession } from "@/lib/types";
 import {
   buildBands, buildFitnessLines, buildGroupBreakdown, buildTeamTrend, buildTierDistribution,
-  comparable, interpretBands, interpretCompare, interpretGroups, interpretMovers,
+  interpretBands, interpretCompare, interpretGroups, interpretMovers,
   interpretSquadFitness, interpretTiers, interpretTrend, formatMetric, formatMetricDelta,
   formatMetricChangeMagnitude, improvementThreshold,
   metricLabel, movers, ranked, type FitnessLine, type FitnessMetric,
@@ -102,13 +102,26 @@ export function OverviewTab() {
     () => buildFitnessLines(players, results, scopedSessions, metric),
     [players, results, scopedSessions, metric],
   );
+  const movementSessions = useMemo(() => {
+    if (!pickedSession) return sessions;
+    const selected = sessions.find((s) => s.id === pickedSession);
+    if (!selected) return scopedSessions;
+    const previous = sessions
+      .filter((s) => s.test_date < selected.test_date)
+      .sort((a, b) => b.test_date.localeCompare(a.test_date))[0];
+    return previous ? [previous, selected] : [selected];
+  }, [sessions, pickedSession, scopedSessions]);
+  const movementLines = useMemo(
+    () => buildFitnessLines(players, results, movementSessions, metric),
+    [players, results, movementSessions, metric],
+  );
   const trend = useMemo(
     () => buildTeamTrend(results, sessions, metric),
     [results, sessions, metric],
   );
 
   const withTime = useMemo(() => ranked(lines), [lines]);
-  const moved = useMemo(() => movers(lines), [lines]);
+  const moved = useMemo(() => movers(movementLines), [movementLines]);
   const recentlyCompared = moved.improved.length + moved.declined.length + moved.steady.length;
   const latestPoint = trend[trend.length - 1] ?? null;
 
@@ -138,14 +151,23 @@ export function OverviewTab() {
     }),
     [players, results, sessions],
   );
+  const compareScopeLinesByMetric = useMemo<Record<FitnessMetric, FitnessLine[]>>(
+    () => ({
+      bronco: buildFitnessLines(players, results, scopedSessions, "bronco"),
+      "10m": buildFitnessLines(players, results, scopedSessions, "10m"),
+      "20m": buildFitnessLines(players, results, scopedSessions, "20m"),
+      "40m": buildFitnessLines(players, results, scopedSessions, "40m"),
+    }),
+    [players, results, scopedSessions],
+  );
   const compareMetrics = isBronco ? (["bronco"] as FitnessMetric[]) : SPRINT_METRICS;
   const compareRoster = useMemo(
     () => players
       .filter((player) => compareMetrics.some((m) =>
-        compareLinesByMetric[m].some((line) => line.player.id === player.id && line.latest),
+        compareScopeLinesByMetric[m].some((line) => line.player.id === player.id && line.latest),
       ))
       .sort((a, b) => a.name.localeCompare(b.name)),
-    [players, compareLinesByMetric, compareMetrics],
+    [players, compareScopeLinesByMetric, compareMetrics],
   );
   const pickedPlayers = useMemo(
     () => slots.map((id, slot) => {
@@ -252,7 +274,7 @@ export function OverviewTab() {
             {pickedSession ? sessions.find((s) => s.id === pickedSession)?.test_name ?? "Session" : "All test sessions"}
           </div>
           <div className="text-[11px] text-muted-foreground mt-0.5">
-            {interpretSquadFitness(lines, trend, metric)}
+            {interpretSquadFitness(lines, trend, metric, movementLines)}
           </div>
         </div>
 
@@ -299,7 +321,7 @@ export function OverviewTab() {
           value={squadAvg == null ? "—" : formatValue(squadAvg)}
           sub="latest per player"
         />
-        <Stat label="Comparable" value={comparable(lines).length} sub="2+ tests" />
+        <Stat label="Compared" value={recentlyCompared} sub={pickedSession ? "previous → selected" : "latest → previous"} />
         <Stat label="Improved" value={moved.improved.length} tone="text-status-good" sub={`of ${recentlyCompared} recent`} />
         <Stat label="Declined" value={moved.declined.length} tone="text-status-bad" sub={`of ${recentlyCompared} recent`} />
       </div>
@@ -364,8 +386,10 @@ export function OverviewTab() {
 
         <OverviewCard
           title="Movers"
-          subtitle="Latest test compared with each player's previous test"
-          interpretation={interpretMovers(lines, metric)}
+          subtitle={pickedSession
+            ? "Selected test compared with the previous session"
+            : "Latest test compared with each player's previous test"}
+          interpretation={interpretMovers(movementLines, metric)}
           table={
             <MiniTable
               head={["Player", "Previous", "Latest", "Change"]}
@@ -380,7 +404,9 @@ export function OverviewTab() {
         >
           <div className="h-56 overflow-y-auto space-y-3">
             {recentlyCompared === 0 ? (
-              <p className="text-sm text-muted-foreground py-16 text-center">Nobody has two recent tests yet</p>
+              <p className="text-sm text-muted-foreground py-16 text-center">
+                {pickedSession ? "Nobody has results in both sessions to compare" : "Nobody has two recent tests yet"}
+              </p>
             ) : (
               <>
                 <MoverList title="Faster" lines={moved.improved} tone="text-status-good" metric={metric} />

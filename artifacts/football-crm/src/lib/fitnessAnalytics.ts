@@ -594,6 +594,7 @@ export function interpretSquadFitness(
   lines: FitnessLine[],
   trend: FitnessTrendPoint[],
   metric: FitnessMetric = "bronco",
+  movementLines: FitnessLine[] = lines,
 ): string {
   const metricName = metricLabel(metric).toLowerCase();
   const rows = ranked(lines);
@@ -601,7 +602,7 @@ export function interpretSquadFitness(
     return `No ${metricName} times in this selection. Record a test session and this fills in.`;
   }
   const latest = trend[trend.length - 1];
-  const { improved, declined } = movers(lines);
+  const { improved, declined } = movers(movementLines);
   // Two different populations, so they are named separately rather than merged:
   // "has a time on record" is not "was tested at the most recent session"
   const parts: string[] = [
@@ -611,7 +612,7 @@ export function interpretSquadFitness(
   if (latest) {
     parts.push(`The most recent session was ${latest.name}, with ${plural(latest.tested, "player")} tested.`);
   }
-  const rest = comparable(lines).length;
+  const rest = movementLines.filter((line) => line.recentDeltaSecs !== null).length;
   if (rest > 0) {
     parts.push(`Of the ${rest} with more than one test, ${improved.length} are faster and ${declined.length} slower.`);
   }
