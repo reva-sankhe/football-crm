@@ -10,7 +10,7 @@ import {
   JERSEY_MAX, JERSEY_MIN, formatBronco, cn, isValidJersey, jerseyClash, playerLabel,
 } from "@/lib/utils";
 import {
-  attendancePctColor, collapseMatchDays, countsAsAttended, isoDaysAgo, matchDayAttendance,
+  attendancePctColor, collapseMatchDays, countsAsAttended, formatDateShort, isoDaysAgo, matchDayAttendance,
 } from "@/lib/attendance";
 
 /**
@@ -33,7 +33,7 @@ import type { Player, TestResult, SessionRPE, TrainingSession, SessionAttendance
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
 } from "recharts";
-import { ArrowLeft, Edit, Save, X, Timer, Dumbbell } from "lucide-react";
+import { ArrowLeft, ChevronDown, Edit, Save, X, Timer, Dumbbell } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useTheme } from "@/context/ThemeContext";
 import { HIGHLIGHT, ink, series, type Mode } from "@/lib/viz";
@@ -66,6 +66,7 @@ export default function PlayerDetail() {
   const [editing, setEditing] = useState(false);
   const [editForm, setEditForm] = useState<Partial<Player>>({});
   const [saving, setSaving] = useState(false);
+  const [fitnessHistoryOpen, setFitnessHistoryOpen] = useState(false);
   const [teamBand, setTeamBand] = useState<{ label: string; color: string } | null>(null);
   const [allSessions, setAllSessions] = useState<TrainingSession[]>([]);
   const [playerAttendance, setPlayerAttendance] = useState<(SessionAttendance & { sessions: { id: string; date: string; session_type: string } })[]>([]);
@@ -161,7 +162,6 @@ export default function PlayerDetail() {
   const chronoResults = [...results].sort((a, b) =>
     (a.test_sessions?.test_date ?? "").localeCompare(b.test_sessions?.test_date ?? ""),
   );
-  const latestResult = chronoResults[chronoResults.length - 1];
 
   const broncoChartData = chronoResults
     .map((r) => ({
@@ -276,6 +276,12 @@ export default function PlayerDetail() {
   // Latest recorded bronco — not necessarily the latest test, which may have
   // measured only sprints.
   const latestBroncoRow = [...chronoResults].reverse().find((r) => r.bronco_mins !== null) ?? null;
+  const latestMetricRow = (fields: (keyof TestResult)[]) =>
+    [...chronoResults].reverse().find((r) => fields.some((field) => r[field] != null));
+  const latestMasRow = latestMetricRow(["mas_ms"]);
+  const latest10mRow = latestMetricRow(["ten_m_1", "ten_m_2"]);
+  const latest20mRow = latestMetricRow(["twenty_m_1", "twenty_m_2"]);
+  const latest40mRow = latestMetricRow(["forty_m_1", "forty_m_2"]);
 
   if (loading) {
     return (
@@ -434,41 +440,78 @@ export default function PlayerDetail() {
       <section className="space-y-2">
         <SectionLabel>Fitness</SectionLabel>
         <div className="bg-card border border-border rounded-2xl p-5">
-          <h3 className="text-sm font-semibold text-foreground mb-4">Bronco Over Time</h3>
+          <h3 className="text-sm font-semibold text-foreground mb-4">Fitness Snapshot</h3>
           {broncoChartData.length === 0 ? (
             <EmptyState icon={Timer} title="No test history" description="This player hasn't been tested yet" />
           ) : (
             <>
-              <ResponsiveContainer width="100%" height={180}>
-                <LineChart data={broncoChartData} margin={{ top: 4, right: 8, bottom: 40, left: 0 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke={chartGrid} />
-                  <XAxis dataKey="session" tick={{ fill: chartAxis, fontSize: 10 }} angle={-35} textAnchor="end" interval={0} />
-                  <YAxis tickFormatter={(v) => formatBronco(v)} domain={["auto", "auto"]} tick={{ fill: chartAxis, fontSize: 11 }} />
-                  <Tooltip
-                    contentStyle={{ background: chartTooltipBg, border: `1px solid ${chartTooltipBorder}`, borderRadius: 8 }}
-                    labelStyle={{ color: chartLabel, fontSize: 12 }}
-                    formatter={(v: number) => [formatBronco(v), "Bronco"]}
-                  />
-                  <Line type="monotone" dataKey="mins" stroke={HIGHLIGHT} strokeWidth={2} dot={{ fill: HIGHLIGHT, r: 4 }} connectNulls />
-                </LineChart>
-              </ResponsiveContainer>
-
-              {/* Best / latest test numbers live with the chart they describe */}
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 pt-4 mt-2 border-t border-border">
+              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4">
                 {[
-                  { label: "Bronco",    best: formatBronco(bestBronco), latest: formatBronco(latestResult?.bronco_mins) },
-                  { label: "MAS (m/s)",  best: fmtBest(results, ["mas_ms"], true),     latest: fmtVal(latestResult?.mas_ms) },
-                  { label: "10m Sprint", best: fmtBest(results, ["ten_m_1", "ten_m_2"], false, "s"),       latest: fmtTrials(latestResult, ["ten_m_1", "ten_m_2"], "s") },
-                  { label: "20m Sprint", best: fmtBest(results, ["twenty_m_1", "twenty_m_2"], false, "s"), latest: fmtTrials(latestResult, ["twenty_m_1", "twenty_m_2"], "s") },
-                ].map(({ label, best, latest }) => (
+                  { label: "Bronco",     latest: formatBronco(latestBroncoRow?.bronco_mins), best: formatBronco(bestBronco) },
+                  { label: "MAS (m/s)",  latest: fmtVal(latestMasRow?.mas_ms),              best: fmtBest(results, ["mas_ms"], true) },
+                  { label: "10m Sprint", latest: fmtTrials(latest10mRow, ["ten_m_1", "ten_m_2"], "s"), best: fmtBest(results, ["ten_m_1", "ten_m_2"], false, "s") },
+                  { label: "20m Sprint", latest: fmtTrials(latest20mRow, ["twenty_m_1", "twenty_m_2"], "s"), best: fmtBest(results, ["twenty_m_1", "twenty_m_2"], false, "s") },
+                  { label: "40m Sprint", latest: fmtTrials(latest40mRow, ["forty_m_1", "forty_m_2"], "s"), best: fmtBest(results, ["forty_m_1", "forty_m_2"], false, "s") },
+                ].map(({ label, latest, best }) => (
                   <div key={label}>
                     <div className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground mb-1">{label}</div>
-                    <div className="text-lg font-bold font-time text-foreground">{best}</div>
-                    {best !== latest && <div className="text-[11px] font-time text-muted-foreground mt-0.5">Latest: {latest}</div>}
+                    <div className="text-2xl font-bold font-time text-foreground">{latest}</div>
+                    <div className="text-[11px] font-time text-muted-foreground mt-1">Best: {best}</div>
                   </div>
                 ))}
               </div>
 
+              <button
+                onClick={() => setFitnessHistoryOpen((value) => !value)}
+                className={cn(
+                  "w-full px-0 pt-4 mt-4 flex items-center justify-between text-xs transition-colors border-t",
+                  isDark ? "border-white/[0.06] text-muted-foreground hover:text-foreground" : "border-slate-100 text-slate-500 hover:text-foreground",
+                )}
+                aria-expanded={fitnessHistoryOpen}
+                data-testid="button-toggle-fitness-history"
+              >
+                <span>Test history ({chronoResults.length})</span>
+                <ChevronDown size={13} className={cn("transition-transform", fitnessHistoryOpen && "rotate-180")} />
+              </button>
+
+              {fitnessHistoryOpen && (
+                <div className="pt-4">
+                  {broncoChartData.some((row) => row.mins !== null) && (
+                    <ResponsiveContainer width="100%" height={180}>
+                      <LineChart data={broncoChartData} margin={{ top: 4, right: 8, bottom: 40, left: 0 }}>
+                        <CartesianGrid strokeDasharray="3 3" stroke={chartGrid} />
+                        <XAxis dataKey="session" tick={{ fill: chartAxis, fontSize: 10 }} angle={-35} textAnchor="end" interval={0} />
+                        <YAxis tickFormatter={(v) => formatBronco(v)} domain={["auto", "auto"]} tick={{ fill: chartAxis, fontSize: 11 }} />
+                        <Tooltip
+                          contentStyle={{ background: chartTooltipBg, border: `1px solid ${chartTooltipBorder}`, borderRadius: 8 }}
+                          labelStyle={{ color: chartLabel, fontSize: 12 }}
+                          formatter={(v: number) => [formatBronco(v), "Bronco"]}
+                        />
+                        <Line type="monotone" dataKey="mins" stroke={HIGHLIGHT} strokeWidth={2} dot={{ fill: HIGHLIGHT, r: 4 }} connectNulls />
+                      </LineChart>
+                    </ResponsiveContainer>
+                  )}
+
+                  <div className="border-t border-border/60 divide-y divide-border/40">
+                    {[...chronoResults].reverse().map((r) => (
+                      <div key={r.id} className="py-3 flex items-center gap-3 flex-wrap">
+                        <div className="min-w-0 flex-1">
+                          <div className="text-xs font-medium text-foreground">{r.test_sessions?.test_name ?? "Fitness test"}</div>
+                          <div className="text-[10px] text-muted-foreground">
+                            {r.test_sessions?.test_date ? formatDateShort(r.test_sessions.test_date) : "—"}
+                          </div>
+                        </div>
+                        <div className="grid grid-cols-4 gap-x-3 gap-y-1 text-right text-[11px] font-time shrink-0">
+                          <HistoryValue label="Bronco" value={formatBronco(r.bronco_mins)} />
+                          <HistoryValue label="10m" value={fmtTrials(r, ["ten_m_1", "ten_m_2"], "s")} />
+                          <HistoryValue label="20m" value={fmtTrials(r, ["twenty_m_1", "twenty_m_2"], "s")} />
+                          <HistoryValue label="40m" value={fmtTrials(r, ["forty_m_1", "forty_m_2"], "s")} />
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
             </>
           )}
         </div>
@@ -600,6 +643,15 @@ export default function PlayerDetail() {
 
 // ── Test-value formatting helpers ─────────────────────────────────────────────
 type ResultRow = TestResult & { test_sessions?: { test_date: string; test_name: string; type: string | null } };
+
+function HistoryValue({ label, value }: { label: string; value: string }) {
+  return (
+    <div>
+      <div className="text-[9px] uppercase tracking-wide text-muted-foreground">{label}</div>
+      <div className="text-foreground">{value}</div>
+    </div>
+  );
+}
 
 function fmtVal(v: number | null | undefined, suffix = ""): string {
   return v != null ? v.toFixed(2) + suffix : "—";
