@@ -106,14 +106,19 @@ export function OverviewTab() {
     if (!pickedSession) return sessions;
     const selected = sessions.find((s) => s.id === pickedSession);
     if (!selected) return scopedSessions;
-    const previous = sessions
-      .filter((s) => s.test_date < selected.test_date)
-      .sort((a, b) => b.test_date.localeCompare(a.test_date))[0];
-    return previous ? [previous, selected] : [selected];
+    // Keep all earlier sessions so each selected-event participant can be
+    // compared with their own previous result. This is Q2 → Q3 when both
+    // exist, but still includes a Q1 → Q3 comparison for someone who missed Q2.
+    return sessions.filter((s) => s.test_date <= selected.test_date);
   }, [sessions, pickedSession, scopedSessions]);
   const movementLines = useMemo(
-    () => buildFitnessLines(players, results, movementSessions, metric),
-    [players, results, movementSessions, metric],
+    () => {
+      const allLines = buildFitnessLines(players, results, movementSessions, metric);
+      return pickedSession
+        ? allLines.filter((line) => line.latest?.sessionId === pickedSession)
+        : allLines;
+    },
+    [players, results, movementSessions, metric, pickedSession],
   );
   const trend = useMemo(
     () => buildTeamTrend(results, sessions, metric),
