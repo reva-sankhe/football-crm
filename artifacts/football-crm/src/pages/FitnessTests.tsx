@@ -12,6 +12,7 @@ import { Dumbbell, Plus, CheckCircle2, AlertCircle, ChevronRight, Pencil, Trash2
 import { useToast } from "@/hooks/use-toast";
 
 type Step = "list" | "session-detail" | "create-session" | "enter-data" | "preview" | "done";
+const FITNESS_TEST_TYPES = ["Bronco + Sprints"] as const;
 
 interface CsvRow {
   code: string;
@@ -940,7 +941,7 @@ export default function FitnessTests() {
   // New session details (not saved until confirm)
   const [newDate, setNewDate] = useState(new Date().toISOString().split("T")[0]);
   const [newName, setNewName] = useState("");
-  const [newType, setNewType] = useState("");
+  const [newType, setNewType] = useState<(typeof FITNESS_TEST_TYPES)[number]>(FITNESS_TEST_TYPES[0]);
 
   // Data entry state
   const [csvText, setCsvText] = useState("");
@@ -1049,7 +1050,7 @@ export default function FitnessTests() {
       setStep("list");
       setNewName("");
       setNewDate(new Date().toISOString().split("T")[0]);
-      setNewType("");
+      setNewType(FITNESS_TEST_TYPES[0]);
       setCsvText("");
       setManualRows([blankCsvRow()]);
     } catch (err: unknown) {
@@ -1063,7 +1064,7 @@ export default function FitnessTests() {
     setStep("list");
     setNewName("");
     setNewDate(new Date().toISOString().split("T")[0]);
-    setNewType("");
+    setNewType(FITNESS_TEST_TYPES[0]);
     setCsvText("");
     setManualRows([blankCsvRow()]);
   };
@@ -1092,10 +1093,16 @@ export default function FitnessTests() {
                 className="w-full bg-muted border border-border rounded px-3 py-1.5 text-sm text-foreground" data-testid="input-session-name" />
             </div>
             <div>
-              <label className="block text-xs text-muted-foreground mb-1">Test Type <span className="text-muted-foreground/50">(optional)</span></label>
-              <input value={newType} onChange={(e) => setNewType(e.target.value)} placeholder="e.g. Bronco, Sprint, Agility"
-                className="w-full bg-muted border border-border rounded px-3 py-1.5 text-sm text-foreground" data-testid="input-session-type" />
-              <p className="text-[11px] text-muted-foreground mt-1">Sessions of the same type will be compared together in Analytics.</p>
+              <label className="block text-xs text-muted-foreground mb-1">Test Type</label>
+              <select
+                value={newType}
+                onChange={(e) => setNewType(e.target.value as (typeof FITNESS_TEST_TYPES)[number])}
+                className="w-full bg-muted border border-border rounded px-3 py-1.5 text-sm text-foreground"
+                data-testid="select-session-type"
+              >
+                {FITNESS_TEST_TYPES.map((type) => <option key={type} value={type}>{type}</option>)}
+              </select>
+              <p className="text-[11px] text-muted-foreground mt-1">Sessions with the same type stay grouped together in Fitness analytics.</p>
             </div>
             <div className="flex gap-2 pt-2">
               <button type="button" onClick={handleCancel} className="flex-1 px-4 py-2 border border-border rounded-md text-sm text-muted-foreground">Cancel</button>
