@@ -13,12 +13,12 @@ import { useToast } from "@/hooks/use-toast";
 
 type Step = "list" | "session-detail" | "create-session" | "enter-data" | "preview" | "done";
 const FITNESS_TEST_TYPES = ["Bronco + Sprints"] as const;
+const BRONCO_DISTANCE_M = 1200;
 
 interface CsvRow {
   code: string;
   name: string;
   bronco_mins?: number;
-  mas_ms?: number;
   ten_m_1?: number;
   twenty_m_1?: number;
   forty_m_1?: number;
@@ -41,7 +41,6 @@ type ParsedCsv = {
 
 const METRIC_KEYS: MetricKey[] = [
   "bronco_mins",
-  "mas_ms",
   "ten_m_1",
   "twenty_m_1",
   "forty_m_1",
@@ -61,7 +60,6 @@ function normalizeHeader(header: string): string {
   if (normalized === "name" || normalized === "player name") return "name";
   if (normalized === "notes" || normalized === "note") return "notes";
   if (["bronco", "broncotime", "broncomins", "broncominutes"].includes(compact)) return "bronco_mins";
-  if (["mas", "masms", "masspeed"].includes(compact)) return "mas_ms";
 
   const documentedSprint = compact.match(/^(ten|twenty|forty)m1$/);
   if (documentedSprint) {
@@ -85,13 +83,9 @@ function parseMetricValue(
   if (!raw) return { value: undefined };
 
   const isBronco = metric === "bronco_mins";
-  const isNumericMetric = metric === "mas_ms";
   const colonParts = raw.split(":");
 
   if (colonParts.length === 2) {
-    if (isNumericMetric) {
-      return { value: undefined, error: `${metric} "${raw}" must be a number, not a clock time` };
-    }
     const minutes = Number(colonParts[0]);
     const seconds = Number(colonParts[1]);
     if (
@@ -108,7 +102,7 @@ function parseMetricValue(
 
   const numeric = Number(raw);
   if (!Number.isFinite(numeric) || numeric < 0) {
-    return { value: undefined, error: `${metric} "${raw}" is not a valid ${isNumericMetric ? "number" : "time"}` };
+    return { value: undefined, error: `${metric} "${raw}" is not a valid time` };
   }
   return { value: numeric };
 }
@@ -159,10 +153,14 @@ function formatSprint(value: number | undefined): string {
   return value == null ? "—" : `${value.toFixed(2)}s`;
 }
 
+function calculateMas(broncoMins: number | null | undefined): number | null {
+  if (broncoMins == null || broncoMins <= 0) return null;
+  return BRONCO_DISTANCE_M / (broncoMins * 60);
+}
+
 // ── Session detail view ────────────────────────────────────────────────────
 interface EditForm {
   bronco_mins: string;
-  mas_ms: string;
   ten_m_1: string;
   twenty_m_1: string;
   forty_m_1: string;
@@ -170,7 +168,7 @@ interface EditForm {
 }
 
 const BLANK_FORM: EditForm = {
-  bronco_mins: "", mas_ms: "", ten_m_1: "",
+  bronco_mins: "", ten_m_1: "",
   twenty_m_1: "", forty_m_1: "", notes: "",
 };
 
@@ -179,7 +177,6 @@ const blankCsvRow = (): CsvRow => ({ code: "", name: "", errors: [] });
 function resultToForm(r: TestResult): EditForm {
   return {
     bronco_mins: r.bronco_mins != null ? String(r.bronco_mins) : "",
-    mas_ms: r.mas_ms != null ? String(r.mas_ms) : "",
     ten_m_1: r.ten_m_1 != null ? String(r.ten_m_1) : "",
     twenty_m_1: r.twenty_m_1 != null ? String(r.twenty_m_1) : "",
     forty_m_1: r.forty_m_1 != null ? String(r.forty_m_1) : "",
@@ -191,7 +188,7 @@ function formToUpdates(f: EditForm): Partial<TestResult> {
   const pn = (v: string) => { const n = parseFloat(v); return isNaN(n) ? null : n; };
   return {
     bronco_mins: pn(f.bronco_mins),
-    mas_ms: pn(f.mas_ms),
+    mas_ms: calculateMas(pn(f.bronco_mins)),
     ten_m_1: pn(f.ten_m_1),
     twenty_m_1: pn(f.twenty_m_1),
     forty_m_1: pn(f.forty_m_1),
@@ -229,9 +226,8 @@ function InlineEditForm({
   );
   return (
     <div className="mt-2.5 pt-2.5 border-t border-border/50 space-y-2">
-      <div className="grid grid-cols-2 gap-2">
+      <div className="grid grid-cols-1 gap-2">
         {inp("Bronco (mins)", "bronco_mins", "e.g. 6.25")}
-        {inp("MAS (m/s)", "mas_ms", "e.g. 14.5")}
       </div>
       <div className="grid grid-cols-3 gap-2">
         {inp("10m", "ten_m_1", "sec")}
@@ -816,9 +812,9 @@ function SessionDetail({
                   )}
 
                   {/* Sprint times */}
-                  {(r.ten_m_1 !== null || r.twenty_m_1 !== null || r.forty_m_1 !== null || r.mas_ms !== null) && (
+                  {(r.bronco_mins !== null || r.ten_m_1 !== null || r.twenty_m_1 !== null || r.forty_m_1 !== null) && (
                     <div className="flex flex-wrap gap-3 pt-0.5">
-                      {r.mas_ms !== null && <span className="text-[11px] text-muted-foreground font-time">MAS: {r.mas_ms}m/s</span>}
+                      {calculateMas(r.bronco_mins) !== null && <span className="text-[11px] text-muted-foreground font-time">MAS: {calculateMas(r.bronco_mins)!.toFixed(2)}m/s</span>}
                       {r.ten_m_1 !== null && <span className="text-[11px] text-muted-foreground font-time">10m: {r.ten_m_1.toFixed(2)}s</span>}
                       {r.twenty_m_1 !== null && <span className="text-[11px] text-muted-foreground font-time">20m: {r.twenty_m_1.toFixed(2)}s</span>}
                       {r.forty_m_1 !== null && <span className="text-[11px] text-muted-foreground font-time">40m: {r.forty_m_1.toFixed(2)}s</span>}
@@ -1010,7 +1006,7 @@ export default function FitnessTests() {
           session_id: session.id,
           player_id: m.player!.id,
           bronco_mins: m.row.bronco_mins ?? null,
-          mas_ms: m.row.mas_ms ?? null,
+          mas_ms: calculateMas(m.row.bronco_mins) ?? null,
           seconds: null,
           ten_m_1: m.row.ten_m_1 ?? null,
           ten_m_2: null,
@@ -1110,7 +1106,7 @@ export default function FitnessTests() {
           {!useManual ? (
             <div className="space-y-3">
               <div className="text-xs text-muted-foreground space-y-1">
-                <p>CSV columns: name (or code), bronco_mins, 10m, 20m, 40m, notes. MAS is optional as <span className="font-time">mas_ms</span>.</p>
+                <p>CSV columns: name (or code), bronco_mins, 10m, 20m, 40m, notes. MAS is calculated automatically from the 1,200m Bronco distance.</p>
                 <p>Bronco accepts decimal minutes (<span className="font-time">5.633</span>) or minutes:seconds (<span className="font-time">5:38</span>). Enter one score for each sprint.</p>
               </div>
               <div>
@@ -1196,7 +1192,7 @@ export default function FitnessTests() {
                     <td className="px-3 py-2 text-foreground">{m.row.name}</td>
                     <td className="px-3 py-2 text-foreground">{m.player?.name ?? <span className="text-status-bad text-xs">No match found</span>}</td>
                     <td className="px-3 py-2 text-right font-time">{formatBronco(m.row.bronco_mins ?? null)}</td>
-                    <td className="px-3 py-2 text-right font-time">{m.row.mas_ms == null ? "—" : `${m.row.mas_ms.toFixed(2)} m/s`}</td>
+                    <td className="px-3 py-2 text-right font-time">{calculateMas(m.row.bronco_mins) == null ? "—" : `${calculateMas(m.row.bronco_mins)!.toFixed(2)} m/s`}</td>
                     <td className="px-3 py-2 text-right font-time">{formatSprint(m.row.ten_m_1)}</td>
                     <td className="px-3 py-2 text-right font-time">{formatSprint(m.row.twenty_m_1)}</td>
                     <td className="px-3 py-2 text-right font-time">{formatSprint(m.row.forty_m_1)}</td>
