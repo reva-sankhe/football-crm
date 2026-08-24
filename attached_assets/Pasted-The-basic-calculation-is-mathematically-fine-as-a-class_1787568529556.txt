@@ -1,0 +1,328 @@
+The basic calculation is mathematically fine as a classic rolling ACWR, and training three times a week does not make 7-day/28-day windows inappropriate. Your current formula is the commonly used coupled rolling-average ACWR:
+
+Acute=load over last 7 days
+Chronic weekly load=
+4
+load over last 28 days
+	​
+
+ACWR=
+Chronic weekly load
+Acute
+	​
+
+
+That exact 1-week ÷ 4-week-average approach has been widely used in team-sport research.
+
+But I would change several things before treating this as production-ready.
+
+1. Fix the date windows first
+
+This one is a genuine calculation bug if you're currently getting 8 and 29 dates.
+
+For an anchor date of 24 Aug, it should be:
+
+Acute: 18–24 Aug = exactly 7 calendar days
+Chronic: 28 Jul–24 Aug = exactly 28 calendar days
+
+So in code, conceptually:
+
+acute: anchor - 6 days through anchor
+chronic: anchor - 27 days through anchor
+
+Rest days count as zero load. You shouldn't switch to "last 3 sessions" just because you train three times weekly.
+
+With three sessions per week, a normal seven-day window will usually contain roughly three sessions. Occasionally it may contain two or four because the schedule shifts — and that's actually useful information because workload has genuinely become compressed or spread out.
+
+2. Require enough history
+
+This is probably the biggest issue in your current implementation.
+
+I would not calculate a normal ACWR label until the player has 28 complete calendar days of workload records.
+
+Currently:
+
+"not enough data" = chronic load is zero
+
+means someone with only 10 days of history can receive a seemingly meaningful ACWR. That's misleading.
+
+I'd make it:
+
+<28 days of tracked history → "Building baseline"
+
+And show:
+
+18 days recorded. At least 28 days are required to establish a workload baseline.
+
+Importantly, "history" should mean you're confident those days are actually covered by your data collection. A missing session shouldn't silently become a rest day.
+
+3. I'd seriously consider uncoupling the baseline
+
+This is the part of your calculation I'd question most.
+
+Your current chronic value contains the acute week itself.
+
+Imagine:
+
+Previous weeks:
+
+Week 1: 600
+Week 2: 600
+Week 3: 600
+Current week: 1,200
+
+Your calculation gives:
+
+Chronic = (600 + 600 + 600 + 1200) / 4 = 750
+
+ACWR = 1200 / 750 = 1.60
+
+But what was the player actually accustomed to immediately before this week?
+
+600/week.
+
+So the current week is actually 2× their preceding baseline, but putting the spike into its own denominator pulls the ratio down.
+
+That's the mathematical coupling issue raised in the ACWR literature.
+
+A commonly used uncoupled version is:
+
+Acute
+= last 7 days
+
+Baseline
+= weekly average of the previous 21 days, excluding those acute 7 days
+
+So:
+
+Ratio=
+previous 21 days/3
+last 7 days
+	​
+
+
+This method has also been used in the literature specifically to avoid having the current acute week contribute to its own baseline.
+
+For your app, I'd prefer this.
+
+It has a much cleaner explanation to a coach:
+
+How much work has this player done this week compared with what they averaged over the previous three weeks?
+
+That's very easy to understand.
+
+4. Because you train 3×/week, daily sRPE is still appropriate
+
+Your underlying session-load method seems reasonable:
+
+session load=duration in minutes×RPE
+
+Then sum everything performed that calendar day.
+
+So if Tuesday is:
+
+60-minute football × RPE 6 = 360
+
+Thursday:
+
+75 × 7 = 525
+
+Saturday:
+
+60 × 5 = 300
+
+Weekly acute load = 1,185 AU
+
+That's the usual session-RPE approach used for internal training load. Session-RPE is also one of the most common workload variables used in ACWR studies.
+
+And yes, combining multiple sessions on the same day is sensible.
+
+5. Change your match calculation
+
+This is where I see a bigger practical problem than the ACWR formula.
+
+Currently:
+
+match load = minutes played × RPE 7
+
+So:
+
+90 minutes = 630 AU
+
+every time.
+
+A brutal 90-minute game and an easy 90-minute game become identical.
+
+If you're collecting player RPE anyway, I'd use:
+
+Match RPE available → minutes played × player's match RPE
+
+No RPE available → minutes × 7 as an estimated fallback
+
+Then tag it internally as estimated.
+
+For example:
+
+Match	Minutes	RPE	Load
+Match A	90	5	450
+Match B	90	8	720
+
+Your present system makes both 630.
+
+During tournaments, that difference can substantially alter the 7-day load.
+
+6. Your duplicate-prevention logic sounds correct
+
+This part I would keep:
+
+Match-grid minutes take priority; fallback match rows/orphans only added when not already covered.
+
+And:
+
+Multiple activities on the same date are summed.
+
+Both are conceptually right.
+
+I'd add automated tests for:
+
+match recorded in grid + session table
+two matches same day
+match + training same day
+substitute with 20 minutes
+player attends but plays 0 minutes
+missing RPE
+orphan match record
+
+Because duplicate match loading will wreck this metric much faster than small differences in ACWR methodology.
+
+7. Don't estimate full-match load merely from attendance
+
+This part I'd change:
+
+Attendance on an orphan match day is estimated as full match duration × RPE 7.
+
+That's quite a strong assumption.
+
+A player could:
+
+play 90 minutes
+play 10 minutes
+be an unused substitute
+
+and you'd assign them the same workload.
+
+I'd prefer:
+
+Known minutes → use them
+
+No minutes + confirmed player participation → estimated load, clearly flagged
+
+Attendance only → don't assume 90 minutes
+
+Unless your app specifically defines "attendance" as "played full match".
+
+8. Change the labels
+
+I'd remove the medical-sounding labels completely.
+
+For the ratio itself I'd use:
+
+Ratio	Display
+<0.8	Below Baseline
+0.8–1.3	Typical Range
+1.3–1.5	Elevated
+1.5–2.0	High Spike
+>2.0	Very High Spike
+
+The 0.8–1.3 range appears repeatedly in the ACWR literature, including systematic reviews, but thresholds vary considerably between studies and should not be treated as universal injury cut-offs.
+
+And I would not write:
+
+Injury risk elevated. Consider reducing load.
+
+The causal/predictive validity of ACWR for injury has been heavily challenged.
+
+For your 2.16 screenshot:
+
+Very High Workload Spike
+
+Last 7-day load is 2.16× the player's recent weekly baseline. Review recent workload, recovery and upcoming sessions.
+
+That's defensible.
+
+9. I'd also show the numbers that produced it
+
+This is actually important for usability.
+
+Your screenshot currently says:
+
+Acute (7d): 1350
+Chronic /wk: 626
+ACWR: 2.16
+
+Good. Keep those.
+
+I'd possibly rename chronic to:
+
+Recent baseline / week
+
+because most coaches aren't going to know what "chronic /wk" means.
+
+If you adopt the uncoupled calculation:
+
+Last 7 days: 1,350 AU
+Prior 3-week avg: 626 AU
+Load ratio: 2.16×
+
+That is extremely easy to interpret.
+
+So the version I'd ship
+
+For your football team training about three times per week:
+
+Daily load
+
+Σ(duration × session RPE) for every activity that day.
+
+Matches
+
+minutes played × match RPE
+
+Fallback to RPE 7 only when RPE is unavailable, and flag it as estimated.
+
+Acute load
+
+Sum of exactly the most recent 7 calendar days.
+
+Baseline
+
+Average weekly load from the preceding 21 calendar days, excluding those seven days:
+
+Baseline=
+3
+load from days -27 through -7
+	​
+
+
+Workload ratio
+
+previous 21-day weekly average
+last 7 days
+	​
+
+
+Minimum data
+
+Don't classify until 28 complete days exist.
+
+Then:
+
+<0.8 → Below baseline
+0.8–1.3 → Typical range
+1.3–1.5 → Elevated
+1.5–2.0 → High spike
+>2.0 → Very high spike
+
+And crucially, I'd actually consider calling the card "Workload Ratio" rather than "ACWR". You can retain "ACWR" in an info tooltip for people familiar with the term. The metric then does exactly what you need operationally: tell you whether someone's recent workload has changed substantially relative to what they've recently been doing, without pretending to be an injury-prediction model.
+
+So yes: 7 days makes sense even though you only train three times per week. I wouldn't change that part. I'd change the baseline handling, data sufficiency, match loading, date boundaries and UI interpretation.
