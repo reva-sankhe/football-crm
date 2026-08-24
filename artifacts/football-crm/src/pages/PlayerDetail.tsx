@@ -445,6 +445,22 @@ export default function PlayerDetail() {
             <EmptyState icon={Timer} title="No test history" description="This player hasn't been tested yet" />
           ) : (
             <>
+              {broncoChartData.some((row) => row.mins !== null) && (
+                <ResponsiveContainer width="100%" height={180}>
+                  <LineChart data={broncoChartData} margin={{ top: 4, right: 8, bottom: 40, left: 0 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke={chartGrid} />
+                    <XAxis dataKey="session" tick={{ fill: chartAxis, fontSize: 10 }} angle={-35} textAnchor="end" interval={0} />
+                    <YAxis tickFormatter={(v) => formatBronco(v)} domain={["auto", "auto"]} tick={{ fill: chartAxis, fontSize: 11 }} />
+                    <Tooltip
+                      contentStyle={{ background: chartTooltipBg, border: `1px solid ${chartTooltipBorder}`, borderRadius: 8 }}
+                      labelStyle={{ color: chartLabel, fontSize: 12 }}
+                      formatter={(v: number) => [formatBronco(v), "Bronco"]}
+                    />
+                    <Line type="monotone" dataKey="mins" stroke={HIGHLIGHT} strokeWidth={2} dot={{ fill: HIGHLIGHT, r: 4 }} connectNulls />
+                  </LineChart>
+                </ResponsiveContainer>
+              )}
+
               <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4">
                 {[
                   { label: "Bronco",     latest: formatBronco(latestBroncoRow?.bronco_mins), best: formatBronco(bestBronco) },
@@ -476,22 +492,6 @@ export default function PlayerDetail() {
 
               {fitnessHistoryOpen && (
                 <div className="pt-4">
-                  {broncoChartData.some((row) => row.mins !== null) && (
-                    <ResponsiveContainer width="100%" height={180}>
-                      <LineChart data={broncoChartData} margin={{ top: 4, right: 8, bottom: 40, left: 0 }}>
-                        <CartesianGrid strokeDasharray="3 3" stroke={chartGrid} />
-                        <XAxis dataKey="session" tick={{ fill: chartAxis, fontSize: 10 }} angle={-35} textAnchor="end" interval={0} />
-                        <YAxis tickFormatter={(v) => formatBronco(v)} domain={["auto", "auto"]} tick={{ fill: chartAxis, fontSize: 11 }} />
-                        <Tooltip
-                          contentStyle={{ background: chartTooltipBg, border: `1px solid ${chartTooltipBorder}`, borderRadius: 8 }}
-                          labelStyle={{ color: chartLabel, fontSize: 12 }}
-                          formatter={(v: number) => [formatBronco(v), "Bronco"]}
-                        />
-                        <Line type="monotone" dataKey="mins" stroke={HIGHLIGHT} strokeWidth={2} dot={{ fill: HIGHLIGHT, r: 4 }} connectNulls />
-                      </LineChart>
-                    </ResponsiveContainer>
-                  )}
-
                   <div className="border-t border-border/60 divide-y divide-border/40">
                     {[...chronoResults].reverse().map((r) => (
                       <div key={r.id} className="py-3 flex items-center gap-3 flex-wrap">
