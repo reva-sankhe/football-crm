@@ -25,6 +25,7 @@ interface CsvRow {
   forty_m_1?: number;
   forty_m_2?: number;
   notes?: string;
+  errors: string[];
 }
 
 interface MatchedRow {
@@ -34,32 +35,134 @@ interface MatchedRow {
 
 type EnrichedResult = TestResult & { players: Player };
 
+type MetricKey = Exclude<keyof CsvRow, "code" | "name" | "notes" | "errors">;
+type ParsedCsv = {
+  rows: CsvRow[];
+  headerErrors: string[];
+};
 
-function parseNum(v: string | undefined | null): number | null {
-  if (!v || String(v).trim() === "") return null;
-  const n = parseFloat(String(v).trim());
-  return isNaN(n) ? null : n;
+const METRIC_KEYS: MetricKey[] = [
+  "bronco_mins",
+  "mas_ms",
+  "ten_m_1",
+  "ten_m_2",
+  "twenty_m_1",
+  "twenty_m_2",
+  "forty_m_1",
+  "forty_m_2",
+];
+
+function normalizeHeader(header: string): string {
+  const normalized = header
+    .trim()
+    .toLowerCase()
+    .replace(/[×x]/g, "x")
+    .replace(/[()]/g, "")
+    .replace(/[_-]+/g, " ")
+    .replace(/\s+/g, " ");
+  const compact = normalized.replace(/[^a-z0-9]/g, "");
+
+  if (normalized === "code" || normalized === "player code" || normalized === "player id") return "code";
+  if (normalized === "name" || normalized === "player name") return "name";
+  if (normalized === "notes" || normalized === "note") return "notes";
+  if (["bronco", "broncotime", "broncomins", "broncominutes"].includes(compact)) return "bronco_mins";
+  if (["mas", "masms", "masspeed"].includes(compact)) return "mas_ms";
+
+  const documentedSprint = compact.match(/^(ten|twenty|forty)m([12])$/);
+  if (documentedSprint) {
+    return `${documentedSprint[1]}_m_${documentedSprint[2]}`;
+  }
+
+  const sprintMatch = normalized.match(/^(10m|20m|40m)(?: sprint)?(?:\s*(?:(?:x|attempt|run|trial|time)\s*)?([12]))?$/);
+  if (sprintMatch) {
+    const distance = sprintMatch[1];
+    const attempt = sprintMatch[2] === "2" ? "2" : "1";
+    return `${distance === "10m" ? "ten" : distance === "20m" ? "twenty" : "forty"}_m_${attempt}`;
+  }
+
+  return normalized;
 }
 
-function parseCsv(text: string): CsvRow[] {
+function parseMetricValue(
+  value: string | undefined | null,
+  metric: MetricKey,
+): { value: number | undefined; error?: string } {
+  const raw = String(value ?? "").trim();
+  if (!raw) return { value: undefined };
+
+  const isBronco = metric === "bronco_mins";
+  const isNumericMetric = metric === "mas_ms";
+  const colonParts = raw.split(":");
+
+  if (colonParts.length === 2) {
+    if (isNumericMetric) {
+      return { value: undefined, error: `${metric} "${raw}" must be a number, not a clock time` };
+    }
+    const minutes = Number(colonParts[0]);
+    const seconds = Number(colonParts[1]);
+    if (
+      Number.isFinite(minutes) &&
+      Number.isFinite(seconds) &&
+      minutes >= 0 &&
+      seconds >= 0 &&
+      seconds < 60
+    ) {
+      return { value: isBronco ? minutes + seconds / 60 : minutes * 60 + seconds };
+    }
+    return { value: undefined, error: `${metric} "${raw}" is not a valid time` };
+  }
+
+  const numeric = Number(raw);
+  if (!Number.isFinite(numeric) || numeric < 0) {
+    return { value: undefined, error: `${metric} "${raw}" is not a valid ${isNumericMetric ? "number" : "time"}` };
+  }
+  return { value: numeric };
+}
+
+function parseCsv(text: string): ParsedCsv {
   const result = Papa.parse<Record<string, string>>(text.trim(), {
     header: true,
     skipEmptyLines: true,
-    transformHeader: (h) => h.trim().toLowerCase(),
+    transformHeader: normalizeHeader,
   });
-  return result.data.map((obj) => ({
-    code: obj["code"] ?? "",
-    name: obj["name"] ?? "",
-    bronco_mins: parseNum(obj["bronco_mins"]) ?? undefined,
-    mas_ms: parseNum(obj["mas_ms"]) ?? undefined,
-    ten_m_1: parseNum(obj["ten_m_1"]) ?? undefined,
-    ten_m_2: parseNum(obj["ten_m_2"]) ?? undefined,
-    twenty_m_1: parseNum(obj["twenty_m_1"]) ?? undefined,
-    twenty_m_2: parseNum(obj["twenty_m_2"]) ?? undefined,
-    forty_m_1: parseNum(obj["forty_m_1"]) ?? undefined,
-    forty_m_2: parseNum(obj["forty_m_2"]) ?? undefined,
-    notes: obj["notes"] ?? undefined,
-  }));
+  const fields = result.meta.fields ?? [];
+  const knownFields = new Set(["code", "name", "notes", ...METRIC_KEYS]);
+  const headerErrors: string[] = [];
+  if (!fields.includes("code") && !fields.includes("name")) {
+    headerErrors.push("CSV must include a code or name column");
+  }
+  const unknownFields = fields.filter((field) => !knownFields.has(field));
+  if (unknownFields.length > 0) {
+    headerErrors.push(`Unrecognized column${unknownFields.length > 1 ? "s" : ""}: ${unknownFields.join(", ")}`);
+  }
+  if (result.errors.length > 0) {
+    headerErrors.push(...result.errors.map((error) => `CSV error: ${error.message}`));
+  }
+
+  const rows = result.data.map((obj) => {
+    const parsed: Partial<Record<MetricKey, number | undefined>> = {};
+    const errors: string[] = [];
+    for (const metric of METRIC_KEYS) {
+      const parsedValue = parseMetricValue(obj[metric], metric);
+      parsed[metric] = parsedValue.value;
+      if (parsedValue.error) errors.push(parsedValue.error);
+    }
+    const row = {
+      code: obj["code"]?.trim() ?? "",
+      name: obj["name"]?.trim() ?? "",
+      ...parsed,
+      notes: obj["notes"]?.trim() || undefined,
+      errors,
+    } as CsvRow;
+    if (!row.code && !row.name) errors.push("Missing player code and name");
+    return row;
+  });
+
+  return { rows, headerErrors };
+}
+
+function formatSprint(value: number | undefined): string {
+  return value == null ? "—" : `${value.toFixed(2)}s`;
 }
 
 // ── Session detail view ────────────────────────────────────────────────────
@@ -79,6 +182,8 @@ const BLANK_FORM: EditForm = {
   bronco_mins: "", mas_ms: "", ten_m_1: "", ten_m_2: "",
   twenty_m_1: "", twenty_m_2: "", forty_m_1: "", forty_m_2: "", notes: "",
 };
+
+const blankCsvRow = (): CsvRow => ({ code: "", name: "", errors: [] });
 
 function resultToForm(r: TestResult): EditForm {
   return {
@@ -839,7 +944,7 @@ export default function FitnessTests() {
 
   // Data entry state
   const [csvText, setCsvText] = useState("");
-  const [manualRows, setManualRows] = useState<CsvRow[]>([{ code: "", name: "" }]);
+  const [manualRows, setManualRows] = useState<CsvRow[]>([blankCsvRow()]);
   const [useManual, setUseManual] = useState(false);
   const [matched, setMatched] = useState<MatchedRow[]>([]);
   const [allPlayers, setAllPlayers] = useState<Player[]>([]);
@@ -878,7 +983,18 @@ export default function FitnessTests() {
   };
 
   const handlePreview = () => {
-    const rows: CsvRow[] = useManual ? manualRows.filter((r) => r.code || r.name) : parseCsv(csvText);
+    const parsed = useManual
+      ? { rows: manualRows.filter((r) => r.code || r.name), headerErrors: [] }
+      : parseCsv(csvText);
+    if (parsed.headerErrors.length > 0) {
+      toast({
+        title: "Fix CSV columns before previewing",
+        description: parsed.headerErrors.join(" • "),
+        variant: "destructive",
+      });
+      return;
+    }
+    const rows = parsed.rows;
     if (!rows.length) {
       toast({ title: "No data to preview", variant: "destructive" });
       return;
@@ -896,6 +1012,15 @@ export default function FitnessTests() {
   };
 
   const handleConfirm = async () => {
+    const invalidRows = matched.filter((m) => m.row.errors.length > 0);
+    if (invalidRows.length > 0) {
+      toast({
+        title: "Fix validation errors before saving",
+        description: `${invalidRows.length} row${invalidRows.length === 1 ? "" : "s"} has invalid data.`,
+        variant: "destructive",
+      });
+      return;
+    }
     setSubmitting(true);
     try {
       const session = await createSession({ test_date: newDate, test_name: newName, type: newType.trim() || null, notes: null });
@@ -905,7 +1030,7 @@ export default function FitnessTests() {
           session_id: session.id,
           player_id: m.player!.id,
           bronco_mins: m.row.bronco_mins ?? null,
-          mas_ms: null,
+          mas_ms: m.row.mas_ms ?? null,
           seconds: null,
           ten_m_1: m.row.ten_m_1 ?? null,
           ten_m_2: m.row.ten_m_2 ?? null,
@@ -926,7 +1051,7 @@ export default function FitnessTests() {
       setNewDate(new Date().toISOString().split("T")[0]);
       setNewType("");
       setCsvText("");
-      setManualRows([{ code: "", name: "" }]);
+      setManualRows([blankCsvRow()]);
     } catch (err: unknown) {
       toast({ title: "Failed to save results", description: String(err), variant: "destructive" });
     } finally {
@@ -940,7 +1065,7 @@ export default function FitnessTests() {
     setNewDate(new Date().toISOString().split("T")[0]);
     setNewType("");
     setCsvText("");
-    setManualRows([{ code: "", name: "" }]);
+    setManualRows([blankCsvRow()]);
   };
 
   // ── Session detail ───────────────────────────────────────────────────────
@@ -998,7 +1123,10 @@ export default function FitnessTests() {
 
           {!useManual ? (
             <div className="space-y-3">
-              <p className="text-xs text-muted-foreground">CSV columns: code, name, bronco_mins, ten_m_1, ten_m_2, twenty_m_1, twenty_m_2, forty_m_1, forty_m_2, notes</p>
+              <div className="text-xs text-muted-foreground space-y-1">
+                <p>CSV columns: code or name, bronco_mins, mas_ms, ten_m_1, ten_m_2, twenty_m_1, twenty_m_2, forty_m_1, forty_m_2, notes.</p>
+                <p>Bronco accepts decimal minutes (<span className="font-time">5.633</span>) or minutes:seconds (<span className="font-time">5:38</span>). Sprint headers can also use <span className="font-time">10m, 10m x2, 20m, 20m x2, 40m, 40m x2</span>.</p>
+              </div>
               <div>
                 <label className="block text-xs text-muted-foreground mb-1">Upload CSV file</label>
                 <input type="file" accept=".csv,text/csv" onChange={(e) => {
@@ -1012,7 +1140,7 @@ export default function FitnessTests() {
               <div>
                 <label className="block text-xs text-muted-foreground mb-1">Or paste CSV text</label>
                 <textarea value={csvText} onChange={(e) => setCsvText(e.target.value)} rows={8}
-                  placeholder={"code,name,bronco_mins,ten_m_1,...\nP001,Jane,6.25,1.82,..."}
+                  placeholder={"code,name,bronco_mins,10m,10m x2,20m,20m x2,40m,40m x2\nP001,Jane,5:38,1.82,1.79,3.11,3.08,5.42,5.38"}
                   className="w-full bg-muted border border-border rounded px-3 py-2 text-sm font-mono text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary"
                   data-testid="textarea-csv" />
               </div>
@@ -1026,7 +1154,7 @@ export default function FitnessTests() {
                   <input value={row.bronco_mins ?? ""} onChange={(e) => { const rs = [...manualRows]; rs[i] = { ...rs[i], bronco_mins: parseFloat(e.target.value) || undefined }; setManualRows(rs); }} placeholder="Bronco (mins)" type="number" step="0.01" className="bg-muted border border-border rounded px-2 py-1.5 text-sm text-foreground" />
                 </div>
               ))}
-              <button onClick={() => setManualRows([...manualRows, { code: "", name: "" }])} className="text-xs text-primary hover:underline" data-testid="button-add-row">+ Add row</button>
+              <button onClick={() => setManualRows([...manualRows, blankCsvRow()])} className="text-xs text-primary hover:underline" data-testid="button-add-row">+ Add row</button>
             </div>
           )}
 
@@ -1043,6 +1171,7 @@ export default function FitnessTests() {
   if (step === "preview") {
     const matchedCount = matched.filter((m) => m.player).length;
     const unmatchedCount = matched.filter((m) => !m.player).length;
+    const invalidCount = matched.filter((m) => m.row.errors.length > 0).length;
     return (
       <div className="space-y-5">
         <button onClick={() => setStep("enter-data")} className="text-sm text-muted-foreground hover:text-foreground">← Back</button>
@@ -1052,6 +1181,7 @@ export default function FitnessTests() {
           <div className="flex gap-4 mb-4 text-sm">
             <span className="text-status-good flex items-center gap-1"><CheckCircle2 size={14} />{matchedCount} matched</span>
             {unmatchedCount > 0 && <span className="text-status-bad flex items-center gap-1"><AlertCircle size={14} />{unmatchedCount} unmatched (skipped)</span>}
+              {invalidCount > 0 && <span className="text-status-bad flex items-center gap-1"><AlertCircle size={14} />{invalidCount} need{invalidCount === 1 ? "s" : ""} fixing</span>}
           </div>
           <div className="overflow-x-auto">
             <table className="w-full text-sm" data-testid="preview-table">
@@ -1062,25 +1192,45 @@ export default function FitnessTests() {
                   <th className="px-3 py-2 text-left font-medium">Name</th>
                   <th className="px-3 py-2 text-left font-medium">Matched Player</th>
                   <th className="px-3 py-2 text-right font-medium">Bronco</th>
+                  <th className="px-3 py-2 text-right font-medium">MAS</th>
+                  <th className="px-3 py-2 text-right font-medium">10m ×1</th>
+                  <th className="px-3 py-2 text-right font-medium">10m ×2</th>
+                  <th className="px-3 py-2 text-right font-medium">20m ×1</th>
+                  <th className="px-3 py-2 text-right font-medium">20m ×2</th>
+                  <th className="px-3 py-2 text-right font-medium">40m ×1</th>
+                  <th className="px-3 py-2 text-right font-medium">40m ×2</th>
+                  <th className="px-3 py-2 text-left font-medium">Validation</th>
                 </tr>
               </thead>
               <tbody>
-                {matched.map((m, i) => (
-                  <tr key={i} className={`border-b border-border/50 ${m.player ? "bg-status-good" : "bg-status-bad"}`} data-testid={`row-preview-${i}`}>
-                    <td className="px-3 py-2">{m.player ? <CheckCircle2 size={14} className="text-status-good" /> : <AlertCircle size={14} className="text-status-bad" />}</td>
+                {matched.map((m, i) => {
+                  const hasErrors = m.row.errors.length > 0;
+                  const valid = Boolean(m.player) && !hasErrors;
+                  return (
+                  <tr key={i} className={`border-b border-border/50 ${valid ? "bg-status-good" : "bg-status-bad"}`} data-testid={`row-preview-${i}`}>
+                    <td className="px-3 py-2">{valid ? <CheckCircle2 size={14} className="text-status-good" /> : <AlertCircle size={14} className="text-status-bad" />}</td>
                     <td className="px-3 py-2 font-time text-xs text-muted-foreground">{m.row.code}</td>
                     <td className="px-3 py-2 text-foreground">{m.row.name}</td>
                     <td className="px-3 py-2 text-foreground">{m.player?.name ?? <span className="text-status-bad text-xs">No match found</span>}</td>
                     <td className="px-3 py-2 text-right font-time">{formatBronco(m.row.bronco_mins ?? null)}</td>
+                    <td className="px-3 py-2 text-right font-time">{m.row.mas_ms == null ? "—" : `${m.row.mas_ms.toFixed(2)} m/s`}</td>
+                    <td className="px-3 py-2 text-right font-time">{formatSprint(m.row.ten_m_1)}</td>
+                    <td className="px-3 py-2 text-right font-time">{formatSprint(m.row.ten_m_2)}</td>
+                    <td className="px-3 py-2 text-right font-time">{formatSprint(m.row.twenty_m_1)}</td>
+                    <td className="px-3 py-2 text-right font-time">{formatSprint(m.row.twenty_m_2)}</td>
+                    <td className="px-3 py-2 text-right font-time">{formatSprint(m.row.forty_m_1)}</td>
+                    <td className="px-3 py-2 text-right font-time">{formatSprint(m.row.forty_m_2)}</td>
+                    <td className="px-3 py-2 text-xs">{hasErrors ? <span className="text-status-bad">{m.row.errors.join(" • ")}</span> : <span className="text-muted-foreground">Ready</span>}</td>
                   </tr>
-                ))}
+                  );
+                })}
               </tbody>
             </table>
           </div>
           <div className="flex gap-2 pt-4">
             <button onClick={() => setStep("enter-data")} className="flex-1 px-4 py-2 border border-border rounded-md text-sm text-muted-foreground">Back</button>
-            <button onClick={handleConfirm} disabled={submitting || matchedCount === 0} className="flex-1 px-4 py-2 btn-primary text-white rounded-xl text-sm font-semibold disabled:opacity-60" data-testid="button-confirm-save">
-              {submitting ? "Saving…" : `Save ${matchedCount} Results`}
+            <button onClick={handleConfirm} disabled={submitting || matchedCount === 0 || invalidCount > 0} className="flex-1 px-4 py-2 btn-primary text-white rounded-xl text-sm font-semibold disabled:opacity-60" data-testid="button-confirm-save">
+              {submitting ? "Saving…" : invalidCount > 0 ? "Fix errors before saving" : `Save ${matchedCount} Results`}
             </button>
           </div>
         </div>
