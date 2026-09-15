@@ -5,6 +5,7 @@ import { cn } from "@/lib/utils";
 import { PosBadge } from "@/components/PosBadge";
 import { SessionTypeBadge } from "@/components/Badges";
 import { useTheme } from "@/context/ThemeContext";
+import { useAuth } from "@/context/AuthContext";
 import { AGE_ORDER, HIGHLIGHT, POSITION_ORDER, ageColor, ink, posColor, type Mode } from "@/lib/viz";
 import { fetchTrainingSession, fetchSessionRPEWithPlayers } from "@/lib/queries";
 import type { TrainingSession, SessionRPE, Player } from "@/lib/types";
@@ -67,6 +68,7 @@ export default function SessionDetail() {
   const { id } = useParams<{ id: string }>();
   const [, setLocation] = useLocation();
   const { theme } = useTheme();
+  const { isAdmin } = useAuth();
   const mode: Mode = theme === "dark" ? "dark" : "light";
   const INK = ink(mode);
 
@@ -323,7 +325,7 @@ export default function SessionDetail() {
             <span className="text-xs text-muted-foreground">{count} player{count !== 1 ? "s" : ""}</span>
             {/* The way to the RPE screen once entries exist — the empty state
                 below covers the other case. A quiet link, not a primary button. */}
-            {count > 0 && session.session_type !== "Lecture" && (
+            {isAdmin && count > 0 && session.session_type !== "Lecture" && (
               <button
                 onClick={() => setLocation(`/training/${id}/rpe`)}
                 className="text-xs text-muted-foreground hover:text-foreground transition-colors"
@@ -344,12 +346,14 @@ export default function SessionDetail() {
             ) : (
               <>
                 <p className="text-sm text-muted-foreground">No RPE entries yet</p>
-                <button
-                  onClick={() => setLocation(`/training/${id}/rpe`)}
-                  className="mt-2 text-sm text-indigo-400 hover:text-indigo-300"
-                >
-                  Start logging RPE
-                </button>
+                {isAdmin && (
+                  <button
+                    onClick={() => setLocation(`/training/${id}/rpe`)}
+                    className="mt-2 text-sm text-indigo-400 hover:text-indigo-300"
+                  >
+                    Start logging RPE
+                  </button>
+                )}
               </>
             )}
           </div>

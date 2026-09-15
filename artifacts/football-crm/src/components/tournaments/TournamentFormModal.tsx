@@ -1,11 +1,16 @@
 import { useState } from "react";
 import { Trash2 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
-import { createTournament, deleteTournament, updateTournament } from "@/lib/queries";
-import { MATCH_FORMATS } from "@/lib/tournaments";
+import { createSquad, createTournament, deleteTournament, updateTournament } from "@/lib/queries";
+import { CLUB_NAME, MATCH_FORMATS } from "@/lib/tournaments";
 import { DEFAULT_MATCH_MINS, DEFAULT_MAX_SUBS, DEFAULT_SUB_POLICY, SUB_POLICIES } from "@/lib/lineup";
 import { todayISO } from "@/lib/attendance";
-import { DEFAULT_TEAM, type SubPolicy, type Tournament } from "@/lib/types";
+import { DEFAULT_TEAM, type CompetitionType, type SubPolicy, type Tournament } from "@/lib/types";
+
+const COMPETITION_TYPES: { value: CompetitionType; label: string; hint: string }[] = [
+  { value: "knockout", label: "Knockout", hint: "Bracket play — group stage through to the final." },
+  { value: "league", label: "League", hint: "A flat points table — every match adds to the standings." },
+];
 
 interface TournamentFormModalProps {
   /** Absent creates a tournament; present edits that one. */
@@ -31,6 +36,7 @@ export function TournamentFormModal({
     end_date: tournament?.end_date ?? "",
     location: tournament?.location ?? "",
     format: tournament?.format ?? "",
+    competition_type: tournament?.competition_type ?? ("knockout" as CompetitionType),
     default_match_mins: tournament?.default_match_mins ?? DEFAULT_MATCH_MINS,
     sub_policy: tournament?.sub_policy ?? DEFAULT_SUB_POLICY,
     max_subs: tournament?.max_subs ?? DEFAULT_MAX_SUBS,
@@ -50,6 +56,7 @@ export function TournamentFormModal({
         end_date: form.end_date || null,
         location: form.location.trim() || null,
         format: form.format || null,
+        competition_type: form.competition_type,
         default_match_mins: form.default_match_mins,
         sub_policy: form.sub_policy,
         // Rolling subs are uncapped, so a cap would only be misleading.
@@ -59,7 +66,14 @@ export function TournamentFormModal({
         await updateTournament(tournament.id, fields);
         toast({ title: "Tournament updated" });
       } else {
-        await createTournament({ ...fields, team: DEFAULT_TEAM, notes: null });
+        const created = await createTournament({ ...fields, team: DEFAULT_TEAM, notes: null });
+        // Most tournaments only ever need the one squad — create it now so a
+        // coach isn't forced through "New Squad" just to name the only one.
+        try {
+          await createSquad({ tournament_id: created.id, name: CLUB_NAME, size_limit: null, notes: null });
+        } catch {
+          // Non-fatal — the tournament was created fine; a squad can still be added by hand.
+        }
         toast({ title: "Tournament created" });
       }
       onSaved();
@@ -118,6 +132,21 @@ export function TournamentFormModal({
               autoFocus
               required
             />
+          </div>
+
+          <div>
+            <label className="block text-xs text-muted-foreground mb-1">Competition type</label>
+            <select
+              value={form.competition_type}
+              onChange={(e) => setForm({ ...form, competition_type: e.target.value as CompetitionType })}
+              className={inputCls}
+              data-testid="select-competition-type"
+            >
+              {COMPETITION_TYPES.map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
+            </select>
+            <p className="text-[11px] text-muted-foreground mt-1">
+              {COMPETITION_TYPES.find((c) => c.value === form.competition_type)?.hint}
+            </p>
           </div>
 
           <div className="grid grid-cols-2 gap-3">

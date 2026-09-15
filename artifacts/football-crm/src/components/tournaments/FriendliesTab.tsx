@@ -3,6 +3,7 @@ import { Link } from "wouter";
 import { ArrowRight, Handshake } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
+import { useAuth } from "@/context/AuthContext";
 import { AddButton } from "@/components/AddButton";
 import { CountPill, SearchInput } from "@/components/Toolbar";
 import { fetchStandaloneMatches } from "@/lib/queries";
@@ -20,6 +21,7 @@ import type { MatchWithSession } from "@/lib/types";
  */
 export function FriendliesTab() {
   const { toast } = useToast();
+  const { isAdmin } = useAuth();
   const [matches, setMatches] = useState<MatchWithSession[]>([]);
   const [loading, setLoading] = useState(true);
   const [showNew, setShowNew] = useState(false);
@@ -99,9 +101,11 @@ export function FriendliesTab() {
               <p className="text-xs text-muted-foreground/70 mt-1">
                 A friendly is a match that belongs to no tournament.
               </p>
-              <button onClick={() => setShowNew(true)} className="mt-3 text-sm text-indigo-400 hover:text-indigo-300">
-                Log your first friendly
-              </button>
+              {isAdmin && (
+                <button onClick={() => setShowNew(true)} className="mt-3 text-sm text-indigo-400 hover:text-indigo-300">
+                  Log your first friendly
+                </button>
+              )}
             </>
           ) : (
             <>

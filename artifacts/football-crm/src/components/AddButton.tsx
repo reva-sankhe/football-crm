@@ -1,5 +1,6 @@
 import { Plus } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useAuth } from "@/context/AuthContext";
 
 /**
  * The platform's one "add" control — an icon-only plus, sized to match the
@@ -13,6 +14,9 @@ export function AddButton({ label, onClick, className, "data-testid": testId }: 
   className?: string;
   "data-testid"?: string;
 }) {
+  const { isAdmin } = useAuth();
+  if (!isAdmin) return null;
+
   return (
     <button
       onClick={onClick}

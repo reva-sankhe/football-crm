@@ -41,6 +41,7 @@ export function MatchFormModal({
   const isDark = theme === "dark";
   const { toast } = useToast();
   const friendly = tournament == null;
+  const league = tournament?.competition_type === "league";
   const editing = match != null;
 
   const [saving, setSaving] = useState(false);
@@ -52,13 +53,16 @@ export function MatchFormModal({
 
   const [form, setForm] = useState({
     date: match?.sessions?.date ?? todayISO(),
-    stage: (match?.stage ?? (friendly ? "Friendly" : "Group Stage")) as MatchStage,
+    time: match?.sessions?.start_time ?? "",
+    stage: (match?.stage ?? (friendly ? "Friendly" : league ? "League" : "Group Stage")) as MatchStage,
     // "" = opponent TBD, NEW_OPPONENT = type a name into newOpponent below
     opponent_id: match?.opponent_id ?? "",
     newOpponent: "",
     squad_id: match?.squad_id ?? squads[0]?.id ?? "",
     duration_mins:
       match?.sessions?.duration_mins ?? tournament?.default_match_mins ?? DEFAULT_MATCH_MINS,
+    // Meeting point, kit colour, arrival time — whatever players need to know
+    instructions: match?.notes ?? "",
   });
 
   // Existing Match-type sessions with no match row — lets old fixtures be
@@ -96,18 +100,21 @@ export function MatchFormModal({
         squad_id: friendly ? null : form.squad_id || null,
         stage: form.stage,
         opponent_id: opponentId,
+        notes: form.instructions.trim() || null,
       };
 
       if (editing) {
-        // Date and duration live on the backing session; the rest on the match
+        // Date, time and duration live on the backing session; the rest on the match
         await updateTrainingSession(match.session_id, {
           date: form.date,
+          start_time: form.time || null,
           duration_mins: form.duration_mins,
         });
         await updateMatch(match.id, {
           squad_id: shared.squad_id,
           stage: shared.stage,
           opponent_id: shared.opponent_id,
+          notes: shared.notes,
         });
         toast({ title: friendly ? "Friendly updated" : "Match updated" });
       } else if (mode === "adopt") {
@@ -122,6 +129,7 @@ export function MatchFormModal({
         await createMatch({
           ...shared,
           date: form.date,
+          start_time: form.time || null,
           duration_mins: form.duration_mins,
           // Matches carry no planned RPE — 0 is the app's "no plan" sentinel
           planned_rpe: 0,
@@ -196,7 +204,7 @@ export function MatchFormModal({
 
         <form onSubmit={handleSubmit} className="px-5 py-4 space-y-4">
           {showDateFields ? (
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-3 gap-3">
               <div>
                 <label className="block text-xs text-muted-foreground mb-1">Date</label>
                 <input
@@ -206,6 +214,16 @@ export function MatchFormModal({
                   className={inputCls}
                   data-testid="input-match-date"
                   required
+                />
+              </div>
+              <div>
+                <label className="block text-xs text-muted-foreground mb-1">Time <span className="text-muted-foreground/50">(optional)</span></label>
+                <input
+                  type="time"
+                  value={form.time}
+                  onChange={(e) => setForm({ ...form, time: e.target.value })}
+                  className={inputCls}
+                  data-testid="input-match-time"
                 />
               </div>
               <div>
@@ -247,8 +265,8 @@ export function MatchFormModal({
             </div>
           )}
 
-          {/* A friendly is its own stage — there's no bracket to place it in */}
-          {!friendly && (
+          {/* A friendly or a league match is its own stage — there's no bracket to place it in */}
+          {!friendly && !league && (
             <div>
               <label className="block text-xs text-muted-foreground mb-1">Stage</label>
               <select
@@ -283,6 +301,20 @@ export function MatchFormModal({
                 autoFocus
               />
             )}
+          </div>
+
+          <div>
+            <label className="block text-xs text-muted-foreground mb-1">
+              Instructions <span className="text-muted-foreground/50">(optional)</span>
+            </label>
+            <textarea
+              value={form.instructions}
+              onChange={(e) => setForm({ ...form, instructions: e.target.value })}
+              placeholder="Meeting point, kit colour, arrival time…"
+              rows={2}
+              className={inputCls}
+              data-testid="input-match-instructions"
+            />
           </div>
 
           {/* Squads belong to a tournament, so a friendly has none to pick from */}

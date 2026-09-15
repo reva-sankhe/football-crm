@@ -3,30 +3,33 @@ import { Link, useLocation, useParams } from "wouter";
 import { ArrowLeft, ArrowRight, ChevronDown, Download, Pencil } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useTheme } from "@/context/ThemeContext";
+import { useAuth } from "@/context/AuthContext";
 import { useToast } from "@/hooks/use-toast";
 import {
   createSquad,
+  fetchLeagueOtherMatches,
   fetchMatchesForTournament,
   fetchPlayers,
   fetchSquadsForTournament,
   fetchTournament,
 } from "@/lib/queries";
 import {
-  RESULT_CFG, formatDateRange, matchOutcome, stageRank, tournamentFinish, tournamentRecord,
-  type TournamentRecord,
+  RESULT_CFG, STAGE_CFG, computeStandings, formatDateRange, matchOutcome, stageRank, tournamentFinish,
+  tournamentRecord, type StandingsRow, type TournamentRecord,
 } from "@/lib/tournaments";
 import { formatShootout } from "@/lib/lineup";
 import { openReport, tournamentReportUrl } from "@/lib/reportLinks";
-import { formatDateShort } from "@/lib/attendance";
+import { formatDateShort, formatTime, todayISO } from "@/lib/attendance";
 import { SquadCard } from "@/components/tournaments/SquadCard";
 import { TournamentFormModal } from "@/components/tournaments/TournamentFormModal";
 import { MatchFormModal } from "@/components/tournaments/MatchFormModal";
 import { LinksArchive } from "@/components/tournaments/LinksArchive";
+import { OtherResultsPanel } from "@/components/tournaments/OtherResultsPanel";
 import { FinishBadge } from "@/components/Badges";
 import { SectionLabel, StatTile } from "@/components/StatTile";
 import { AddButton } from "@/components/AddButton";
 import type {
-  MatchStage, MatchWithSession, Player, SquadWithPlayers, Tournament,
+  LeagueOtherMatchWithOpponents, MatchStage, MatchWithSession, Player, SquadWithPlayers, Tournament,
 } from "@/lib/types";
 
 export default function TournamentDetail() {
@@ -35,10 +38,12 @@ export default function TournamentDetail() {
   const { theme } = useTheme();
   const isDark = theme === "dark";
   const { toast } = useToast();
+  const { isAdmin } = useAuth();
 
   const [tournament, setTournament] = useState<Tournament | null>(null);
   const [squads, setSquads] = useState<SquadWithPlayers[]>([]);
   const [matches, setMatches] = useState<MatchWithSession[]>([]);
+  const [otherMatches, setOtherMatches] = useState<LeagueOtherMatchWithOpponents[]>([]);
   const [players, setPlayers] = useState<Player[]>([]);
   const [loading, setLoading] = useState(true);
   const [showNewMatch, setShowNewMatch] = useState(false);
@@ -52,15 +57,19 @@ export default function TournamentDetail() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [t, sq, ms, ps] = await Promise.all([
+      const [t, sq, ms, om, ps] = await Promise.all([
         fetchTournament(id!),
         fetchSquadsForTournament(id!),
         fetchMatchesForTournament(id!),
+        // Falls back to empty until the league_other_matches migration has run,
+        // so an un-migrated DB degrades the standings table rather than the page.
+        fetchLeagueOtherMatches(id!).catch(() => [] as LeagueOtherMatchWithOpponents[]),
         fetchPlayers(),
       ]);
       setTournament(t);
       setSquads(sq);
       setMatches(ms);
+      setOtherMatches(om);
       setPlayers(ps.filter((p) => p.is_active));
     } catch (err) {
       toast({ title: "Failed to load tournament", description: String(err), variant: "destructive" });
@@ -106,6 +115,23 @@ export default function TournamentDetail() {
 
   const finish = useMemo(() => tournamentFinish(matches), [matches]);
 
+  const isLeague = tournament?.competition_type === "league";
+  const standings = useMemo(
+    () => computeStandings(matches.filter((m) => m.stage === "League"), otherMatches),
+    [matches, otherMatches],
+  );
+
+  /** Scheduled, not yet played, today or later — soonest first. */
+  const upcomingMatches = useMemo(() => {
+    const today = todayISO();
+    return matches
+      .filter((m) => m.sessions && m.sessions.date >= today && matchOutcome(m) === null)
+      .sort((a, b) =>
+        a.sessions!.date.localeCompare(b.sessions!.date)
+        || (a.sessions!.start_time ?? "").localeCompare(b.sessions!.start_time ?? ""),
+      );
+  }, [matches]);
+
   if (loading) {
     return (
       <div className="space-y-5">
@@ -141,15 +167,17 @@ export default function TournamentDetail() {
         {/* Name, edit and the squad filter all share one line */}
         <div className="flex items-center gap-2 flex-wrap">
           <h1 className="text-3xl font-semibold tracking-tight text-foreground">{tournament.name}</h1>
-          <button
-            onClick={() => setShowEdit(true)}
-            aria-label="Edit tournament"
-            title="Edit tournament"
-            className="p-1 rounded text-muted-foreground hover:text-foreground hover:bg-muted transition-colors shrink-0"
-            data-testid="button-edit-tournament"
-          >
-            <Pencil size={15} />
-          </button>
+          {isAdmin && (
+            <button
+              onClick={() => setShowEdit(true)}
+              aria-label="Edit tournament"
+              title="Edit tournament"
+              className="p-1 rounded text-muted-foreground hover:text-foreground hover:bg-muted transition-colors shrink-0"
+              data-testid="button-edit-tournament"
+            >
+              <Pencil size={15} />
+            </button>
+          )}
           <button
             onClick={() => openReport(tournamentReportUrl(tournament.id))}
             aria-label="Download tournament report"
@@ -200,6 +228,26 @@ export default function TournamentDetail() {
         </div>
       </div>
 
+      {/* ── Upcoming matches ──────────────────────────────────────────────── */}
+      {upcomingMatches.length > 0 && (
+        <div className="space-y-3">
+          <SectionLabel>Upcoming Matches</SectionLabel>
+          <div className="space-y-2">
+            {upcomingMatches.map((m) => (
+              <UpcomingMatchCard key={m.id} m={m} onEdit={setEditMatch} />
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* ── Standings ──────────────────────────────────────────────────────── */}
+      {isLeague && (
+        <div className="space-y-3">
+          <SectionLabel>Standings</SectionLabel>
+          <StandingsTable rows={standings} />
+        </div>
+      )}
+
       {/* ── Squads ─────────────────────────────────────────────────────────── */}
       <div className="space-y-3">
         <div className="flex items-center gap-2">
@@ -211,9 +259,11 @@ export default function TournamentDetail() {
         {squads.length === 0 ? (
           <div className="bg-card border border-dashed border-border rounded-xl p-8 text-center">
             <p className="text-sm text-muted-foreground">No squads yet</p>
-            <button onClick={() => setShowNewSquad(true)} className="mt-2 text-sm text-indigo-400 hover:text-indigo-300">
-              Add your first squad
-            </button>
+            {isAdmin && (
+              <button onClick={() => setShowNewSquad(true)} className="mt-2 text-sm text-indigo-400 hover:text-indigo-300">
+                Add your first squad
+              </button>
+            )}
           </div>
         ) : (
           <div className="space-y-3">
@@ -237,9 +287,18 @@ export default function TournamentDetail() {
             <p className="text-sm text-muted-foreground">
               {matches.length === 0 ? "No matches yet" : "No matches for this squad yet"}
             </p>
-            <button onClick={() => setShowNewMatch(true)} className="mt-2 text-sm text-indigo-400 hover:text-indigo-300">
-              Add a match
-            </button>
+            {isAdmin && (
+              <button onClick={() => setShowNewMatch(true)} className="mt-2 text-sm text-indigo-400 hover:text-indigo-300">
+                Add a match
+              </button>
+            )}
+          </div>
+        ) : isLeague ? (
+          // A league has no bracket to group by — one flat list, oldest first
+          <div className="space-y-2">
+            {[...visibleMatches]
+              .sort((a, b) => (a.sessions?.date ?? "").localeCompare(b.sessions?.date ?? ""))
+              .map((m) => <MatchRow key={m.id} m={m} onEdit={setEditMatch} />)}
           </div>
         ) : (
           <div className="space-y-3">
@@ -249,6 +308,9 @@ export default function TournamentDetail() {
           </div>
         )}
       </div>
+
+      {/* ── Other results ──────────────────────────────────────────────────── */}
+      {isLeague && <OtherResultsPanel tournamentId={tournament.id} onChanged={load} />}
 
       {/* ── Links archive ──────────────────────────────────────────────────── */}
       <LinksArchive tournamentId={tournament.id} />
@@ -339,55 +401,162 @@ function StageGroup({
 
       {open && (
         <div className="space-y-2">
-          {matches.map((m) => {
-            const result = matchOutcome(m);
-            return (
-              <Link
-                key={m.id}
-                href={`/matches/${m.id}`}
-                className="flex items-center gap-3 bg-card border border-border rounded-xl px-4 py-3 hover:border-indigo-500/40 transition-colors"
-                data-testid={`row-match-${m.id}`}
-              >
-                <div className="min-w-0 flex-1">
-                    <div className="text-sm font-medium text-foreground truncate">
-                      {m.opponents ? `vs ${m.opponents.name}` : "Opponent TBD"}
-                    </div>
-                    <div className="text-[11px] text-muted-foreground">
-                      {m.sessions ? formatDateShort(m.sessions.date) : "—"}
-                      {m.sessions && ` · ${m.sessions.duration_mins} min`}
-                      {m.squads && ` · ${m.squads.name}`}
-                      {/* Without this a 1–1 badged W looks like a mistake */}
-                      {formatShootout(m) && ` · ${formatShootout(m)}`}
-                    </div>
-                  </div>
-                  {result ? (
-                    <>
-                      <span className="font-time font-bold text-foreground text-sm">
-                        {m.goals_for}–{m.goals_against}
-                      </span>
-                      <span className={cn("w-6 h-6 rounded-md flex items-center justify-center text-[11px] font-bold shrink-0", RESULT_CFG[result].bg, RESULT_CFG[result].text)}>
-                        {result}
-                      </span>
-                    </>
-                  ) : (
-                    <span className="text-[11px] text-muted-foreground shrink-0">Not played</span>
-                  )}
-                  {/* Inside a Link, so the row's navigation has to be suppressed */}
-                  <button
-                    onClick={(e) => { e.preventDefault(); e.stopPropagation(); onEdit(m); }}
-                    aria-label={`Edit match${m.opponents ? ` vs ${m.opponents.name}` : ""}`}
-                    title="Edit match"
-                    className="p-1 rounded text-muted-foreground hover:text-foreground hover:bg-muted transition-colors shrink-0"
-                    data-testid={`button-edit-match-${m.id}`}
-                  >
-                    <Pencil size={13} />
-                  </button>
-                  <ArrowRight size={13} className="text-muted-foreground shrink-0" />
-                </Link>
-              );
-            })}
-          </div>
+          {matches.map((m) => <MatchRow key={m.id} m={m} onEdit={onEdit} />)}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── One match row, used by both the bracket groups and the flat league list ──
+function MatchRow({ m, onEdit }: { m: MatchWithSession; onEdit: (m: MatchWithSession) => void }) {
+  const { isAdmin } = useAuth();
+  const result = matchOutcome(m);
+  return (
+    <Link
+      href={`/matches/${m.id}`}
+      className="flex items-center gap-3 bg-card border border-border rounded-xl px-4 py-3 hover:border-indigo-500/40 transition-colors"
+      data-testid={`row-match-${m.id}`}
+    >
+      <div className="min-w-0 flex-1">
+        <div className="text-sm font-medium text-foreground truncate">
+          {m.opponents ? `vs ${m.opponents.name}` : "Opponent TBD"}
+        </div>
+        <div className="text-[11px] text-muted-foreground">
+          {m.sessions ? formatDateShort(m.sessions.date) : "—"}
+          {m.sessions && ` · ${m.sessions.duration_mins} min`}
+          {m.squads && ` · ${m.squads.name}`}
+          {/* Without this a 1–1 badged W looks like a mistake */}
+          {formatShootout(m) && ` · ${formatShootout(m)}`}
+        </div>
+      </div>
+      {result ? (
+        <>
+          <span className="font-time font-bold text-foreground text-sm">
+            {m.goals_for}–{m.goals_against}
+          </span>
+          <span className={cn("w-6 h-6 rounded-md flex items-center justify-center text-[11px] font-bold shrink-0", RESULT_CFG[result].bg, RESULT_CFG[result].text)}>
+            {result}
+          </span>
+        </>
+      ) : (
+        <span className="text-[11px] text-muted-foreground shrink-0">Not played</span>
+      )}
+      {/* Inside a Link, so the row's navigation has to be suppressed */}
+      {isAdmin && (
+        <button
+          onClick={(e) => { e.preventDefault(); e.stopPropagation(); onEdit(m); }}
+          aria-label={`Edit match${m.opponents ? ` vs ${m.opponents.name}` : ""}`}
+          title="Edit match"
+          className="p-1 rounded text-muted-foreground hover:text-foreground hover:bg-muted transition-colors shrink-0"
+          data-testid={`button-edit-match-${m.id}`}
+        >
+          <Pencil size={13} />
+        </button>
+      )}
+      <ArrowRight size={13} className="text-muted-foreground shrink-0" />
+    </Link>
+  );
+}
+
+// ── Upcoming match card — date, time and instructions, front and centre ──────
+function UpcomingMatchCard({ m, onEdit }: { m: MatchWithSession; onEdit: (m: MatchWithSession) => void }) {
+  const { isAdmin } = useAuth();
+  return (
+    <Link
+      href={`/matches/${m.id}`}
+      className="flex items-start gap-4 bg-card border border-border rounded-xl px-4 py-3 hover:border-indigo-500/40 transition-colors"
+      data-testid={`row-upcoming-${m.id}`}
+    >
+      <div className="shrink-0 w-16 text-center">
+        <div className="text-xs font-semibold uppercase tracking-wide text-indigo-400">
+          {m.sessions ? formatDateShort(m.sessions.date) : "—"}
+        </div>
+        <div className="text-[11px] text-muted-foreground font-time mt-0.5">
+          {m.sessions?.start_time ? formatTime(m.sessions.start_time) : "Time TBD"}
+        </div>
+      </div>
+      <div className="min-w-0 flex-1">
+        <div className="text-sm font-medium text-foreground truncate">
+          {m.opponents ? `vs ${m.opponents.name}` : "Opponent TBD"}
+        </div>
+        <div className="text-[11px] text-muted-foreground truncate">
+          {STAGE_CFG[m.stage].label}
+          {m.sessions && ` · ${m.sessions.duration_mins} min`}
+          {m.squads && ` · ${m.squads.name}`}
+        </div>
+        {m.notes && (
+          <div className="text-[11px] text-muted-foreground mt-1 whitespace-pre-wrap">{m.notes}</div>
         )}
+      </div>
+      {isAdmin && (
+        <button
+          onClick={(e) => { e.preventDefault(); e.stopPropagation(); onEdit(m); }}
+          aria-label={`Edit match${m.opponents ? ` vs ${m.opponents.name}` : ""}`}
+          title="Edit match"
+          className="p-1 rounded text-muted-foreground hover:text-foreground hover:bg-muted transition-colors shrink-0"
+          data-testid={`button-edit-upcoming-${m.id}`}
+        >
+          <Pencil size={13} />
+        </button>
+      )}
+    </Link>
+  );
+}
+
+// ── Standings table ────────────────────────────────────────────────────────
+function StandingsTable({ rows }: { rows: StandingsRow[] }) {
+  if (rows.length === 0) {
+    return (
+      <div className="bg-card border border-dashed border-border rounded-xl p-8 text-center">
+        <p className="text-sm text-muted-foreground">No results yet</p>
+      </div>
+    );
+  }
+  const th = "px-3 py-2 text-[11px] font-semibold uppercase tracking-widest text-muted-foreground text-right first:text-left";
+  const td = "px-3 py-2 text-sm text-foreground text-right first:text-left font-time";
+  return (
+    <div className="bg-card border border-border rounded-2xl overflow-x-auto">
+      <table className="w-full min-w-[480px] border-collapse">
+        <thead>
+          <tr className="border-b border-border">
+            <th className={th}>Team</th>
+            <th className={th}>P</th>
+            <th className={th}>W</th>
+            <th className={th}>D</th>
+            <th className={th}>L</th>
+            <th className={th}>GF</th>
+            <th className={th}>GA</th>
+            <th className={th}>GD</th>
+            <th className={th}>Pts</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((r, i) => (
+            <tr
+              key={r.opponentId ?? "us"}
+              className={cn(
+                "border-b border-border last:border-0",
+                r.opponentId === null && "bg-indigo-500/10",
+              )}
+              data-testid={`row-standings-${r.opponentId ?? "us"}`}
+            >
+              <td className={cn(td, "font-sans font-medium")}>
+                <span className="text-muted-foreground mr-2 font-time">{i + 1}</span>
+                {r.team}
+              </td>
+              <td className={td}>{r.played}</td>
+              <td className={td}>{r.won}</td>
+              <td className={td}>{r.drawn}</td>
+              <td className={td}>{r.lost}</td>
+              <td className={td}>{r.goalsFor}</td>
+              <td className={td}>{r.goalsAgainst}</td>
+              <td className={td}>{r.goalDiff > 0 ? `+${r.goalDiff}` : r.goalDiff}</td>
+              <td className={cn(td, "font-sans font-bold")}>{r.points}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 }

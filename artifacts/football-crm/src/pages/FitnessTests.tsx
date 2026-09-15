@@ -7,6 +7,7 @@ import { formatBronco } from "@/lib/utils";
 import { cn } from "@/lib/utils";
 import { PosBadge } from "@/components/PosBadge";
 import { AddButton } from "@/components/AddButton";
+import { useAuth } from "@/context/AuthContext";
 import { DEFAULT_TEAM, type TestSession, type Player, type TestResult } from "@/lib/types";
 import { Dumbbell, Plus, CheckCircle2, AlertCircle, ChevronRight, Pencil, Trash2 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
@@ -262,6 +263,7 @@ function SessionDetail({
   onBack: () => void;
 }) {
   const { toast } = useToast();
+  const { isAdmin } = useAuth();
   const [results, setResults] = useState<EnrichedResult[]>([]);
   const [allPlayers, setAllPlayers] = useState<Player[]>([]);
   const [loading, setLoading] = useState(true);
@@ -506,33 +508,35 @@ function SessionDetail({
           </div>
           <p className="text-sm text-muted-foreground mt-1">{session.test_date}{session.notes ? ` · ${session.notes}` : ""}</p>
         </div>
-        <div className="flex items-center gap-2 flex-wrap">
-          {editMode && (
+        {isAdmin && (
+          <div className="flex items-center gap-2 flex-wrap">
+            {editMode && (
+              <button
+                onClick={addPanelOpen ? closeAddPanel : openAddPanel}
+                className={cn(
+                  "flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium border transition-colors",
+                  addPanelOpen
+                    ? "bg-indigo-500/20 text-indigo-300 border-indigo-500/40"
+                    : "bg-indigo-500/10 text-indigo-400 border-indigo-500/25 hover:bg-indigo-500/20"
+                )}
+              >
+                + Add entry
+              </button>
+            )}
             <button
-              onClick={addPanelOpen ? closeAddPanel : openAddPanel}
+              onClick={() => { setEditMode((v) => !v); setEditingId(null); closeAddPanel(); }}
               className={cn(
                 "flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium border transition-colors",
-                addPanelOpen
-                  ? "bg-indigo-500/20 text-indigo-300 border-indigo-500/40"
-                  : "bg-indigo-500/10 text-indigo-400 border-indigo-500/25 hover:bg-indigo-500/20"
+                editMode
+                  ? "bg-indigo-500/15 text-indigo-400 border-indigo-500/30"
+                  : "border-border text-muted-foreground hover:text-foreground hover:bg-muted/40"
               )}
             >
-              + Add entry
+              <Pencil size={13} />
+              {editMode ? "Done editing" : "Edit results"}
             </button>
-          )}
-          <button
-            onClick={() => { setEditMode((v) => !v); setEditingId(null); closeAddPanel(); }}
-            className={cn(
-              "flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium border transition-colors",
-              editMode
-                ? "bg-indigo-500/15 text-indigo-400 border-indigo-500/30"
-                : "border-border text-muted-foreground hover:text-foreground hover:bg-muted/40"
-            )}
-          >
-            <Pencil size={13} />
-            {editMode ? "Done editing" : "Edit results"}
-          </button>
-        </div>
+          </div>
+        )}
       </div>
 
       {/* ── Add-entry panel ─────────────────────────────────────────────── */}
@@ -906,6 +910,7 @@ function SessionDetail({
 // ── Main component ─────────────────────────────────────────────────────────
 export default function FitnessTests() {
   const { toast } = useToast();
+  const { isAdmin } = useAuth();
   const [sessions, setSessions] = useState<TestSession[]>([]);
   const [loading, setLoading] = useState(true);
   const [step, setStep] = useState<Step>("list");
@@ -1230,7 +1235,9 @@ export default function FitnessTests() {
           <div className="p-4"><TableSkeleton rows={5} cols={4} /></div>
         ) : sessions.length === 0 ? (
           <EmptyState icon={Dumbbell} title="No sessions yet" description="Create a new test session to get started" action={
-            <button onClick={() => setStep("create-session")} className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg border border-indigo-500/50 text-indigo-400 text-sm font-medium hover:bg-indigo-500/10 transition-colors" data-testid="button-new-session-empty"><Plus size={13} />New Session</button>
+            isAdmin ? (
+              <button onClick={() => setStep("create-session")} className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg border border-indigo-500/50 text-indigo-400 text-sm font-medium hover:bg-indigo-500/10 transition-colors" data-testid="button-new-session-empty"><Plus size={13} />New Session</button>
+            ) : undefined
           } />
         ) : (
           <div className="overflow-x-auto">

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { ExternalLink, Pencil, Trash2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
+import { useAuth } from "@/context/AuthContext";
 import { SectionLabel } from "@/components/StatTile";
 import { AddButton } from "@/components/AddButton";
 import {
@@ -30,6 +31,7 @@ function hostOf(url: string): string {
 
 export function LinksArchive({ tournamentId }: { tournamentId: string }) {
   const { toast } = useToast();
+  const { isAdmin } = useAuth();
   const [links, setLinks] = useState<TournamentLink[]>([]);
   const [adding, setAdding] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -177,9 +179,11 @@ export function LinksArchive({ tournamentId }: { tournamentId: string }) {
       {links.length === 0 && !adding ? (
         <div className="bg-card border border-dashed border-border rounded-xl p-6 text-center">
           <p className="text-sm text-muted-foreground">No links yet</p>
-          <button onClick={openAdd} className="mt-2 text-sm text-indigo-400 hover:text-indigo-300">
-            Add a photo album, fixture list or results page
-          </button>
+          {isAdmin && (
+            <button onClick={openAdd} className="mt-2 text-sm text-indigo-400 hover:text-indigo-300">
+              Add a photo album, fixture list or results page
+            </button>
+          )}
         </div>
       ) : (
         <div className="space-y-2">
@@ -211,15 +215,17 @@ export function LinksArchive({ tournamentId }: { tournamentId: string }) {
                 <ExternalLink size={13} />
               </a>
               {/* One control: the edit form is also where a link is deleted */}
-              <button
-                onClick={() => openEdit(l)}
-                aria-label={`Edit or remove ${l.title}`}
-                title="Edit link"
-                className="p-1 rounded text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
-                data-testid={`button-edit-link-${l.id}`}
-              >
-                <Pencil size={13} />
-              </button>
+              {isAdmin && (
+                <button
+                  onClick={() => openEdit(l)}
+                  aria-label={`Edit or remove ${l.title}`}
+                  title="Edit link"
+                  className="p-1 rounded text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+                  data-testid={`button-edit-link-${l.id}`}
+                >
+                  <Pencil size={13} />
+                </button>
+              )}
             </div>
           ))}
         </div>

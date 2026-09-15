@@ -1,8 +1,9 @@
 import { Link, useLocation } from "wouter";
-import { ChevronDown, ChevronsLeft, ChevronsRight, Sun, Moon, ClipboardCheck, Users, Dumbbell, Activity, Trophy } from "lucide-react";
+import { ChevronDown, ChevronsLeft, ChevronsRight, Sun, Moon, ClipboardCheck, Users, Dumbbell, Activity, Trophy, LogOut } from "lucide-react";
 import { useState, useRef, useEffect } from "react";
 import { cn } from "@/lib/utils";
 import { useTheme } from "@/context/ThemeContext";
+import { useAuth } from "@/context/AuthContext";
 
 const COLLAPSE_KEY = "bg-crm-sidebar-collapsed";
 
@@ -23,6 +24,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
   const [location] = useLocation();
   const [mobileOpen, setMobileOpen] = useState(false);
   const { theme, toggleTheme } = useTheme();
+  const { role, logout } = useAuth();
   const isDark = theme === "dark";
   const dropdownRef = useRef<HTMLDivElement>(null);
 
@@ -117,6 +119,18 @@ export function Layout({ children }: { children: React.ReactNode }) {
     </button>
   );
 
+  const LogoutButton = () => (
+    <button
+      onClick={logout}
+      data-testid="button-logout"
+      className={actionCls}
+      title={`Log out (${role})`}
+      aria-label="Log out"
+    >
+      <LogOut size={14} />
+    </button>
+  );
+
   const SidebarContent = ({ onNav, compact = false }: { onNav?: () => void; compact?: boolean }) => (
     <div className="flex flex-col h-full">
       {/* Brand — the mark alone; the title lives in the page header. The source
@@ -150,6 +164,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
         <div className={cn("h-px mb-3", isDark ? "bg-white/6" : "bg-slate-200")} />
         <div className={cn("flex gap-1", compact ? "flex-col items-center" : "items-center justify-end")}>
           <ThemeToggle />
+          <LogoutButton />
           <button
             onClick={() => setCollapsed((c) => !c)}
             data-testid="sidebar-collapse-toggle"
@@ -205,7 +220,10 @@ export function Layout({ children }: { children: React.ReactNode }) {
           )}
         </div>
 
-        <ThemeToggle />
+        <div className="flex items-center gap-1">
+          <ThemeToggle />
+          <LogoutButton />
+        </div>
       </div>
 
       <main className="flex-1 min-w-0 lg:pt-0 pt-12">

@@ -15,6 +15,7 @@ import { PosBadge } from "@/components/PosBadge";
 import { DEFAULT_TEAM, type Player } from "@/lib/types";
 import { Users, Check, FileText, X, Pencil, SlidersHorizontal } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import { useAuth } from "@/context/AuthContext";
 
 const PRIMARY_POSITIONS = ["Goalkeeper", "Defender", "Midfielder", "Forward"];
 const SECONDARY_POSITIONS: Record<string, string[]> = {
@@ -443,6 +444,7 @@ function AllPlayersTab({
   setPlayers: React.Dispatch<React.SetStateAction<Player[]>>;
 }) {
   const [, navigate] = useLocation();
+  const { isAdmin } = useAuth();
   const [search, setSearch] = useState("");
   const [filterPos, setFilterPos] = useState("");
   const [filterAge, setFilterAge] = useState("");
@@ -701,15 +703,17 @@ function AllPlayersTab({
                       <span className="text-xs text-muted-foreground">{p.age_range ?? "—"}</span>
                     </td>
                     <td className="px-2 py-2.5 text-right">
-                      <button
-                        onClick={(e) => { e.stopPropagation(); setEditPlayer(p); }}
-                        aria-label={`Quick edit ${p.name}`}
-                        title="Quick edit"
-                        className="p-1 rounded text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
-                        data-testid={`button-edit-player-${p.id}`}
-                      >
-                        <Pencil size={13} />
-                      </button>
+                      {isAdmin && (
+                        <button
+                          onClick={(e) => { e.stopPropagation(); setEditPlayer(p); }}
+                          aria-label={`Quick edit ${p.name}`}
+                          title="Quick edit"
+                          className="p-1 rounded text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+                          data-testid={`button-edit-player-${p.id}`}
+                        >
+                          <Pencil size={13} />
+                        </button>
+                      )}
                     </td>
                   </tr>
                 ))}

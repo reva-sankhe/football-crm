@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useTheme } from "@/context/ThemeContext";
+import { useAuth } from "@/context/AuthContext";
 import { useToast } from "@/hooks/use-toast";
 import { bulkUpsertAttendance, fetchAttendanceBySession } from "@/lib/queries";
 import { ATTENDANCE_CFG, ATTENDANCE_STATUSES } from "@/lib/attendance";
@@ -70,6 +71,7 @@ export function MarkAttendance({
   const { theme } = useTheme();
   const isDark = theme === "dark";
   const { toast } = useToast();
+  const { isAdmin } = useAuth();
 
   const [draft, setDraft] = useState<AttendanceDraft>({});
   const [saved, setSaved] = useState<AttendanceDraft>({});
@@ -136,18 +138,23 @@ export function MarkAttendance({
   }, [players, search]);
 
   // ── Interactions ───────────────────────────────────────────────────────────
-  const setStatus = (playerId: string, status: AttendanceStatus) =>
+  const setStatus = (playerId: string, status: AttendanceStatus) => {
+    if (!isAdmin) return;
     setDraft((d) => ({ ...d, [playerId]: status }));
+  };
 
-  const toggleRow = (playerId: string) =>
+  const toggleRow = (playerId: string) => {
+    if (!isAdmin) return;
     setDraft((d) => ({
       ...d,
       // Late/Injured are deliberate exceptions — tapping the row clears them
       // back to Absent rather than flipping to Present.
       [playerId]: d[playerId] === "Present" ? "Absent" : "Present",
     }));
+  };
 
   const setAll = (status: AttendanceStatus) => {
+    if (!isAdmin) return;
     const next: AttendanceDraft = {};
     for (const p of players) next[p.id] = status;
     setDraft(next);
@@ -248,22 +255,24 @@ export function MarkAttendance({
           })}
         </div>
 
-        <div className="ml-auto flex items-center gap-2">
-          <button
-            onClick={() => setAll("Present")}
-            disabled={loading}
-            className="flex items-center gap-1.5 h-9 px-3 rounded-lg border border-border text-xs font-medium text-muted-foreground hover:text-foreground disabled:opacity-50 transition-colors"
-          >
-            <CheckCheck size={13} /> All present
-          </button>
-          <button
-            onClick={() => setAll("Absent")}
-            disabled={loading}
-            className="h-9 px-3 rounded-lg border border-border text-xs font-medium text-muted-foreground hover:text-foreground disabled:opacity-50 transition-colors"
-          >
-            Clear all
-          </button>
-        </div>
+        {isAdmin && (
+          <div className="ml-auto flex items-center gap-2">
+            <button
+              onClick={() => setAll("Present")}
+              disabled={loading}
+              className="flex items-center gap-1.5 h-9 px-3 rounded-lg border border-border text-xs font-medium text-muted-foreground hover:text-foreground disabled:opacity-50 transition-colors"
+            >
+              <CheckCheck size={13} /> All present
+            </button>
+            <button
+              onClick={() => setAll("Absent")}
+              disabled={loading}
+              className="h-9 px-3 rounded-lg border border-border text-xs font-medium text-muted-foreground hover:text-foreground disabled:opacity-50 transition-colors"
+            >
+              Clear all
+            </button>
+          </div>
+        )}
       </div>
 
       {/* ── Roster — one box per player, tap to toggle ──────────────────────── */}
@@ -289,20 +298,21 @@ export function MarkAttendance({
             return (
               <div
                 key={player.id}
-                role="button"
-                tabIndex={0}
+                role={isAdmin ? "button" : undefined}
+                tabIndex={isAdmin ? 0 : undefined}
                 aria-pressed={isPresent}
-                onClick={() => toggleRow(player.id)}
-                onKeyDown={(e) => {
+                onClick={isAdmin ? () => toggleRow(player.id) : undefined}
+                onKeyDown={isAdmin ? (e) => {
                   if (e.key === " " || e.key === "Enter") {
                     e.preventDefault();
                     toggleRow(player.id);
                   }
-                }}
+                } : undefined}
                 className={cn(
                   // State is carried by the check and the border, never a fill
                   "rounded-xl border bg-card px-3 py-2.5 min-h-[46px] flex items-center",
-                  "cursor-pointer select-none transition-colors",
+                  "select-none transition-colors",
+                  isAdmin ? "cursor-pointer" : "cursor-default",
                   "focus:outline-none focus-visible:ring-1 focus-visible:ring-primary",
                   isPresent
                     ? "border-status-good"
@@ -335,6 +345,7 @@ export function MarkAttendance({
                   </div>
 
                   {/* Late / injured live behind this, so a tap can stay a toggle */}
+                  {isAdmin && (
                   <div onClick={(e) => e.stopPropagation()} className="shrink-0 -mr-1">
                     <DropdownMenu>
                       <DropdownMenuTrigger asChild>
@@ -363,6 +374,7 @@ export function MarkAttendance({
                       </DropdownMenuContent>
                     </DropdownMenu>
                   </div>
+                  )}
                 </div>
               </div>
             );
@@ -373,27 +385,29 @@ export function MarkAttendance({
       {/* ── Sticky save bar ─────────────────────────────────────────────────── */}
       {/* sticky (not fixed) so it tracks the content column whatever width the
           sidebar currently is */}
-      <div className="sticky bottom-4 z-30">
-        <div
-          className={cn(
-            "flex items-center gap-3 rounded-xl border px-4 py-2.5 shadow-lg backdrop-blur",
-            isDark ? "bg-slate-900/90 border-white/10" : "bg-white/95 border-slate-200",
-          )}
-        >
-          <span className="flex-1 min-w-0 text-xs text-muted-foreground">
-            {dirty ? "Unsaved changes" : loading ? "Loading…" : "All changes saved"}
-          </span>
-          <button
-            onClick={handleSave}
-            disabled={!dirty || saving || loading}
-            className="shrink-0 flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-semibold bg-indigo-600 text-white hover:bg-indigo-500 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-            data-testid="button-save-attendance"
+      {isAdmin && (
+        <div className="sticky bottom-4 z-30">
+          <div
+            className={cn(
+              "flex items-center gap-3 rounded-xl border px-4 py-2.5 shadow-lg backdrop-blur",
+              isDark ? "bg-slate-900/90 border-white/10" : "bg-white/95 border-slate-200",
+            )}
           >
-            {saving && <RefreshCw size={13} className="animate-spin" />}
-            {saving ? "Saving…" : "Save attendance"}
-          </button>
+            <span className="flex-1 min-w-0 text-xs text-muted-foreground">
+              {dirty ? "Unsaved changes" : loading ? "Loading…" : "All changes saved"}
+            </span>
+            <button
+              onClick={handleSave}
+              disabled={!dirty || saving || loading}
+              className="shrink-0 flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-semibold bg-indigo-600 text-white hover:bg-indigo-500 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+              data-testid="button-save-attendance"
+            >
+              {saving && <RefreshCw size={13} className="animate-spin" />}
+              {saving ? "Saving…" : "Save attendance"}
+            </button>
+          </div>
         </div>
-      </div>
+      )}
     </div>
   );
 }

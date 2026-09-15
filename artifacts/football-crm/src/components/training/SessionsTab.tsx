@@ -3,6 +3,7 @@ import { useLocation } from "wouter";
 import { CalendarDays, Clock, Zap } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
+import { useAuth } from "@/context/AuthContext";
 import { fetchTrainingSessions, createTrainingSession } from "@/lib/queries";
 import { SESSION_TYPES, dayFromISO, todayISO } from "@/lib/attendance";
 import { SessionTypeBadge } from "@/components/Badges";
@@ -53,6 +54,7 @@ function NewSessionModal({ onClose, onSaved }: NewSessionModalProps) {
         date: form.date,
         session_type: form.session_type,
         duration_mins: form.duration_mins,
+        start_time: null,
         planned_rpe: carriesLoad ? form.planned_rpe : 0,
         notes: form.notes || null,
       });
@@ -199,6 +201,7 @@ function NewSessionModal({ onClose, onSaved }: NewSessionModalProps) {
  */
 export function SessionsTab() {
   const [, setLocation] = useLocation();
+  const { isAdmin } = useAuth();
   const [sessions, setSessions] = useState<TrainingSession[]>([]);
   const [loggedCounts, setLoggedCounts] = useState<Record<string, number>>({});
   const [avgLoads, setAvgLoads] = useState<Record<string, number | null>>({});
@@ -257,9 +260,11 @@ export function SessionsTab() {
         <div className="bg-card border border-border rounded-2xl p-12 text-center">
           <CalendarDays size={32} className="mx-auto text-muted-foreground/40 mb-3" />
           <p className="text-muted-foreground text-sm">No sessions yet</p>
-          <button onClick={() => setShowNew(true)} className="mt-3 text-sm text-indigo-400 hover:text-indigo-300">
-            Create your first session →
-          </button>
+          {isAdmin && (
+            <button onClick={() => setShowNew(true)} className="mt-3 text-sm text-indigo-400 hover:text-indigo-300">
+              Create your first session →
+            </button>
+          )}
         </div>
       ) : (
         <>

@@ -3,6 +3,7 @@ import { Link } from "wouter";
 import { CalendarRange, Check, RefreshCw, SlidersHorizontal } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useTheme } from "@/context/ThemeContext";
+import { useAuth } from "@/context/AuthContext";
 import { useToast } from "@/hooks/use-toast";
 import { fetchAttendanceForSessions, upsertAttendance } from "@/lib/queries";
 import {
@@ -81,6 +82,7 @@ export function AttendanceMatrix({ sessions, matchesOnDay, players, refreshKey, 
   const { theme } = useTheme();
   const isDark = theme === "dark";
   const { toast } = useToast();
+  const { isAdmin } = useAuth();
 
   /** One scope control: a date range, defaulting to this month. null = all time. */
   const [range, setRange] = useState<IsoRange | null>(currentMonthRange);
@@ -186,6 +188,7 @@ export function AttendanceMatrix({ sessions, matchesOnDay, players, refreshKey, 
 
   // ── Inline cell edit ───────────────────────────────────────────────────────
   const handleCellChange = async (playerId: string, sessionId: string, status: AttendanceStatus) => {
+    if (!isAdmin) return;
     const prev = grid[playerId]?.[sessionId];
     setGrid((g) => ({ ...g, [playerId]: { ...g[playerId], [sessionId]: status } }));
     try {
@@ -386,37 +389,51 @@ export function AttendanceMatrix({ sessions, matchesOnDay, players, refreshKey, 
                         const cfg = status ? ATTENDANCE_CFG[status] : null;
                         return (
                           <td key={s.id} className="border-b border-border/60 p-0.5 text-center">
-                            <DropdownMenu>
-                              <DropdownMenuTrigger asChild>
-                                <button
-                                  title={`${player.name} · ${s.date} · ${status ?? "not recorded"}`}
-                                  className={cn(
-                                    "w-7 h-7 rounded-md text-[11px] font-bold border transition-all hover:scale-110",
-                                    cfg
-                                      ? cn(cfg.activeBg, cfg.activeColor)
-                                      : "border-transparent text-muted-foreground/30 hover:border-border",
-                                  )}
-                                >
-                                  {cfg ? cfg.short : "–"}
-                                </button>
-                              </DropdownMenuTrigger>
-                              <DropdownMenuContent align="center" className="w-36">
-                                {ATTENDANCE_STATUSES.map((opt) => {
-                                  const c = ATTENDANCE_CFG[opt];
-                                  const Icon = c.icon;
-                                  return (
-                                    <DropdownMenuItem
-                                      key={opt}
-                                      onSelect={() => handleCellChange(player.id, s.id, opt)}
-                                      className={cn("gap-2 text-xs", status === opt && "font-semibold")}
-                                    >
-                                      <Icon size={12} className={c.activeColor} />
-                                      {c.label}
-                                    </DropdownMenuItem>
-                                  );
-                                })}
-                              </DropdownMenuContent>
-                            </DropdownMenu>
+                            {isAdmin ? (
+                              <DropdownMenu>
+                                <DropdownMenuTrigger asChild>
+                                  <button
+                                    title={`${player.name} · ${s.date} · ${status ?? "not recorded"}`}
+                                    className={cn(
+                                      "w-7 h-7 rounded-md text-[11px] font-bold border transition-all hover:scale-110",
+                                      cfg
+                                        ? cn(cfg.activeBg, cfg.activeColor)
+                                        : "border-transparent text-muted-foreground/30 hover:border-border",
+                                    )}
+                                  >
+                                    {cfg ? cfg.short : "–"}
+                                  </button>
+                                </DropdownMenuTrigger>
+                                <DropdownMenuContent align="center" className="w-36">
+                                  {ATTENDANCE_STATUSES.map((opt) => {
+                                    const c = ATTENDANCE_CFG[opt];
+                                    const Icon = c.icon;
+                                    return (
+                                      <DropdownMenuItem
+                                        key={opt}
+                                        onSelect={() => handleCellChange(player.id, s.id, opt)}
+                                        className={cn("gap-2 text-xs", status === opt && "font-semibold")}
+                                      >
+                                        <Icon size={12} className={c.activeColor} />
+                                        {c.label}
+                                      </DropdownMenuItem>
+                                    );
+                                  })}
+                                </DropdownMenuContent>
+                              </DropdownMenu>
+                            ) : (
+                              <span
+                                title={`${player.name} · ${s.date} · ${status ?? "not recorded"}`}
+                                className={cn(
+                                  "inline-flex w-7 h-7 rounded-md text-[11px] font-bold border items-center justify-center",
+                                  cfg
+                                    ? cn(cfg.activeBg, cfg.activeColor)
+                                    : "border-transparent text-muted-foreground/30",
+                                )}
+                              >
+                                {cfg ? cfg.short : "–"}
+                              </span>
+                            )}
                           </td>
                         );
                       })}

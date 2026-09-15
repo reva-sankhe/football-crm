@@ -3,6 +3,7 @@ import { useParams, useLocation } from "wouter";
 import { ArrowLeft, Zap, Users } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
+import { useAuth } from "@/context/AuthContext";
 import {
   fetchTrainingSession,
   fetchTrainingSessions,
@@ -65,6 +66,7 @@ export default function SessionRPE() {
   const { id } = useParams<{ id: string }>();
   const [, setLocation] = useLocation();
   const { toast } = useToast();
+  const { isAdmin } = useAuth();
 
   const [session, setSession] = useState<TrainingSession | null>(null);
   const [allSessions, setAllSessions] = useState<TrainingSession[]>([]);
@@ -177,6 +179,15 @@ export default function SessionRPE() {
       <div className="text-center py-16">
         <p className="text-muted-foreground">Session not found</p>
         <button onClick={() => setLocation("/training")} className="mt-2 text-sm text-indigo-400">Back to Training</button>
+      </div>
+    );
+  }
+
+  if (!isAdmin) {
+    return (
+      <div className="text-center py-16">
+        <p className="text-muted-foreground">RPE logging is admin-only</p>
+        <button onClick={() => setLocation(`/training/${id}`)} className="mt-2 text-sm text-indigo-400">Back to Session</button>
       </div>
     );
   }

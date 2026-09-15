@@ -125,6 +125,8 @@ export interface TrainingSession {
   day: string;            // "Monday"
   session_type: SessionType;
   duration_mins: number;
+  /** "HH:MM" 24-hour, null when no kickoff/start time has been set. */
+  start_time: string | null;
   planned_rpe: number;
   planned_load_au: number;
   notes: string | null;
@@ -152,10 +154,14 @@ export type MatchStage =
   | "Semi Final"
   | "Third Place"
   | "Final"
-  | "Friendly";
+  | "Friendly"
+  | "League";
 
 /** How substitutions work. "rolling" lets a player return after coming off. */
 export type SubPolicy = "rolling" | "limited";
+
+/** "knockout" is the existing bracket; "league" is a flat points table. */
+export type CompetitionType = "knockout" | "league";
 
 export interface Tournament {
   id: string;
@@ -166,6 +172,7 @@ export interface Tournament {
   location: string | null;
   /** "7-a-side" etc. — null until set. See MATCH_FORMATS in lib/tournaments. */
   format: string | null;
+  competition_type: CompetitionType;
   default_match_mins: number;
   default_planned_rpe: number;
   /** Default sub rules for this tournament's matches; a match may override. */
@@ -245,6 +252,28 @@ export interface MatchWithSession extends Match {
   sessions: TrainingSession | null;
   squads: Pick<Squad, "id" | "name"> | null;
   opponents: Pick<Opponent, "id" | "name"> | null;
+}
+
+/**
+ * The result of a league match the club didn't play — logged only to complete
+ * the standings table. Both sides are opponents; the club's own record comes
+ * from `matches` instead, never from here.
+ */
+export interface LeagueOtherMatch {
+  id: string;
+  tournament_id: string;
+  match_date: string | null;
+  home_opponent_id: string;
+  away_opponent_id: string;
+  home_goals: number;
+  away_goals: number;
+  notes: string | null;
+  created_at: string;
+}
+
+export interface LeagueOtherMatchWithOpponents extends LeagueOtherMatch {
+  home: Pick<Opponent, "id" | "name">;
+  away: Pick<Opponent, "id" | "name">;
 }
 
 export interface MatchPlayerStat {

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { ChevronLeft, ChevronRight, Plus, Zap } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useTheme } from "@/context/ThemeContext";
+import { useAuth } from "@/context/AuthContext";
 import { useToast } from "@/hooks/use-toast";
 import { createTrainingSession } from "@/lib/queries";
 import { SESSION_TYPE_CFG, SESSION_TYPES, dayFromISO, formatDateShort, todayISO } from "@/lib/attendance";
@@ -34,6 +35,7 @@ export function SessionStrip({
 }: SessionStripProps) {
   const { theme } = useTheme();
   const isDark = theme === "dark";
+  const { isAdmin } = useAuth();
   const scrollRef = useRef<HTMLDivElement>(null);
   const [newOpen, setNewOpen] = useState(false);
   const existingDates = useMemo(() => new Set(sessions.map((s) => s.date)), [sessions]);
@@ -124,27 +126,29 @@ export function SessionStrip({
         <ChevronRight size={15} />
       </button>
 
-      <Popover open={newOpen} onOpenChange={setNewOpen}>
-        <PopoverTrigger asChild>
-          <button
-            className="shrink-0 flex items-center gap-1.5 px-3 h-[74px] sm:h-auto sm:py-2.5 rounded-xl text-sm font-medium bg-indigo-600 text-white hover:bg-indigo-500 transition-colors"
-            data-testid="button-new-session-inline"
-          >
-            <Plus size={15} />
-            <span className="hidden sm:inline">New</span>
-          </button>
-        </PopoverTrigger>
-        <PopoverContent align="end" className="w-72 p-0">
-          <NewSessionForm
-            onCancel={() => setNewOpen(false)}
-            onCreated={(session) => {
-              setNewOpen(false);
-              onSessionCreated(session);
-            }}
-            existingDates={existingDates}
-          />
-        </PopoverContent>
-      </Popover>
+      {isAdmin && (
+        <Popover open={newOpen} onOpenChange={setNewOpen}>
+          <PopoverTrigger asChild>
+            <button
+              className="shrink-0 flex items-center gap-1.5 px-3 h-[74px] sm:h-auto sm:py-2.5 rounded-xl text-sm font-medium bg-indigo-600 text-white hover:bg-indigo-500 transition-colors"
+              data-testid="button-new-session-inline"
+            >
+              <Plus size={15} />
+              <span className="hidden sm:inline">New</span>
+            </button>
+          </PopoverTrigger>
+          <PopoverContent align="end" className="w-72 p-0">
+            <NewSessionForm
+              onCancel={() => setNewOpen(false)}
+              onCreated={(session) => {
+                setNewOpen(false);
+                onSessionCreated(session);
+              }}
+              existingDates={existingDates}
+            />
+          </PopoverContent>
+        </Popover>
+      )}
     </div>
   );
 }
@@ -185,6 +189,7 @@ function NewSessionForm({
         date: form.date,
         session_type: form.session_type,
         duration_mins: form.duration_mins,
+        start_time: null,
         planned_rpe: carriesLoad ? form.planned_rpe : 0,
         notes: null,
       });

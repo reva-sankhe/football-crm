@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import { Check, Pencil, Search, Trash2, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useTheme } from "@/context/ThemeContext";
+import { useAuth } from "@/context/AuthContext";
 import { useToast } from "@/hooks/use-toast";
 import { deleteSquad, setSquadPlayers, updateSquad } from "@/lib/queries";
 import { PosBadge } from "@/components/PosBadge";
@@ -18,6 +19,7 @@ export function SquadCard({ squad, players, onChanged }: SquadCardProps) {
   const { theme } = useTheme();
   const isDark = theme === "dark";
   const { toast } = useToast();
+  const { isAdmin } = useAuth();
 
   // One flag, one control: name, size limit, roster and delete all live in here.
   const [editing, setEditing] = useState(false);
@@ -120,7 +122,7 @@ export function SquadCard({ squad, players, onChanged }: SquadCardProps) {
           <span className="text-[11px] text-status-warn">over the {squad.size_limit}-player limit</span>
         )}
 
-        {!editing && (
+        {!editing && isAdmin && (
           <button
             onClick={() => setEditing(true)}
             aria-label={`Edit ${squad.name}`}

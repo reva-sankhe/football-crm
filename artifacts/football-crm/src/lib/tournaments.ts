@@ -15,6 +15,7 @@ export const STAGE_CFG: Record<MatchStage, StageCfg> = {
   "Third Place":   { label: "Third Place",   short: "3rd" },
   "Final":         { label: "Final",         short: "F"   },
   "Friendly":      { label: "Friendly",      short: "FR"  },
+  "League":        { label: "League",        short: "LGE" },
 };
 
 /**
@@ -39,6 +40,7 @@ export const MATCH_STAGES: MatchStage[] = [
   "Third Place",
   "Final",
   "Friendly",
+  "League",
 ];
 
 // ── Results ───────────────────────────────────────────────────────────────────
@@ -58,9 +60,9 @@ export function matchResult(m: Pick<Match, "goals_for" | "goals_against">): Matc
   return "D";
 }
 
-/** A knockout tie is settled on the day; a group game or friendly can end level. */
+/** A knockout tie is settled on the day; a group, league or friendly game can end level. */
 export function isKnockoutStage(stage: MatchStage): boolean {
-  return stage !== "Group Stage" && stage !== "Friendly";
+  return stage !== "Group Stage" && stage !== "Friendly" && stage !== "League";
 }
 
 export type OutcomeMatch = Pick<
@@ -264,4 +266,100 @@ export function formatDateRange(start: string | null, end: string | null): strin
   if (start) return fmt(start, true);
   if (end) return fmt(end, true);
   return null;
+}
+
+// ── League standings ─────────────────────────────────────────────────────────
+/** Standard 3/1/0 league points. */
+export const LEAGUE_POINTS: Record<MatchResult, number> = { W: 3, D: 1, L: 0 };
+
+export interface StandingsRow {
+  team: string;
+  /** null for the club's own row — every other row is a real opponent. */
+  opponentId: string | null;
+  played: number;
+  won: number;
+  drawn: number;
+  lost: number;
+  goalsFor: number;
+  goalsAgainst: number;
+  goalDiff: number;
+  points: number;
+}
+
+/** A League-stage match the club actually played. */
+type OurLeagueMatch = Pick<Match, "goals_for" | "goals_against"> & {
+  opponents: { id: string; name: string } | null;
+};
+
+/** A result between two other clubs, logged only to complete the table. */
+type OtherLeagueMatch = {
+  home_goals: number;
+  away_goals: number;
+  home: { id: string; name: string };
+  away: { id: string; name: string };
+};
+
+function standingsRow(
+  rows: Map<string, StandingsRow>,
+  key: string,
+  team: string,
+  opponentId: string | null,
+): StandingsRow {
+  let row = rows.get(key);
+  if (!row) {
+    row = { team, opponentId, played: 0, won: 0, drawn: 0, lost: 0, goalsFor: 0, goalsAgainst: 0, goalDiff: 0, points: 0 };
+    rows.set(key, row);
+  }
+  return row;
+}
+
+function foldResult(row: StandingsRow, gf: number, ga: number, r: MatchResult): void {
+  row.played += 1;
+  row.goalsFor += gf;
+  row.goalsAgainst += ga;
+  row.goalDiff = row.goalsFor - row.goalsAgainst;
+  if (r === "W") row.won += 1;
+  else if (r === "D") row.drawn += 1;
+  else row.lost += 1;
+  row.points += LEAGUE_POINTS[r];
+}
+
+const flip: Record<MatchResult, MatchResult> = { W: "L", D: "D", L: "W" };
+
+/**
+ * The full table for a league tournament: the club's own League-stage matches
+ * plus every logged `league_other_matches` result, folded into one set of
+ * rows and sorted points desc → goal difference desc → goals for desc → name.
+ * Goals only, same as `matchResult` — a league game has no shootout.
+ */
+export function computeStandings(
+  ourMatches: OurLeagueMatch[],
+  otherMatches: OtherLeagueMatch[],
+  us: string = CLUB_NAME,
+): StandingsRow[] {
+  const rows = new Map<string, StandingsRow>();
+  const US_KEY = "__us__";
+
+  for (const m of ourMatches) {
+    const r = matchResult(m);
+    if (!r || !m.opponents) continue; // unplayed fixture, or opponent TBD
+    foldResult(standingsRow(rows, US_KEY, us, null), m.goals_for ?? 0, m.goals_against ?? 0, r);
+    foldResult(
+      standingsRow(rows, m.opponents.id, m.opponents.name, m.opponents.id),
+      m.goals_against ?? 0, m.goals_for ?? 0, flip[r],
+    );
+  }
+
+  for (const m of otherMatches) {
+    const r: MatchResult = m.home_goals > m.away_goals ? "W" : m.home_goals < m.away_goals ? "L" : "D";
+    foldResult(standingsRow(rows, m.home.id, m.home.name, m.home.id), m.home_goals, m.away_goals, r);
+    foldResult(standingsRow(rows, m.away.id, m.away.name, m.away.id), m.away_goals, m.home_goals, flip[r]);
+  }
+
+  return [...rows.values()].sort((a, b) =>
+    b.points - a.points
+    || b.goalDiff - a.goalDiff
+    || b.goalsFor - a.goalsFor
+    || a.team.localeCompare(b.team),
+  );
 }

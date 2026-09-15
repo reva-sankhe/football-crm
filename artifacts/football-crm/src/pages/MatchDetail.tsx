@@ -3,6 +3,7 @@ import { useLocation, useParams } from "wouter";
 import { Activity, ArrowLeft, Pencil, RefreshCw, TriangleAlert, Users } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useTheme } from "@/context/ThemeContext";
+import { useAuth } from "@/context/AuthContext";
 import { useToast } from "@/hooks/use-toast";
 import {
   bulkUpsertMatchStats,
@@ -97,6 +98,7 @@ export default function MatchDetail() {
   const { theme } = useTheme();
   const isDark = theme === "dark";
   const { toast } = useToast();
+  const { isAdmin } = useAuth();
 
   const [match, setMatch] = useState<MatchWithSession | null>(null);
   const [tournament, setTournament] = useState<Tournament | null>(null);
@@ -423,39 +425,43 @@ export default function MatchDetail() {
             <div className="flex items-end gap-2">
               <div>
                 <label className="block text-[10px] text-muted-foreground mb-1 uppercase tracking-wide">For</label>
-                <input type="number" min={0} value={goalsFor} onChange={(e) => setGoalsFor(e.target.value)} className={cn(numCls, "w-16 text-lg font-bold")} placeholder="–" />
+                <input type="number" min={0} value={goalsFor} onChange={(e) => setGoalsFor(e.target.value)} disabled={!isAdmin} className={cn(numCls, "w-16 text-lg font-bold")} placeholder="–" />
               </div>
               <span className="text-muted-foreground pb-2">–</span>
               <div>
                 <label className="block text-[10px] text-muted-foreground mb-1 uppercase tracking-wide">Against</label>
-                <input type="number" min={0} value={goalsAgainst} onChange={(e) => setGoalsAgainst(e.target.value)} className={cn(numCls, "w-16 text-lg font-bold")} placeholder="–" />
+                <input type="number" min={0} value={goalsAgainst} onChange={(e) => setGoalsAgainst(e.target.value)} disabled={!isAdmin} className={cn(numCls, "w-16 text-lg font-bold")} placeholder="–" />
               </div>
             </div>
 
-            <button
-              onClick={() => setShowEdit(true)}
-              className="flex items-center gap-1.5 px-3 py-2 mb-0.5 text-sm border border-border rounded-lg text-muted-foreground hover:text-foreground transition-colors shrink-0"
-              data-testid="button-edit-match"
-            >
-              <Pencil size={13} /> Edit
-            </button>
+            {isAdmin && (
+              <button
+                onClick={() => setShowEdit(true)}
+                className="flex items-center gap-1.5 px-3 py-2 mb-0.5 text-sm border border-border rounded-lg text-muted-foreground hover:text-foreground transition-colors shrink-0"
+                data-testid="button-edit-match"
+              >
+                <Pencil size={13} /> Edit
+              </button>
+            )}
           </div>
         </div>
 
-        <ShootoutPanel
-          wentToPenalties={wentToPens}
-          pensFor={pensFor}
-          pensAgainst={pensAgainst}
-          kicks={kicks}
-          roster={roster}
-          onToggle={setWentToPens}
-          onScoreChange={(side, v) => (side === "for" ? setPensFor(v) : setPensAgainst(v))}
-          onKicksChange={setKicks}
-        />
+        <div className={cn(!isAdmin && "pointer-events-none opacity-60")}>
+          <ShootoutPanel
+            wentToPenalties={wentToPens}
+            pensFor={pensFor}
+            pensAgainst={pensAgainst}
+            kicks={kicks}
+            roster={roster}
+            onToggle={setWentToPens}
+            onScoreChange={(side, v) => (side === "for" ? setPensFor(v) : setPensAgainst(v))}
+            onKicksChange={setKicks}
+          />
+        </div>
       </div>
 
       {/* ── Player stats ───────────────────────────────────────────────────── */}
-      <div className="bg-card border border-border rounded-2xl overflow-hidden">
+      <div className={cn("bg-card border border-border rounded-2xl overflow-hidden", !isAdmin && "pointer-events-none opacity-60")}>
         <div className="px-4 py-3 border-b border-border flex items-center gap-3 flex-wrap">
           <h2 className="text-sm font-semibold text-foreground">Player stats</h2>
 
@@ -605,27 +611,29 @@ export default function MatchDetail() {
       {/* ── Sticky save bar ────────────────────────────────────────────────── */}
       {/* Not gated on the roster: the score and shootout are editable even when
           the squad is empty, and this is the only thing that saves them. */}
-      <div className="sticky bottom-4 z-30">
-        <div
-          className={cn(
-            "flex items-center gap-3 rounded-xl border px-4 py-2.5 shadow-lg backdrop-blur",
-            isDark ? "bg-slate-900/90 border-white/10" : "bg-white/95 border-slate-200",
-          )}
-        >
-          <span className="flex-1 text-xs text-muted-foreground">
-            {dirty ? "Unsaved changes" : "All changes saved"}
-          </span>
-          <button
-            onClick={handleSave}
-            disabled={!dirty || saving}
-            className="shrink-0 flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-semibold bg-indigo-600 text-white hover:bg-indigo-500 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-            data-testid="button-save-match-stats"
+      {isAdmin && (
+        <div className="sticky bottom-4 z-30">
+          <div
+            className={cn(
+              "flex items-center gap-3 rounded-xl border px-4 py-2.5 shadow-lg backdrop-blur",
+              isDark ? "bg-slate-900/90 border-white/10" : "bg-white/95 border-slate-200",
+            )}
           >
-            {saving && <RefreshCw size={13} className="animate-spin" />}
-            {saving ? "Saving…" : "Save match"}
-          </button>
+            <span className="flex-1 text-xs text-muted-foreground">
+              {dirty ? "Unsaved changes" : "All changes saved"}
+            </span>
+            <button
+              onClick={handleSave}
+              disabled={!dirty || saving}
+              className="shrink-0 flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-semibold bg-indigo-600 text-white hover:bg-indigo-500 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+              data-testid="button-save-match-stats"
+            >
+              {saving && <RefreshCw size={13} className="animate-spin" />}
+              {saving ? "Saving…" : "Save match"}
+            </button>
+          </div>
         </div>
-      </div>
+      )}
 
       {showEdit && (
         <MatchFormModal

@@ -6,6 +6,7 @@ import type {
   Tournament, TournamentLink, Squad, SquadWithPlayers, Match, MatchWithSession, MatchPlayerStat,
   MatchStatInput, MatchStage, Opponent,
   MatchPenaltyKick, MatchPenaltyKickInput,
+  LeagueOtherMatch, LeagueOtherMatchWithOpponents,
 } from "./types";
 
 /**
@@ -194,7 +195,7 @@ export async function createTrainingSession(
  */
 export async function updateTrainingSession(
   id: string,
-  updates: Partial<Pick<TrainingSession, "date" | "duration_mins" | "planned_rpe" | "notes">>,
+  updates: Partial<Pick<TrainingSession, "date" | "duration_mins" | "planned_rpe" | "notes" | "start_time">>,
 ): Promise<TrainingSession> {
   const payload = updates.date ? { ...updates, day: dayFromISO(updates.date) } : updates;
   const { data, error } = await supabase
@@ -486,6 +487,43 @@ export async function deleteTournamentLink(id: string): Promise<void> {
   if (error) throw error;
 }
 
+// ── League other-matches ─────────────────────────────────────────────────────
+// Results between two other clubs, logged only to complete a league's standings
+// table — the club's own results come from `matches` instead.
+const LEAGUE_OTHER_MATCH_SELECT = "*, home:opponents!home_opponent_id(id, name), away:opponents!away_opponent_id(id, name)";
+
+export async function fetchLeagueOtherMatches(tournamentId: string): Promise<LeagueOtherMatchWithOpponents[]> {
+  const { data, error } = await supabase
+    .from("league_other_matches")
+    .select(LEAGUE_OTHER_MATCH_SELECT)
+    .eq("tournament_id", tournamentId)
+    .order("match_date");
+  if (error) throw error;
+  return (data ?? []) as unknown as LeagueOtherMatchWithOpponents[];
+}
+
+export async function createLeagueOtherMatch(
+  match: Omit<LeagueOtherMatch, "id" | "created_at">
+): Promise<LeagueOtherMatch> {
+  const { data, error } = await supabase.from("league_other_matches").insert(match).select().single();
+  if (error) throw error;
+  return data as LeagueOtherMatch;
+}
+
+export async function updateLeagueOtherMatch(
+  id: string,
+  updates: Partial<Omit<LeagueOtherMatch, "id" | "tournament_id" | "created_at">>
+): Promise<LeagueOtherMatch> {
+  const { data, error } = await supabase.from("league_other_matches").update(updates).eq("id", id).select().single();
+  if (error) throw error;
+  return data as LeagueOtherMatch;
+}
+
+export async function deleteLeagueOtherMatch(id: string): Promise<void> {
+  const { error } = await supabase.from("league_other_matches").delete().eq("id", id);
+  if (error) throw error;
+}
+
 // ── Squads ────────────────────────────────────────────────────────────────────
 export async function fetchSquadsForTournament(tournamentId: string): Promise<SquadWithPlayers[]> {
   const { data, error } = await supabase
@@ -597,6 +635,8 @@ export interface CreateMatchInput {
   stage: MatchStage;
   opponent_id: string | null;
   date: string;
+  /** "HH:MM" kickoff time, or null/omitted when not yet known. */
+  start_time?: string | null;
   duration_mins: number;
   planned_rpe: number;
   notes?: string | null;
@@ -611,6 +651,7 @@ export async function createMatch(input: CreateMatchInput): Promise<Match> {
     date: input.date,
     session_type: "Match",
     duration_mins: input.duration_mins,
+    start_time: input.start_time ?? null,
     planned_rpe: input.planned_rpe,
     notes: null,
   });

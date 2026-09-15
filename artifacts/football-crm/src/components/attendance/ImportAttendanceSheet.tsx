@@ -202,6 +202,7 @@ export function ImportAttendanceSheet({
             date: md.isoDate,
             session_type: "Training",
             duration_mins: 90,
+            start_time: null,
             planned_rpe: 5,
             notes: null,
           });

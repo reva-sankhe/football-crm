@@ -36,6 +36,7 @@ import {
 import { ArrowLeft, ChevronDown, Edit, Save, X, Timer, Dumbbell } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useTheme } from "@/context/ThemeContext";
+import { useAuth } from "@/context/AuthContext";
 import { HIGHLIGHT, ink, series, type Mode } from "@/lib/viz";
 
 const PRIMARY_POSITIONS = ["Goalkeeper", "Defender", "Midfielder", "Forward"];
@@ -58,6 +59,7 @@ export default function PlayerDetail() {
   const { toast } = useToast();
   const { theme } = useTheme();
   const isDark = theme === "dark";
+  const { isAdmin } = useAuth();
 
   const [player, setPlayer] = useState<Player | null>(null);
   const [results, setResults] = useState<(TestResult & { test_sessions?: { test_date: string; test_name: string; type: string | null } })[]>([]);
@@ -340,9 +342,9 @@ export default function PlayerDetail() {
               <button onClick={cancelEdit} className="flex items-center gap-1 px-3 py-1.5 text-sm border border-border rounded-lg text-muted-foreground hover:text-foreground" data-testid="button-cancel-edit"><X size={13} />Cancel</button>
               <button onClick={saveEdit} disabled={saving} className="flex items-center gap-1 px-3 py-1.5 text-sm btn-primary text-white rounded-xl font-semibold disabled:opacity-60" data-testid="button-save-edit"><Save size={13} />{saving ? "Saving…" : "Save"}</button>
             </div>
-          ) : (
+          ) : isAdmin ? (
             <button onClick={startEdit} className="flex items-center gap-1.5 px-3 py-1.5 text-sm border border-border rounded-lg text-muted-foreground hover:text-foreground transition-colors shrink-0" data-testid="button-edit-player"><Edit size={13} />Edit</button>
-          )}
+          ) : null}
         </div>
 
         {editing && (
