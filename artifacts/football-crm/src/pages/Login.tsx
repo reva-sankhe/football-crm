@@ -1,9 +1,15 @@
 import { useState } from "react";
 import { useLocation } from "wouter";
+import { Eye, EyeOff } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import {
+  InputGroup,
+  InputGroupInput,
+  InputGroupAddon,
+  InputGroupButton,
+} from "@/components/ui/input-group";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 
 const logoSrc = `${import.meta.env.BASE_URL}bg-logo.png`.replace(/\/\//g, "/");
 
@@ -12,6 +18,7 @@ export default function Login() {
   const [, navigate] = useLocation();
   const [password, setPassword] = useState("");
   const [error, setError] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -28,21 +35,32 @@ export default function Login() {
         <CardHeader className="items-center text-center">
           <img src={logoSrc} alt="Bombay Gymkhana · Women's Football" className="w-14 h-14 object-contain mb-1" />
           <CardTitle>Bombay Gymkhana</CardTitle>
-          <CardDescription>Enter the shared password to continue</CardDescription>
         </CardHeader>
         <CardContent>
           <form onSubmit={handleSubmit} className="flex flex-col gap-3">
-            <Input
-              type="password"
-              autoFocus
-              placeholder="Password"
-              value={password}
-              onChange={(e) => {
-                setPassword(e.target.value);
-                setError(false);
-              }}
-              data-testid="input-login-password"
-            />
+            <InputGroup>
+              <InputGroupInput
+                type={showPassword ? "text" : "password"}
+                autoFocus
+                placeholder="Password"
+                value={password}
+                onChange={(e) => {
+                  setPassword(e.target.value);
+                  setError(false);
+                }}
+                data-testid="input-login-password"
+              />
+              <InputGroupAddon align="inline-end">
+                <InputGroupButton
+                  size="icon-xs"
+                  aria-label={showPassword ? "Hide password" : "Show password"}
+                  onClick={() => setShowPassword((v) => !v)}
+                  data-testid="button-toggle-password-visibility"
+                >
+                  {showPassword ? <EyeOff /> : <Eye />}
+                </InputGroupButton>
+              </InputGroupAddon>
+            </InputGroup>
             {error && (
               <p className="text-sm text-destructive" data-testid="text-login-error">
                 Incorrect password
