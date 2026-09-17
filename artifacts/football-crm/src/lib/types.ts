@@ -416,5 +416,11 @@ export interface CalendarEvent {
    * one-off event. One row represents the whole series — see lib/recurrence.
    */
   recurrence_rule: string | null;
+  /**
+   * Occurrences of a recurring series that were individually deleted — each
+   * entry is that occurrence's exact computed start_time (ISO), not a bare
+   * date. Always empty for a non-recurring event.
+   */
+  excluded_dates: string[];
   created_at: string;
 }

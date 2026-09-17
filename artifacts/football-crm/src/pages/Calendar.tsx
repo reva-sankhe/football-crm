@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Calendar as CalendarIcon, Check, ChevronLeft, ChevronRight, Copy, Pencil, Plus, Repeat, Trash2 } from "lucide-react";
+import { Calendar as CalendarIcon, Check, ChevronLeft, ChevronRight, Copy, HelpCircle, Pencil, Plus, Repeat, Trash2 } from "lucide-react";
 import { EmptyState } from "@/components/EmptyState";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { TableSkeleton } from "@/components/Skeleton";
 import { useAuth } from "@/context/AuthContext";
 import { useToast } from "@/hooks/use-toast";
@@ -70,6 +71,20 @@ function fromLocalInput(value: string): string | null {
   return new Date(value).toISOString();
 }
 
+function toDateOnlyInput(iso: string | null): string {
+  if (!iso) return "";
+  const d = new Date(iso);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
+/** A bare "YYYY-MM-DD" is UTC-midnight per spec, not local — force local by
+ * appending a time before parsing, matching every other date the app stores. */
+function fromDateOnlyInput(value: string): string | null {
+  if (!value) return null;
+  return new Date(`${value}T00:00`).toISOString();
+}
+
 function dateKey(d: Date | string): string {
   const date = typeof d === "string" ? new Date(d) : d;
   return `${date.getFullYear()}-${date.getMonth()}-${date.getDate()}`;
@@ -97,7 +112,7 @@ function EventModal({
       return {
         title: event.title,
         event_type: event.event_type,
-        start_time: toLocalInput(event.start_time),
+        start_time: event.event_type === "birthday" ? toDateOnlyInput(event.start_time) : toLocalInput(event.start_time),
         end_time: toLocalInput(event.end_time),
         location: event.location ?? "",
         description: event.description ?? "",
@@ -125,6 +140,20 @@ function EventModal({
       repeatCount: "10",
     };
   });
+
+  const handleTypeChange = (newType: EventType) => {
+    setForm((f) => {
+      if (newType === "birthday" && f.event_type !== "birthday") {
+        // Birthdays are all-day and don't carry a time, end, or location.
+        return { ...f, event_type: newType, start_time: toDateOnlyInput(fromLocalInput(f.start_time)), end_time: "", location: "" };
+      }
+      if (newType !== "birthday" && f.event_type === "birthday") {
+        // Coming back from all-day: give it a sensible default time of day.
+        return { ...f, event_type: newType, start_time: `${f.start_time}T09:00` };
+      }
+      return { ...f, event_type: newType };
+    });
+  };
 
   const toggleRepeatDay = (day: Weekday) => {
     setForm((f) => ({
@@ -173,12 +202,13 @@ function EventModal({
     }
     setSaving(true);
     try {
+      const isBirthday = form.event_type === "birthday";
       const payload = {
         title: form.title.trim(),
         event_type: form.event_type,
-        start_time: fromLocalInput(form.start_time)!,
-        end_time: fromLocalInput(form.end_time),
-        location: form.location.trim() || null,
+        start_time: (isBirthday ? fromDateOnlyInput(form.start_time) : fromLocalInput(form.start_time))!,
+        end_time: isBirthday ? null : fromLocalInput(form.end_time),
+        location: isBirthday ? null : form.location.trim() || null,
         description: form.description.trim() || null,
         recurrence_rule: !form.repeatOn
           ? null
@@ -189,10 +219,13 @@ function EventModal({
             }),
       };
       if (event) {
+        // excluded_dates is deliberately left out here — it's only ever
+        // changed by deleting a single occurrence (see handleDeleteOccurrence
+        // in the parent), never by the edit form, so a save must not clobber it.
         await updateEvent(event.id, payload);
         toast({ title: "Event updated" });
       } else {
-        await createEvent(payload);
+        await createEvent({ ...payload, excluded_dates: [] });
         toast({ title: "Event added" });
       }
       onSaved();
@@ -225,24 +258,24 @@ function EventModal({
           {field("Type", (
             <select
               value={form.event_type}
-              onChange={(e) => setForm({ ...form, event_type: e.target.value as EventType })}
+              onChange={(e) => handleTypeChange(e.target.value as EventType)}
               className={inputCls}
               data-testid="select-event-type"
             >
               {EVENT_TYPES.map((t) => <option key={t} value={t}>{TYPE_LABEL[t]}</option>)}
             </select>
           ))}
-          <div className="grid grid-cols-2 gap-3">
-            {field("Starts *", (
+          <div className={cn("grid gap-3", form.event_type === "birthday" ? "grid-cols-1" : "grid-cols-2")}>
+            {field(form.event_type === "birthday" ? "Date *" : "Starts *", (
               <input
-                type="datetime-local"
+                type={form.event_type === "birthday" ? "date" : "datetime-local"}
                 value={form.start_time}
                 onChange={(e) => setForm({ ...form, start_time: e.target.value })}
                 data-testid="input-event-start"
                 className={inputCls}
               />
             ))}
-            {field("Ends", (
+            {form.event_type !== "birthday" && field("Ends", (
               <input
                 type="datetime-local"
                 value={form.end_time}
@@ -328,7 +361,7 @@ function EventModal({
               )}
             </div>
           )}
-          {field("Location", (
+          {form.event_type !== "birthday" && field("Location", (
             <input
               value={form.location}
               onChange={(e) => setForm({ ...form, location: e.target.value })}
@@ -383,7 +416,7 @@ function DayAgendaModal({
   onClose: () => void;
   onAdd: () => void;
   onEdit: (ev: CalendarEvent) => void;
-  onDelete: (ev: CalendarEvent) => void;
+  onDelete: (occurrence: Occurrence) => void;
 }) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-background/80 backdrop-blur-sm" data-testid="day-agenda-modal">
@@ -409,8 +442,10 @@ function DayAgendaModal({
           {occurrences.length === 0 ? (
             <EmptyState title="No events on this day" />
           ) : (
-            occurrences.map(({ event: ev, start, end }) => (
-              <div key={ev.id} className="bg-muted/50 border border-border rounded-lg px-4 py-3 flex items-start justify-between gap-3" data-testid={`event-row-${ev.id}`}>
+            occurrences.map((occurrence) => {
+              const { event: ev, start, end } = occurrence;
+              return (
+              <div key={`${ev.id}-${start.toISOString()}`} className="bg-muted/50 border border-border rounded-lg px-4 py-3 flex items-start justify-between gap-3" data-testid={`event-row-${ev.id}`}>
                 <div className="min-w-0 space-y-1">
                   <div className="flex items-center gap-2 flex-wrap">
                     <span className="text-sm font-medium text-foreground">{ev.title}</span>
@@ -422,8 +457,12 @@ function DayAgendaModal({
                     )}
                   </div>
                   <p className="text-xs text-muted-foreground">
-                    {start.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}
-                    {end && ` – ${end.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}`}
+                    {ev.event_type === "birthday" ? "All day" : (
+                      <>
+                        {start.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}
+                        {end && ` – ${end.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}`}
+                      </>
+                    )}
                     {ev.location && ` · ${ev.location}`}
                   </p>
                   {ev.description && <p className="text-xs text-muted-foreground">{ev.description}</p>}
@@ -440,7 +479,7 @@ function DayAgendaModal({
                       <Pencil size={13} />
                     </button>
                     <button
-                      onClick={() => onDelete(ev)}
+                      onClick={() => onDelete(occurrence)}
                       className="h-7 w-7 flex items-center justify-center rounded-md text-muted-foreground hover:text-destructive transition-colors"
                       title="Delete"
                       aria-label="Delete event"
@@ -451,8 +490,56 @@ function DayAgendaModal({
                   </div>
                 )}
               </div>
-            ))
+              );
+            })
           )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Delete-choice — asked only for a recurring occurrence, since a one-off
+// event has nothing to disambiguate. ─────────────────────────────────────────
+function DeleteRecurringModal({
+  title,
+  onCancel,
+  onDeleteOccurrence,
+  onDeleteSeries,
+}: {
+  title: string;
+  onCancel: () => void;
+  onDeleteOccurrence: () => void;
+  onDeleteSeries: () => void;
+}) {
+  return (
+    <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-background/80 backdrop-blur-sm" data-testid="delete-recurring-modal">
+      <div className="bg-card border border-border rounded-xl w-full max-w-sm shadow-xl">
+        <div className="px-5 py-4 border-b border-border">
+          <h2 className="text-sm font-semibold text-foreground">Delete recurring event</h2>
+          <p className="text-xs text-muted-foreground mt-1">"{title}" repeats. What do you want to delete?</p>
+        </div>
+        <div className="px-5 py-4 space-y-2">
+          <button
+            onClick={onDeleteOccurrence}
+            data-testid="button-delete-this-occurrence"
+            className="w-full px-4 py-2 text-sm rounded-md border border-border text-foreground hover:bg-muted transition-colors text-left"
+          >
+            This event only
+          </button>
+          <button
+            onClick={onDeleteSeries}
+            data-testid="button-delete-entire-series"
+            className="w-full px-4 py-2 text-sm rounded-md border border-destructive/50 text-destructive hover:bg-destructive/10 transition-colors text-left"
+          >
+            All events in the series
+          </button>
+          <button
+            onClick={onCancel}
+            className="w-full px-4 py-2 text-sm rounded-md text-muted-foreground hover:text-foreground transition-colors"
+          >
+            Cancel
+          </button>
         </div>
       </div>
     </div>
@@ -478,17 +565,17 @@ function SubscribePanel() {
   };
 
   return (
-    <div className="bg-card border border-border rounded-xl p-3 flex items-center gap-3 flex-wrap">
+    <div className="bg-card border border-border rounded-xl p-3 flex items-center gap-2 flex-wrap">
       <div className="flex items-center gap-1.5 text-xs font-medium text-foreground shrink-0">
         <CalendarIcon size={13} className="text-muted-foreground" />
-        Subscribe in Google Calendar:
+        Add to Google Calendar:
       </div>
       <input
         readOnly
         value={feedUrl}
         onFocus={(e) => e.currentTarget.select()}
         data-testid="input-calendar-feed-url"
-        className="flex-1 min-w-[200px] bg-muted border border-border rounded-md px-2.5 py-1 text-[11px] text-foreground font-mono"
+        className="w-40 sm:w-56 bg-muted border border-border rounded-md px-2.5 py-1 text-[11px] text-foreground font-mono truncate"
       />
       <button
         onClick={copy}
@@ -499,6 +586,26 @@ function SubscribePanel() {
       >
         {copied ? <Check size={12} className="text-emerald-500" /> : <Copy size={12} />}
       </button>
+      <Popover>
+        <PopoverTrigger asChild>
+          <button
+            data-testid="button-how-to-subscribe"
+            className="h-6 px-2 flex items-center gap-1 rounded-md border border-border text-[11px] font-medium text-muted-foreground hover:text-foreground transition-colors shrink-0"
+          >
+            <HelpCircle size={12} /> How to?
+          </button>
+        </PopoverTrigger>
+        <PopoverContent className="w-72 text-xs" data-testid="popover-how-to-subscribe">
+          <p className="font-medium text-foreground mb-2">Add this calendar in Google Calendar</p>
+          <ol className="list-decimal list-inside space-y-1 text-muted-foreground">
+            <li>Open Google Calendar on desktop/web</li>
+            <li>Next to "Other calendars", click <span className="text-foreground">+</span></li>
+            <li>Select <span className="text-foreground">From URL</span></li>
+            <li>Paste the link (copy it above) and click <span className="text-foreground">Add calendar</span></li>
+          </ol>
+          <p className="text-muted-foreground mt-2">New events sync automatically, usually within a few hours.</p>
+        </PopoverContent>
+      </Popover>
     </div>
   );
 }
@@ -539,6 +646,7 @@ export default function Calendar() {
   const [agendaDate, setAgendaDate] = useState<Date | null>(null);
   const [showAdd, setShowAdd] = useState(false);
   const [editEvent, setEditEvent] = useState<CalendarEvent | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<Occurrence | null>(null);
   const { toast } = useToast();
 
   // Used both for the initial load and to refresh after add/edit/delete. Only
@@ -576,7 +684,7 @@ export default function Calendar() {
 
     for (const ev of events) {
       const durationMs = ev.end_time ? new Date(ev.end_time).getTime() - new Date(ev.start_time).getTime() : null;
-      const starts = expandOccurrences(ev.start_time, ev.recurrence_rule, rangeStart, rangeEnd);
+      const starts = expandOccurrences(ev.start_time, ev.recurrence_rule, rangeStart, rangeEnd, ev.excluded_dates);
       for (const start of starts) {
         const end = durationMs != null ? new Date(start.getTime() + durationMs) : null;
         const key = dateKey(start);
@@ -592,14 +700,42 @@ export default function Calendar() {
     return map;
   }, [events, gridDays]);
 
-  const handleDelete = async (ev: CalendarEvent) => {
-    if (!window.confirm(`Delete "${ev.title}"?`)) return;
+  const performSeriesDelete = async (ev: CalendarEvent) => {
     try {
       await deleteEvent(ev.id);
       toast({ title: "Event deleted" });
+      setDeleteTarget(null);
       refresh();
     } catch (err: unknown) {
       toast({ title: "Failed to delete event", description: String(err), variant: "destructive" });
+    }
+  };
+
+  // A one-off event just needs a yes/no; a recurring occurrence needs to ask
+  // which scope the user means, so that's routed to the DeleteRecurringModal
+  // instead — the modal's own buttons are the confirmation there, no
+  // additional window.confirm on top of it.
+  const handleDeleteClick = (occurrence: Occurrence) => {
+    if (!occurrence.event.recurrence_rule) {
+      if (window.confirm(`Delete "${occurrence.event.title}"?`)) performSeriesDelete(occurrence.event);
+      return;
+    }
+    setDeleteTarget(occurrence);
+  };
+
+  // Records this one occurrence's exact instant as an RFC 5545 exclusion —
+  // the series row stays, this date just stops being generated for display
+  // and (via the ICS feed's EXDATE) for anyone subscribed in Google Calendar.
+  const handleDeleteOccurrence = async (occurrence: Occurrence) => {
+    try {
+      await updateEvent(occurrence.event.id, {
+        excluded_dates: [...occurrence.event.excluded_dates, occurrence.start.toISOString()],
+      });
+      toast({ title: "Occurrence deleted" });
+      setDeleteTarget(null);
+      refresh();
+    } catch (err: unknown) {
+      toast({ title: "Failed to delete occurrence", description: String(err), variant: "destructive" });
     }
   };
 
@@ -715,7 +851,16 @@ export default function Calendar() {
           onClose={() => setAgendaDate(null)}
           onAdd={() => setShowAdd(true)}
           onEdit={(ev) => setEditEvent(ev)}
-          onDelete={handleDelete}
+          onDelete={handleDeleteClick}
+        />
+      )}
+
+      {deleteTarget && (
+        <DeleteRecurringModal
+          title={deleteTarget.event.title}
+          onCancel={() => setDeleteTarget(null)}
+          onDeleteOccurrence={() => handleDeleteOccurrence(deleteTarget)}
+          onDeleteSeries={() => performSeriesDelete(deleteTarget.event)}
         />
       )}
 

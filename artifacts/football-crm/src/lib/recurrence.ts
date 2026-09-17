@@ -2,11 +2,15 @@
  * Recurring-event support for the calendar. A recurring event is one `events`
  * row (start_time + recurrence_rule) representing the whole series — same
  * model Google Calendar itself uses — expanded into individual occurrences
- * only for display. Editing or deleting a series always acts on the row, so
- * there's no per-occurrence override; keep it that way unless someone
- * actually needs to split off a single occurrence, which is a much bigger
- * feature (RFC 5545 EXDATE/RECURRENCE-ID).
+ * only for display.
  *
+ * Deleting can target one occurrence (added to `excluded_dates`, RFC 5545
+ * EXDATE — see calendar.ts on the backend) or the whole series (delete the
+ * row). Editing, however, always acts on the row/whole series — splitting
+ * off a single occurrence's *edit* needs RECURRENCE-ID, a detached override
+ * event, which is a bigger feature than deletion and not built yet.
+ *
+
  * The picker is deliberately just "which day(s) of the week" (matching the
  * common real-world shape — training every Tue/Thu, a match every Saturday —
  * and how most calendar apps present it), so the rule is always weekly on a
@@ -79,13 +83,17 @@ const MAX_DAYS_STEPPED = 20000;
  *
  * Steps one calendar day at a time from the series' original start — not
  * from rangeStart — because `count` counts occurrences from the beginning of
- * the whole series, not just the ones inside the visible window.
+ * the whole series, not just the ones inside the visible window. An
+ * excluded occurrence still consumes its slot toward `count` (matching
+ * RFC 5545 EXDATE semantics — the rule still generates it, only display is
+ * suppressed), it's simply left out of the returned list.
  */
 export function expandOccurrences(
   startTimeISO: string,
   recurrenceRule: string | null,
   rangeStart: Date,
   rangeEnd: Date,
+  excludedDates: string[] = [],
 ): Date[] {
   const start = new Date(startTimeISO);
   if (!recurrenceRule) {
@@ -97,6 +105,7 @@ export function expandOccurrences(
 
   const until = config.until ? new Date(`${config.until}T23:59:59Z`) : null;
   const daySet = new Set(config.days);
+  const excludedSet = new Set(excludedDates);
   const occurrences: Date[] = [];
   const current = new Date(start);
   let matched = 0;
@@ -106,7 +115,9 @@ export function expandOccurrences(
     if (until && current > until) break;
     if (daySet.has(WEEKDAYS[current.getDay()])) {
       if (config.count && matched >= config.count) break;
-      if (current >= rangeStart) occurrences.push(new Date(current));
+      if (current >= rangeStart && !excludedSet.has(current.toISOString())) {
+        occurrences.push(new Date(current));
+      }
       matched++;
     }
     current.setDate(current.getDate() + 1);
