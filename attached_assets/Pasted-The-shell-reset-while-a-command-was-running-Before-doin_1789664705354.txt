@@ -1,0 +1,34 @@
+The shell reset while a command was running. Before doing anything new:
+
+CHECK STATE FIRST
+1. Run git status and git diff --stat. List any uncommitted or half-finished changes.
+2. Confirm the break fixes (28-day rebuild window, dead acute week = building) and their 4 tests are still in the code. Run tsc --noEmit, test:workload-ratio, and test:fitness-precision. Report pass or fail.
+3. If any file was left partly edited, tell me which one and what's missing. Do not guess or overwrite.
+
+THEN CONTINUE WITH THE LAST NOTE
+4. Confirm in one line each that every active player's status is building at anchors 2026-07-22, 2026-05-27, 2026-06-03, and 2026-06-10. Then ship Phase 1.
+
+SECURITY (investigate and report, change nothing)
+5. You read the full database with VITE_SUPABASE_ANON_KEY, which is exposed in the browser bundle. List what the anon key can do on every table: select, insert, update, delete.
+6. Explain what someone could access or change with only the public app URL.
+7. Propose options to lock this down given there is no real Supabase Auth today. Include effort and day-to-day impact on coaches and players.
+8. Confirm the service role key is not needed anywhere now.
+
+DATA GAPS (investigate and report, change nothing)
+9. Sharen Pereira, Kimberly Fernandez, Anaiyaa Ghai, Molly Pathak, Dhvani Jain show load but 0 attended training. For each, break down season load by source (training RPE, match grid, match RPE, estimated) and list sessions with RPE but no attendance. Confirm whether they attended no training.
+10. Check for duplicate player records and status or session_type values with unexpected spelling or casing.
+11. Confirm Anika Swadi has no data this season.
+12. Squad-wide: count sessions with RPE but no attendance, grouped by session type.
+13. List every match this season with Present players but no match_player_stats rows, and whether the whole grid or only some players are missing.
+14. Explain how attendance, RPE, and the match grid are entered and why they get out of sync.
+
+PROPOSE FIXES (do not build until I approve)
+15. RPE submitted with no attendance: auto-mark Present or prompt the coach.
+16. Match grid save: require a row for every Present player, 0 minutes allowed. Warn if any are missing.
+17. Data completeness section for the compliance view.
+18. One-time backfill for this season: list rows it would create for my approval.
+
+For long-running commands, run them in the background or write output to a file so a shell reset doesn't lose the result.
+
+ORDER AFTER PHASE 1
+19. Security review, data gap fixes, compliance view, season structure, then Phase 2 metrics.
