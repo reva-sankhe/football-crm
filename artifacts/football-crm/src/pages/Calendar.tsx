@@ -7,7 +7,7 @@ import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import { createEvent, deleteEvent, fetchEvents, updateEvent } from "@/lib/queries";
 import { EVENT_TYPES, type CalendarEvent, type EventType } from "@/lib/types";
-import { buildRecurrenceRule, expandOccurrences, parseRecurrenceRule, type RepeatFreq } from "@/lib/recurrence";
+import { buildRecurrenceRule, expandOccurrences, parseRecurrenceRule, WEEKDAYS, WEEKDAY_LETTER, WEEKDAY_FULL, type Weekday } from "@/lib/recurrence";
 
 const TYPE_LABEL: Record<EventType, string> = {
   training: "Training",
@@ -101,7 +101,8 @@ function EventModal({
         end_time: toLocalInput(event.end_time),
         location: event.location ?? "",
         description: event.description ?? "",
-        repeatFreq: (parsedRepeat?.freq ?? "none") as RepeatFreq | "none",
+        repeatOn: parsedRepeat != null,
+        repeatDays: parsedRepeat?.days ?? [],
         repeatEndMode: (parsedRepeat?.until ? "until" : parsedRepeat?.count ? "count" : "never") as "never" | "until" | "count",
         repeatUntil: parsedRepeat?.until ?? "",
         repeatCount: parsedRepeat?.count ? String(parsedRepeat.count) : "10",
@@ -117,12 +118,31 @@ function EventModal({
       end_time: "",
       location: "",
       description: "",
-      repeatFreq: "none" as RepeatFreq | "none",
+      repeatOn: false,
+      repeatDays: [] as Weekday[],
       repeatEndMode: "never" as "never" | "until" | "count",
       repeatUntil: "",
       repeatCount: "10",
     };
   });
+
+  const toggleRepeatDay = (day: Weekday) => {
+    setForm((f) => ({
+      ...f,
+      repeatDays: f.repeatDays.includes(day) ? f.repeatDays.filter((d) => d !== day) : [...f.repeatDays, day],
+    }));
+  };
+
+  const toggleRepeatOn = (on: boolean) => {
+    setForm((f) => {
+      if (!on) return { ...f, repeatOn: false };
+      // Default to the weekday of the current start date so turning "repeat"
+      // on with no picks yet still describes a sensible series.
+      if (f.repeatDays.length > 0) return { ...f, repeatOn: true };
+      const startDate = f.start_time ? new Date(f.start_time) : new Date();
+      return { ...f, repeatOn: true, repeatDays: [WEEKDAYS[startDate.getDay()]] };
+    });
+  };
 
   const inputCls = "w-full bg-muted border border-border rounded-md px-3 py-1.5 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary";
 
@@ -143,7 +163,11 @@ function EventModal({
       toast({ title: "Start date/time is required", variant: "destructive" });
       return;
     }
-    if (form.repeatFreq !== "none" && form.repeatEndMode === "count" && (!form.repeatCount || parseInt(form.repeatCount, 10) < 1)) {
+    if (form.repeatOn && form.repeatDays.length === 0) {
+      toast({ title: "Pick at least one day for it to repeat on", variant: "destructive" });
+      return;
+    }
+    if (form.repeatOn && form.repeatEndMode === "count" && (!form.repeatCount || parseInt(form.repeatCount, 10) < 1)) {
       toast({ title: "Enter how many times it should repeat", variant: "destructive" });
       return;
     }
@@ -156,14 +180,13 @@ function EventModal({
         end_time: fromLocalInput(form.end_time),
         location: form.location.trim() || null,
         description: form.description.trim() || null,
-        recurrence_rule:
-          form.repeatFreq === "none"
-            ? null
-            : buildRecurrenceRule({
-                freq: form.repeatFreq,
-                until: form.repeatEndMode === "until" ? form.repeatUntil || null : null,
-                count: form.repeatEndMode === "count" ? parseInt(form.repeatCount, 10) : null,
-              }),
+        recurrence_rule: !form.repeatOn
+          ? null
+          : buildRecurrenceRule({
+              days: form.repeatDays,
+              until: form.repeatEndMode === "until" ? form.repeatUntil || null : null,
+              count: form.repeatEndMode === "count" ? parseInt(form.repeatCount, 10) : null,
+            }),
       };
       if (event) {
         await updateEvent(event.id, payload);
@@ -229,20 +252,43 @@ function EventModal({
               />
             ))}
           </div>
-          {field("Repeat", (
-            <select
-              value={form.repeatFreq}
-              onChange={(e) => setForm({ ...form, repeatFreq: e.target.value as RepeatFreq | "none" })}
-              className={inputCls}
-              data-testid="select-event-repeat"
-            >
-              <option value="none">Does not repeat</option>
-              <option value="daily">Daily</option>
-              <option value="weekly">Weekly</option>
-              <option value="monthly">Monthly</option>
-            </select>
-          ))}
-          {form.repeatFreq !== "none" && (
+          <div>
+            <label className="flex items-center gap-2 text-xs text-muted-foreground mb-1.5 cursor-pointer w-fit">
+              <input
+                type="checkbox"
+                checked={form.repeatOn}
+                onChange={(e) => toggleRepeatOn(e.target.checked)}
+                data-testid="checkbox-event-repeat"
+              />
+              Repeat
+            </label>
+            {form.repeatOn && (
+              <div className="flex gap-1.5">
+                {WEEKDAYS.map((day) => {
+                  const selected = form.repeatDays.includes(day);
+                  return (
+                    <button
+                      key={day}
+                      type="button"
+                      onClick={() => toggleRepeatDay(day)}
+                      aria-pressed={selected}
+                      title={WEEKDAY_FULL[day]}
+                      data-testid={`button-repeat-day-${day}`}
+                      className={cn(
+                        "w-8 h-8 rounded-full flex items-center justify-center text-xs font-semibold border transition-colors",
+                        selected
+                          ? "bg-indigo-500 text-white border-indigo-500"
+                          : "border-border text-muted-foreground hover:text-foreground",
+                      )}
+                    >
+                      {WEEKDAY_LETTER[day]}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+          {form.repeatOn && (
             <div className="rounded-md border border-border p-3 space-y-2 bg-muted/30">
               <label className="block text-xs text-muted-foreground">Ends</label>
               <div className="flex items-center gap-3 flex-wrap text-sm text-foreground">
