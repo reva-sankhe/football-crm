@@ -226,14 +226,18 @@ export interface LoadRow {
 /**
  * Folds rated sessions and match minutes into one list.
  *
- * The match grid is the source of truth for minutes. When a player has rated
- * that match, their RPE is paired with those minutes; otherwise the fallback
- * RPE is flagged as estimated. A match-session RPE row is used when no grid
- * row exists:
+ * The match grid (`match_player_stats`) is the primary source of match
+ * minutes: a grid row's minutes are paired with that player's own logged
+ * match RPE when they submitted one, else MATCH_RPE (7), flagged `estimated`
+ * accordingly. A real grid row always wins, even one recording 0 minutes for
+ * an unused sub — that's a deliberate signal, not missing data.
  *
- * Attendance alone does not establish minutes played, so it never creates an
- * estimated full-match load. This avoids turning an unused substitute or an
- * unknown appearance into a 90-minute workload.
+ * A player who submitted a match RPE with their own `minutes_played` but has
+ * no grid row for that match still counts — that's real, player-reported
+ * data, not a fabricated estimate — but only when that self-reported minutes
+ * figure is greater than 0. Attendance alone never establishes minutes
+ * played and so never creates match load on its own; nor does a match with
+ * no grid row and no self-reported minutes.
  *
  * Training works differently: a non-Match session has no per-player minutes
  * grid, only whether they attended. A player who attended but never submitted
@@ -251,7 +255,7 @@ export function buildLoadRows(
   sessions: TrainingSession[] = [],
 ): LoadRow[] {
   const out: LoadRow[] = [];
-  /** (player, session) pairs the match grid has already accounted for. */
+  /** (player, session) pairs already accounted for by a real grid row. */
   const fromGrid = new Set<string>();
   /** A player-rated match RPE, keyed so the match grid can supply its minutes. */
   const ratedMatchRpe = new Map<string, RpeRow>();
@@ -280,38 +284,12 @@ export function buildLoadRows(
     });
   }
 
-  // A player marked Present/Late for a match with neither a grid row nor a
-  // rated RPE currently gets zero load, even though they clearly attended.
-  // There's no per-player minutes signal to work from at all here (unlike the
-  // grid-with-no-RPE case above, which at least has real minutes), so this
-  // estimates at MATCH_RPE × the match's own scheduled duration — the same
-  // "no data to fabricate from" caution as everywhere else, just with a
-  // coarser fallback since it's genuinely the last resort.
-  for (const session of sessions) {
-    if (session.session_type !== "Match") continue;
-    const attendedPlayerIds = attendance
-      .filter((a) => a.session_id === session.id && countsAsAttended(a.status))
-      .map((a) => a.player_id);
-    for (const playerId of attendedPlayerIds) {
-      const key = `${playerId}:${session.id}`;
-      if (fromGrid.has(key)) continue; // has a real (possibly 0-minute) grid row
-      if (ratedMatchRpe.has(key)) continue; // has a rated RPE row, handled below
-      out.push({
-        player_id: playerId,
-        date: session.date,
-        load_au: Math.round(MATCH_RPE * session.duration_mins),
-        source: "match",
-        rpe: MATCH_RPE,
-        estimated: true,
-        planned_load_au: null,
-      });
-    }
-  }
-
   for (const r of rpe) {
     const isMatch = r.sessions ? isMatchSession(r.sessions) : false;
     if (isMatch) {
-      // Already counted from the grid, or scored from the minutes on this row
+      // A logged match RPE with the player's own minutes is real, reported
+      // data — used only when no grid row already accounts for this player
+      // in this match, and only when their own minutes are actually > 0.
       if (fromGrid.has(`${r.player_id}:${r.session_id}`)) continue;
       if (!r.minutes_played || r.minutes_played <= 0) continue;
       out.push({

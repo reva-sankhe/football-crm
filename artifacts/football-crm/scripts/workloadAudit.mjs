@@ -7,8 +7,7 @@
 //
 // Scope: active players only (is_active = true), current season only
 // (SEASON_START below). Inactive players and prior-season data are excluded
-// from every section, including compliance and the match no-grid/no-RPE
-// count.
+// from every section.
 //
 // Usage:
 //   SUPABASE_URL=... SUPABASE_SERVICE_ROLE_KEY=... node scripts/workloadAudit.mjs
@@ -93,7 +92,6 @@ try {
   const teamSessionDates = NO_TEAM_BREAK ? [] : teamSessionDatesFrom(sessions);
   const seasonSessions = sessions.filter((s) => s.date >= SEASON_START);
   const trainingSessions = seasonSessions.filter((s) => s.session_type === "Training");
-  const matchSessions = seasonSessions.filter((s) => s.session_type === "Match");
 
   console.log(`Workload audit — ${activePlayers.length} active players, season ${SEASON_START} → ${isoOfLocal(now)}`);
   console.log(NO_FALLBACK_ONLY ? "Mode: fallback OFF only" : "Mode: comparing fallback OFF vs ON");
@@ -101,7 +99,6 @@ try {
   console.log(`Chronic load floor: ${CHRONIC_LOAD_FLOOR} AU/week\n`);
 
   const complianceRows = [];
-  const matchNoGridRows = [];
   const seasonReport = [];
 
   for (const player of activePlayers) {
@@ -125,25 +122,6 @@ try {
       withRpe,
       withoutRpe: attendedTrainingIds.size - withRpe,
     });
-
-    // ── Match "Present, no grid, no RPE" this season — counted directly from
-    // raw data, not buildLoadRows's output, since an estimated match row
-    // doesn't carry which of the two match-side fallbacks produced it. ─────
-    const griddedSessionIds = new Set(
-      playerMatchStats.map((m) => m.matches?.session_id).filter(Boolean),
-    );
-    const ratedMatchSessionIds = new Set(
-      playerRpe.filter((r) => r.sessions?.session_type === "Match" && r.rpe > 0).map((r) => r.session_id),
-    );
-    const attendedMatchIds = new Set(
-      playerAttendance
-        .filter((a) => matchSessions.some((s) => s.id === a.session_id) && (a.status === "Present" || a.status === "Late"))
-        .map((a) => a.session_id),
-    );
-    const noGridNoRpeCount = [...attendedMatchIds].filter(
-      (sid) => !griddedSessionIds.has(sid) && !ratedMatchSessionIds.has(sid),
-    ).length;
-    if (noGridNoRpeCount > 0) matchNoGridRows.push({ player: player.name, count: noGridNoRpeCount });
 
     if (NO_FALLBACK_ONLY) continue;
 
@@ -193,15 +171,6 @@ try {
   console.log("── Training compliance this season (attended, with RPE, without RPE) ──");
   for (const c of complianceRows.sort((a, b) => b.withoutRpe - a.withoutRpe)) {
     console.log(`  ${c.player.padEnd(24)} attended ${String(c.attended).padStart(3)}  with RPE ${String(c.withRpe).padStart(3)}  without RPE ${String(c.withoutRpe).padStart(3)}`);
-  }
-
-  if (matchNoGridRows.length > 0) {
-    console.log("\n── Match 'Present, no grid, no RPE' this season (the MATCH_RPE × duration fallback) ──");
-    for (const m of matchNoGridRows.sort((a, b) => b.count - a.count)) {
-      console.log(`  ${m.player.padEnd(24)} ${m.count} match${m.count === 1 ? "" : "es"}`);
-    }
-  } else {
-    console.log("\n── Match 'Present, no grid, no RPE' this season — none found ──");
   }
 
   if (!NO_FALLBACK_ONLY) {

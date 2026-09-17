@@ -281,21 +281,25 @@ try {
   assert.equal(fallback[0].estimated, true, "RPE 7 fallback is marked estimated");
 
   const rpeOnly = report.buildLoadRows([matchRpe("rpe-only", 6, 20)], []);
-  assert.equal(rpeOnly[0].load_au, 120, "an ungridded match RPE uses logged minutes and RPE");
-  assert.equal(rpeOnly[0].estimated, false, "an RPE-backed fallback is not estimated");
+  assert.equal(rpeOnly[0].load_au, 120, "an ungridded match RPE uses the player's own logged minutes and RPE");
+  assert.equal(rpeOnly[0].estimated, false, "a real, self-reported RPE-and-minutes row is not estimated");
+
+  // The self-reported path only fires when minutes_played is actually > 0 —
+  // a rated match RPE with no minutes logged is not enough to fabricate load.
+  const rpeNoMinutes = report.buildLoadRows([matchRpe("rpe-no-minutes", 6, 0)], []);
+  assert.equal(rpeNoMinutes.length, 0, "a rated match RPE with minutes_played = 0 produces no load");
+  const rpeNullMinutes = report.buildLoadRows([{ ...matchRpe("rpe-null-minutes", 6, 0), minutes_played: null }], []);
+  assert.equal(rpeNullMinutes.length, 0, "a rated match RPE with minutes_played = null produces no load");
 
   assert.deepEqual(report.buildLoadRows([], []), [], "attendance alone cannot create a full-match workload");
 
-  // ── Match-side missing-everything estimate ──────────────────────────────
-  // Present with neither a grid row nor a rated RPE — no minutes signal at
-  // all, so the fallback uses MATCH_RPE × the match's own scheduled duration.
+  // ── Match-side: no lineup row means no load, full stop ──────────────────
+  // Present with neither a grid row nor a rated RPE — no lineup row, so no
+  // load at all. There is no coarse duration-based fallback any more.
   const ungriddedMatch = trainingSession("ungridded-match", "2026-09-09", { session_type: "Match", duration_mins: 90, planned_rpe: 0 });
   const ungriddedRows = report.buildLoadRows([], [], [attend("target", "ungridded-match", "Present")], [ungriddedMatch]);
-  const ungriddedEst = ungriddedRows.find((r) => r.player_id === "target");
-  assert.ok(ungriddedEst, "a Present player with no grid row and no RPE still gets an estimated match load");
-  assert.equal(ungriddedEst.load_au, 7 * 90, "MATCH_RPE (7) × the match's own scheduled duration (90)");
-  assert.equal(ungriddedEst.estimated, true);
-  assert.equal(ungriddedEst.source, "match");
+  assert.equal(ungriddedRows.filter((r) => r.player_id === "target").length, 0,
+    "a Present player with no lineup row gets zero match load, not an estimate");
 
   // An unused sub (a real grid row recording 0 minutes) is a deliberate
   // signal, not missing data — must not be re-estimated as a full match.
@@ -309,7 +313,7 @@ try {
     "a grid row recording 0 minutes played is not re-estimated as a full match");
 
   // A rated-but-ungridded match already produces a real row — must not also
-  // get the coarse duration-based estimate on top of it.
+  // get any other estimate on top of it.
   const ratedNoGridMatch = trainingSession("rated-no-grid", "2026-09-11", { session_type: "Match", duration_mins: 90, planned_rpe: 0 });
   const ratedNoGridRows = report.buildLoadRows(
     [matchRpe("rated-no-grid", 6, 70)], [],
@@ -317,8 +321,19 @@ try {
     [ratedNoGridMatch],
   );
   const ratedNoGridForPlayer = ratedNoGridRows.filter((r) => r.player_id === "player");
-  assert.equal(ratedNoGridForPlayer.length, 1, "a rated-but-ungridded match produces exactly one row, never also a coarse estimate");
+  assert.equal(ratedNoGridForPlayer.length, 1, "a rated-but-ungridded match produces exactly one row, never also another estimate");
   assert.equal(ratedNoGridForPlayer[0].estimated, false, "the real RPE-based row is not marked estimated");
+
+  // A real grid row — even one recording 0 minutes for an unused sub — must
+  // win over a rated match RPE with its own minutes, not stack with it.
+  const gridWinsMatch = trainingSession("grid-wins", "2026-09-13", { session_type: "Match", duration_mins: 90, planned_rpe: 0 });
+  const gridWinsRows = report.buildLoadRows(
+    [matchRpe("grid-wins", 6, 70)], [matchStat("grid-wins", 0, "2026-09-13")],
+    [attend("player", "grid-wins", "Present")],
+    [gridWinsMatch],
+  );
+  assert.equal(gridWinsRows.filter((r) => r.player_id === "player").length, 0,
+    "a real 0-minute grid row suppresses the self-reported RPE-and-minutes path entirely");
 
   // ── Training-side missing-RPE estimate ──────────────────────────────────
   const noFallbackSession = trainingSession("no-fallback", "2026-09-01", { planned_rpe: 0, duration_mins: 60 });
