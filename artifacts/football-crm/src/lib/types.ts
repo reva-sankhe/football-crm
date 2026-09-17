@@ -395,3 +395,21 @@ export interface PlayerShootout {
   taken: number;
   scored: number;
 }
+
+// ── Calendar events ───────────────────────────────────────────────────────────
+export type EventType = "training" | "match" | "birthday" | "lecture" | "event" | "tournament";
+
+export const EVENT_TYPES: EventType[] = ["training", "match", "birthday", "lecture", "event", "tournament"];
+
+export interface CalendarEvent {
+  id: string;
+  title: string;
+  event_type: EventType;
+  /** ISO datetime string. */
+  start_time: string;
+  /** ISO datetime string, null when the event has no defined end. */
+  end_time: string | null;
+  location: string | null;
+  description: string | null;
+  created_at: string;
+}

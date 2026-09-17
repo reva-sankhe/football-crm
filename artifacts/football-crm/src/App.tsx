@@ -14,6 +14,7 @@ import Fitness from "@/pages/Fitness";
 import SessionRPE from "@/pages/SessionRPE";
 import SessionDetail from "@/pages/SessionDetail";
 import Attendance from "@/pages/Attendance";
+import Calendar from "@/pages/Calendar";
 import Tournaments from "@/pages/Tournaments";
 import TournamentDetail from "@/pages/TournamentDetail";
 import MatchDetail from "@/pages/MatchDetail";
@@ -60,10 +61,10 @@ function AppShell() {
         <Route path="/tournaments/:id" component={TournamentDetail} />
         <Route path="/matches/:id" component={MatchDetail} />
         <Route path="/attendance" component={Attendance} />
-        {/* Legacy links. The calendar became Attendance; Sessions split into
-            Training and Fitness, each carrying the analytics that used to sit on
-            the Analytics page — six of its seven tabs were fitness tests. */}
-        <Route path="/calendar"><Redirect to="/attendance" /></Route>
+        <Route path="/calendar" component={Calendar} />
+        {/* Legacy links. Sessions split into Training and Fitness, each carrying
+            the analytics that used to sit on the Analytics page — six of its
+            seven tabs were fitness tests. */}
         <Route path="/sessions/:id/rpe">{(p) => <Redirect to={`/training/${p.id}/rpe`} />}</Route>
         <Route path="/sessions/:id">{(p) => <Redirect to={`/training/${p.id}`} />}</Route>
         <Route path="/sessions"><Redirect to="/training" /></Route>

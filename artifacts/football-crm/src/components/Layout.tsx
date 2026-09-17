@@ -1,5 +1,5 @@
 import { Link, useLocation } from "wouter";
-import { ChevronDown, ChevronsLeft, ChevronsRight, Sun, Moon, ClipboardCheck, Users, Dumbbell, Activity, Trophy, LogOut } from "lucide-react";
+import { ChevronDown, ChevronsLeft, ChevronsRight, Sun, Moon, ClipboardCheck, Users, Dumbbell, Activity, Trophy, LogOut, CalendarDays } from "lucide-react";
 import { useState, useRef, useEffect } from "react";
 import { cn } from "@/lib/utils";
 import { useTheme } from "@/context/ThemeContext";
@@ -16,6 +16,7 @@ const navItems = [
   { href: "/fitness",  label: "Fitness",      icon: Dumbbell        },
   { href: "/tournaments", label: "Tournaments", icon: Trophy        },
   { href: "/attendance", label: "Attendance", icon: ClipboardCheck  },
+  { href: "/calendar", label: "Calendar", icon: CalendarDays        },
 ];
 
 const logoSrc = `${import.meta.env.BASE_URL}bg-logo.png`.replace(/\/\//g, "/");

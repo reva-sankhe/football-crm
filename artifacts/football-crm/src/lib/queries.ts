@@ -7,6 +7,7 @@ import type {
   MatchStatInput, MatchStage, Opponent,
   MatchPenaltyKick, MatchPenaltyKickInput,
   LeagueOtherMatch, LeagueOtherMatchWithOpponents,
+  CalendarEvent,
 } from "./types";
 
 /**
@@ -885,4 +886,32 @@ export async function fetchMatchCountsByTournament(): Promise<Record<string, num
     counts[row.tournament_id] = (counts[row.tournament_id] ?? 0) + 1;
   }
   return counts;
+}
+
+// ── Calendar events ───────────────────────────────────────────────────────────
+export async function fetchEvents(): Promise<CalendarEvent[]> {
+  const { data, error } = await supabase.from("events").select("*").order("start_time");
+  if (error) throw error;
+  return (data ?? []) as CalendarEvent[];
+}
+
+export async function createEvent(event: Omit<CalendarEvent, "id" | "created_at">): Promise<CalendarEvent> {
+  const { data, error } = await supabase
+    .from("events")
+    .insert({ id: crypto.randomUUID(), ...event })
+    .select()
+    .single();
+  if (error) throw error;
+  return data as CalendarEvent;
+}
+
+export async function updateEvent(id: string, updates: Partial<CalendarEvent>): Promise<CalendarEvent> {
+  const { data, error } = await supabase.from("events").update(updates).eq("id", id).select().single();
+  if (error) throw error;
+  return data as CalendarEvent;
+}
+
+export async function deleteEvent(id: string): Promise<void> {
+  const { error } = await supabase.from("events").delete().eq("id", id);
+  if (error) throw error;
 }
