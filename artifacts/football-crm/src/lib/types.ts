@@ -411,5 +411,10 @@ export interface CalendarEvent {
   end_time: string | null;
   location: string | null;
   description: string | null;
+  /**
+   * A bare RFC 5545 RRULE value (e.g. "FREQ=WEEKLY;COUNT=10"), null for a
+   * one-off event. One row represents the whole series — see lib/recurrence.
+   */
+  recurrence_rule: string | null;
   created_at: string;
 }

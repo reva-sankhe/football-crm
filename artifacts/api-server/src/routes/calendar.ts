@@ -12,6 +12,7 @@ interface EventRow {
   end_time: string | null;
   location: string | null;
   description: string | null;
+  recurrence_rule: string | null;
 }
 
 function toDateArray(iso: string): [number, number, number, number, number] {
@@ -38,7 +39,7 @@ router.get("/calendar/:token.ics", async (req, res) => {
   const supabase = createClient(supabaseUrl, serviceRoleKey);
   const { data, error } = await supabase
     .from("events")
-    .select("id, title, event_type, start_time, end_time, location, description")
+    .select("id, title, event_type, start_time, end_time, location, description, recurrence_rule")
     .order("start_time");
 
   if (error) {
@@ -58,6 +59,7 @@ router.get("/calendar/:token.ics", async (req, res) => {
       : { duration: { hours: 1 } }),
     location: row.location ?? undefined,
     description: row.description ?? undefined,
+    recurrenceRule: row.recurrence_rule ?? undefined,
   }));
 
   const { error: icsError, value } = createEvents(events);

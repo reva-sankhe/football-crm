@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Calendar as CalendarIcon, Check, ChevronLeft, ChevronRight, Copy, Pencil, Plus, Trash2 } from "lucide-react";
+import { Calendar as CalendarIcon, Check, ChevronLeft, ChevronRight, Copy, Pencil, Plus, Repeat, Trash2 } from "lucide-react";
 import { EmptyState } from "@/components/EmptyState";
 import { TableSkeleton } from "@/components/Skeleton";
 import { useAuth } from "@/context/AuthContext";
@@ -7,6 +7,7 @@ import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import { createEvent, deleteEvent, fetchEvents, updateEvent } from "@/lib/queries";
 import { EVENT_TYPES, type CalendarEvent, type EventType } from "@/lib/types";
+import { buildRecurrenceRule, expandOccurrences, parseRecurrenceRule, type RepeatFreq } from "@/lib/recurrence";
 
 const TYPE_LABEL: Record<EventType, string> = {
   training: "Training",
@@ -91,6 +92,7 @@ function EventModal({
   const { toast } = useToast();
   const [saving, setSaving] = useState(false);
   const [form, setForm] = useState(() => {
+    const parsedRepeat = event?.recurrence_rule ? parseRecurrenceRule(event.recurrence_rule) : null;
     if (event) {
       return {
         title: event.title,
@@ -99,6 +101,10 @@ function EventModal({
         end_time: toLocalInput(event.end_time),
         location: event.location ?? "",
         description: event.description ?? "",
+        repeatFreq: (parsedRepeat?.freq ?? "none") as RepeatFreq | "none",
+        repeatEndMode: (parsedRepeat?.until ? "until" : parsedRepeat?.count ? "count" : "never") as "never" | "until" | "count",
+        repeatUntil: parsedRepeat?.until ?? "",
+        repeatCount: parsedRepeat?.count ? String(parsedRepeat.count) : "10",
       };
     }
     const base = initialDate ?? new Date();
@@ -111,6 +117,10 @@ function EventModal({
       end_time: "",
       location: "",
       description: "",
+      repeatFreq: "none" as RepeatFreq | "none",
+      repeatEndMode: "never" as "never" | "until" | "count",
+      repeatUntil: "",
+      repeatCount: "10",
     };
   });
 
@@ -133,6 +143,10 @@ function EventModal({
       toast({ title: "Start date/time is required", variant: "destructive" });
       return;
     }
+    if (form.repeatFreq !== "none" && form.repeatEndMode === "count" && (!form.repeatCount || parseInt(form.repeatCount, 10) < 1)) {
+      toast({ title: "Enter how many times it should repeat", variant: "destructive" });
+      return;
+    }
     setSaving(true);
     try {
       const payload = {
@@ -142,6 +156,14 @@ function EventModal({
         end_time: fromLocalInput(form.end_time),
         location: form.location.trim() || null,
         description: form.description.trim() || null,
+        recurrence_rule:
+          form.repeatFreq === "none"
+            ? null
+            : buildRecurrenceRule({
+                freq: form.repeatFreq,
+                until: form.repeatEndMode === "until" ? form.repeatUntil || null : null,
+                count: form.repeatEndMode === "count" ? parseInt(form.repeatCount, 10) : null,
+              }),
       };
       if (event) {
         await updateEvent(event.id, payload);
@@ -207,6 +229,59 @@ function EventModal({
               />
             ))}
           </div>
+          {field("Repeat", (
+            <select
+              value={form.repeatFreq}
+              onChange={(e) => setForm({ ...form, repeatFreq: e.target.value as RepeatFreq | "none" })}
+              className={inputCls}
+              data-testid="select-event-repeat"
+            >
+              <option value="none">Does not repeat</option>
+              <option value="daily">Daily</option>
+              <option value="weekly">Weekly</option>
+              <option value="monthly">Monthly</option>
+            </select>
+          ))}
+          {form.repeatFreq !== "none" && (
+            <div className="rounded-md border border-border p-3 space-y-2 bg-muted/30">
+              <label className="block text-xs text-muted-foreground">Ends</label>
+              <div className="flex items-center gap-3 flex-wrap text-sm text-foreground">
+                {(["never", "until", "count"] as const).map((mode) => (
+                  <label key={mode} className="flex items-center gap-1.5 cursor-pointer">
+                    <input
+                      type="radio"
+                      name="repeat-end-mode"
+                      checked={form.repeatEndMode === mode}
+                      onChange={() => setForm({ ...form, repeatEndMode: mode })}
+                    />
+                    {mode === "never" ? "Never" : mode === "until" ? "On date" : "After"}
+                  </label>
+                ))}
+              </div>
+              {form.repeatEndMode === "until" && (
+                <input
+                  type="date"
+                  value={form.repeatUntil}
+                  onChange={(e) => setForm({ ...form, repeatUntil: e.target.value })}
+                  className={inputCls}
+                  data-testid="input-event-repeat-until"
+                />
+              )}
+              {form.repeatEndMode === "count" && (
+                <div className="flex items-center gap-2">
+                  <input
+                    type="number"
+                    min={1}
+                    value={form.repeatCount}
+                    onChange={(e) => setForm({ ...form, repeatCount: e.target.value })}
+                    className={cn(inputCls, "w-20")}
+                    data-testid="input-event-repeat-count"
+                  />
+                  <span className="text-xs text-muted-foreground">occurrences</span>
+                </div>
+              )}
+            </div>
+          )}
           {field("Location", (
             <input
               value={form.location}
@@ -249,7 +324,7 @@ function EventModal({
 // ── Day agenda — everything on one day, opened by clicking that day's cell ───
 function DayAgendaModal({
   date,
-  events,
+  occurrences,
   isAdmin,
   onClose,
   onAdd,
@@ -257,7 +332,7 @@ function DayAgendaModal({
   onDelete,
 }: {
   date: Date;
-  events: CalendarEvent[];
+  occurrences: Occurrence[];
   isAdmin: boolean;
   onClose: () => void;
   onAdd: () => void;
@@ -285,19 +360,24 @@ function DayAgendaModal({
           </div>
         </div>
         <div className="px-5 py-4 overflow-y-auto space-y-2">
-          {events.length === 0 ? (
+          {occurrences.length === 0 ? (
             <EmptyState title="No events on this day" />
           ) : (
-            events.map((ev) => (
+            occurrences.map(({ event: ev, start, end }) => (
               <div key={ev.id} className="bg-muted/50 border border-border rounded-lg px-4 py-3 flex items-start justify-between gap-3" data-testid={`event-row-${ev.id}`}>
                 <div className="min-w-0 space-y-1">
                   <div className="flex items-center gap-2 flex-wrap">
                     <span className="text-sm font-medium text-foreground">{ev.title}</span>
                     <TypeBadge type={ev.event_type} />
+                    {ev.recurrence_rule && (
+                      <span className="inline-flex items-center gap-1 text-[11px] text-muted-foreground" title="Repeating event — editing or deleting affects the whole series">
+                        <Repeat size={11} /> Repeats
+                      </span>
+                    )}
                   </div>
                   <p className="text-xs text-muted-foreground">
-                    {new Date(ev.start_time).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}
-                    {ev.end_time && ` – ${new Date(ev.end_time).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}`}
+                    {start.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}
+                    {end && ` – ${end.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}`}
                     {ev.location && ` · ${ev.location}`}
                   </p>
                   {ev.description && <p className="text-xs text-muted-foreground">{ev.description}</p>}
@@ -381,6 +461,15 @@ function SubscribePanel() {
 const WEEKDAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const CHIPS_PER_CELL = 3;
 
+/** One occurrence of an event, expanded onto the grid — a recurring event's
+ * `start`/`end` shift per occurrence, but always point back at the same
+ * underlying `event` row, since editing/deleting acts on the whole series. */
+interface Occurrence {
+  event: CalendarEvent;
+  start: Date;
+  end: Date | null;
+}
+
 function buildMonthGrid(monthStart: Date): Date[] {
   const gridStart = new Date(monthStart);
   gridStart.setDate(gridStart.getDate() - gridStart.getDay());
@@ -425,22 +514,37 @@ export default function Calendar() {
     })();
   }, [refresh]);
 
-  const eventsByDay = useMemo(() => {
-    const map = new Map<string, CalendarEvent[]>();
-    for (const ev of events) {
-      const key = dateKey(ev.start_time);
-      const list = map.get(key);
-      if (list) list.push(ev);
-      else map.set(key, [ev]);
-    }
-    for (const list of map.values()) {
-      list.sort((a, b) => a.start_time.localeCompare(b.start_time));
-    }
-    return map;
-  }, [events]);
-
   const gridDays = useMemo(() => buildMonthGrid(month), [month]);
   const today = new Date();
+
+  // Expands every event (recurring or not) into its occurrences within the
+  // visible grid, so a weekly training shows up on every matching day —
+  // editing/deleting any occurrence still acts on the one underlying row.
+  const eventsByDay = useMemo(() => {
+    const map = new Map<string, Occurrence[]>();
+    if (gridDays.length === 0) return map;
+
+    const rangeStart = gridDays[0];
+    const lastDay = gridDays[gridDays.length - 1];
+    const rangeEnd = new Date(lastDay.getFullYear(), lastDay.getMonth(), lastDay.getDate(), 23, 59, 59, 999);
+
+    for (const ev of events) {
+      const durationMs = ev.end_time ? new Date(ev.end_time).getTime() - new Date(ev.start_time).getTime() : null;
+      const starts = expandOccurrences(ev.start_time, ev.recurrence_rule, rangeStart, rangeEnd);
+      for (const start of starts) {
+        const end = durationMs != null ? new Date(start.getTime() + durationMs) : null;
+        const key = dateKey(start);
+        const occurrence: Occurrence = { event: ev, start, end };
+        const list = map.get(key);
+        if (list) list.push(occurrence);
+        else map.set(key, [occurrence]);
+      }
+    }
+    for (const list of map.values()) {
+      list.sort((a, b) => a.start.getTime() - b.start.getTime());
+    }
+    return map;
+  }, [events, gridDays]);
 
   const handleDelete = async (ev: CalendarEvent) => {
     if (!window.confirm(`Delete "${ev.title}"?`)) return;
@@ -513,8 +617,8 @@ export default function Calendar() {
           {gridDays.map((day) => {
             const inMonth = day.getMonth() === month.getMonth();
             const isToday = dateKey(day) === dateKey(today);
-            const dayEvents = eventsByDay.get(dateKey(day)) ?? [];
-            const overflow = dayEvents.length - CHIPS_PER_CELL;
+            const dayOccurrences = eventsByDay.get(dateKey(day)) ?? [];
+            const overflow = dayOccurrences.length - CHIPS_PER_CELL;
 
             return (
               <button
@@ -535,13 +639,14 @@ export default function Calendar() {
                   {day.getDate()}
                 </span>
                 <div className="space-y-0.5 min-w-0">
-                  {dayEvents.slice(0, CHIPS_PER_CELL).map((ev) => (
+                  {dayOccurrences.slice(0, CHIPS_PER_CELL).map(({ event: ev, start }) => (
                     <div
-                      key={ev.id}
-                      className={cn("truncate rounded px-1 py-0.5 text-[10px] sm:text-[11px] font-medium leading-tight", TYPE_CHIP[ev.event_type])}
+                      key={`${ev.id}-${start.toISOString()}`}
+                      className={cn("truncate rounded px-1 py-0.5 text-[10px] sm:text-[11px] font-medium leading-tight flex items-center gap-0.5", TYPE_CHIP[ev.event_type])}
                       title={ev.title}
                     >
-                      {ev.title}
+                      {ev.recurrence_rule && <Repeat size={9} className="shrink-0" />}
+                      <span className="truncate">{ev.title}</span>
                     </div>
                   ))}
                   {overflow > 0 && (
@@ -559,7 +664,7 @@ export default function Calendar() {
       {agendaDate && (
         <DayAgendaModal
           date={agendaDate}
-          events={eventsByDay.get(dateKey(agendaDate)) ?? []}
+          occurrences={eventsByDay.get(dateKey(agendaDate)) ?? []}
           isAdmin={isAdmin}
           onClose={() => setAgendaDate(null)}
           onAdd={() => setShowAdd(true)}
