@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Calendar as CalendarIcon, Check, ChevronLeft, ChevronRight, Copy, HelpCircle, Pencil, Plus, Repeat, Trash2 } from "lucide-react";
+import { Calendar as CalendarIcon, Check, ChevronLeft, ChevronRight, Copy, ExternalLink, HelpCircle, Pencil, Plus, Repeat, Trash2 } from "lucide-react";
 import { EmptyState } from "@/components/EmptyState";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { TableSkeleton } from "@/components/Skeleton";
@@ -595,15 +595,33 @@ function SubscribePanel() {
             <HelpCircle size={12} /> How to?
           </button>
         </PopoverTrigger>
-        <PopoverContent className="w-72 text-xs" data-testid="popover-how-to-subscribe">
-          <p className="font-medium text-foreground mb-2">Add this calendar in Google Calendar</p>
-          <ol className="list-decimal list-inside space-y-1 text-muted-foreground">
-            <li>Open Google Calendar on desktop/web</li>
-            <li>Next to "Other calendars", click <span className="text-foreground">+</span></li>
-            <li>Select <span className="text-foreground">From URL</span></li>
-            <li>Paste the link (copy it above) and click <span className="text-foreground">Add calendar</span></li>
-          </ol>
-          <p className="text-muted-foreground mt-2">New events sync automatically, usually within a few hours.</p>
+        <PopoverContent className="w-80 text-xs" data-testid="popover-how-to-subscribe">
+          <div>
+            <p className="font-medium text-foreground mb-1.5">On a computer</p>
+            <ol className="list-decimal list-inside space-y-1 text-muted-foreground">
+              <li>Copy the link above</li>
+              <li>Go to <span className="text-foreground">calendar.google.com</span></li>
+              <li>Bottom left, next to "Other calendars", click <span className="text-foreground">+</span></li>
+              <li>Select <span className="text-foreground">From URL</span>, paste the link, then <span className="text-foreground">Add calendar</span></li>
+            </ol>
+          </div>
+          <div className="mt-3">
+            <p className="font-medium text-foreground mb-1.5">On your phone</p>
+            <p className="text-muted-foreground">
+              The Google Calendar app can't add a calendar by URL directly. Do the steps above once on a
+              computer (or in your phone's browser at calendar.google.com) — it'll then show up
+              automatically in the app, since it's tied to your Google account.
+            </p>
+          </div>
+          <a
+            href="https://support.google.com/calendar/answer/37100?hl=en"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="mt-3 flex items-center gap-1 text-indigo-500 hover:text-indigo-600 font-medium"
+            data-testid="link-google-calendar-help"
+          >
+            Google's full guide <ExternalLink size={11} />
+          </a>
         </PopoverContent>
       </Popover>
     </div>
