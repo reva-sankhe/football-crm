@@ -313,7 +313,7 @@ export default function MatchDetail() {
         setMatch((m) => (m ? { ...m, ...updated } : m));
       }
       await replacePenaltyKicks(match.id, kickSnapshot);
-      await bulkUpsertMatchStats(match.id, Object.values(snapshot));
+      await bulkUpsertMatchStats(match.id, match.session_id, Object.values(snapshot));
       setSaved(snapshot);
       setSavedKicks(kickSnapshot);
       toast({ title: "Match saved", description: `${totals.played} players, ${totals.goals} goals` });

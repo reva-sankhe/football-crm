@@ -1,5 +1,5 @@
 import { supabase } from "./supabase";
-import { dayFromISO, isoDaysAgo } from "./attendance";
+import { dayFromISO, isoDaysAgo, playersNeedingAutoPresent } from "./attendance";
 import { tournamentFinish, type TournamentFinish } from "./tournaments";
 import type {
   Player, TestSession, TestResult, TrainingSession, SessionRPE, SessionAttendance, AttendanceStatus,
@@ -292,6 +292,9 @@ export async function insertSessionRPE(
     .select()
     .single();
   if (error) throw error;
+  // Submitting RPE is itself evidence the player was there — if nothing has
+  // marked their attendance for this session yet, write it now.
+  await autoMarkPresentIfMissing(entry.session_id, [entry.player_id]);
   return data as SessionRPE;
 }
 
@@ -346,16 +349,50 @@ export async function upsertAttendance(
   status: AttendanceStatus,
   notes?: string | null
 ): Promise<SessionAttendance> {
+  // A direct, single-cell edit — always a coach's own action, so it clears
+  // any auto-Present flag that row might have carried.
   const { data, error } = await supabase
     .from("session_attendance")
     .upsert(
-      { session_id: sessionId, player_id: playerId, status, notes: notes ?? null },
+      { session_id: sessionId, player_id: playerId, status, notes: notes ?? null, auto_marked: false },
       { onConflict: "session_id,player_id" }
     )
     .select()
     .single();
   if (error) throw error;
   return data as SessionAttendance;
+}
+
+/**
+ * Writes a Present, auto_marked row for any of `playerIds` with no
+ * attendance row at all yet for this session — called after an RPE
+ * submission or a match lineup save. Never overwrites a real row, whether
+ * that's a coach's entry or an earlier auto-Present one.
+ */
+export async function autoMarkPresentIfMissing(sessionId: string, playerIds: string[]): Promise<void> {
+  if (playerIds.length === 0) return;
+  const { data: existing, error: fetchErr } = await supabase
+    .from("session_attendance")
+    .select("player_id")
+    .eq("session_id", sessionId)
+    .in("player_id", playerIds);
+  if (fetchErr) throw fetchErr;
+
+  const missing = playersNeedingAutoPresent((existing ?? []).map((r) => r.player_id as string), playerIds);
+  if (missing.length === 0) return;
+
+  const { error } = await supabase
+    .from("session_attendance")
+    .upsert(
+      missing.map((player_id) => ({
+        session_id: sessionId,
+        player_id,
+        status: "Present" as AttendanceStatus,
+        auto_marked: true,
+      })),
+      { onConflict: "session_id,player_id", ignoreDuplicates: true },
+    );
+  if (error) throw error;
 }
 
 // ── Analytics: All RPE with session + player info ─────────────────────────────
@@ -386,12 +423,12 @@ export async function fetchAllAttendanceStats(): Promise<
 
 export async function bulkUpsertAttendance(
   sessionId: string,
-  records: { player_id: string; status: AttendanceStatus; notes?: string | null }[]
+  records: { player_id: string; status: AttendanceStatus; notes?: string | null; auto_marked?: boolean }[]
 ): Promise<void> {
   // Deduplicate by player_id — last entry wins, preventing the Postgres
   // "ON CONFLICT DO UPDATE command cannot affect row a second time" error
   // which fires when the same player appears more than once in the batch.
-  const deduped = new Map<string, { player_id: string; status: AttendanceStatus; notes?: string | null }>();
+  const deduped = new Map<string, { player_id: string; status: AttendanceStatus; notes?: string | null; auto_marked?: boolean }>();
   for (const r of records) deduped.set(r.player_id, r);
 
   const rows = Array.from(deduped.values()).map((r) => ({
@@ -399,6 +436,9 @@ export async function bulkUpsertAttendance(
     player_id: r.player_id,
     status: r.status,
     notes: r.notes ?? null,
+    // Omitted by every caller except the attendance screen, which is the
+    // only one that needs to preserve an existing auto-Present row.
+    auto_marked: r.auto_marked ?? false,
   }));
   const { error } = await supabase
     .from("session_attendance")
@@ -782,7 +822,7 @@ export async function fetchMatchPlayerStats(
   return (data ?? []) as (MatchPlayerStat & { players: Player | null })[];
 }
 
-export async function bulkUpsertMatchStats(matchId: string, rows: MatchStatInput[]): Promise<void> {
+export async function bulkUpsertMatchStats(matchId: string, sessionId: string, rows: MatchStatInput[]): Promise<void> {
   // Dedupe by player_id — last entry wins. Without this, a repeated player would
   // trigger "ON CONFLICT DO UPDATE command cannot affect row a second time".
   const deduped = new Map<string, MatchStatInput>();
@@ -795,6 +835,10 @@ export async function bulkUpsertMatchStats(matchId: string, rows: MatchStatInput
     .from("match_player_stats")
     .upsert(payload, { onConflict: "match_id,player_id" });
   if (error) throw error;
+
+  // Named in the lineup at all — even at 0 minutes, an unused sub was still
+  // there — is evidence of attendance the same way an RPE submission is.
+  await autoMarkPresentIfMissing(sessionId, payload.map((r) => r.player_id));
 }
 
 // ── Penalty shootouts ─────────────────────────────────────────────────────────

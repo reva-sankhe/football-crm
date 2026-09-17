@@ -5,7 +5,7 @@ import { useTheme } from "@/context/ThemeContext";
 import { useAuth } from "@/context/AuthContext";
 import { useToast } from "@/hooks/use-toast";
 import { createTrainingSession } from "@/lib/queries";
-import { SESSION_TYPE_CFG, SESSION_TYPES, dayFromISO, formatDateShort, todayISO } from "@/lib/attendance";
+import { SESSION_TYPE_CFG, SESSION_TYPES, dayFromISO, formatDateShort, needsAttendanceFlag, todayISO } from "@/lib/attendance";
 import type { SessionType, TrainingSession } from "@/lib/types";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 
@@ -103,21 +103,31 @@ export function SessionStrip({
           const isActive = s.id === activeSessionId;
           const summary = marked[s.id];
           const taken = summary != null && summary.total > 0;
+          const needsAttendance = needsAttendanceFlag(s.session_type, taken);
 
           return (
             <button
               key={s.id}
               data-session-id={s.id}
               onClick={() => handleSelect(s.id)}
+              title={needsAttendance ? "Needs attendance" : undefined}
               className={cn(
-                "shrink-0 w-[104px] px-2.5 py-2 rounded-xl border text-left transition-all duration-100",
+                "relative shrink-0 w-[104px] px-2.5 py-2 rounded-xl border text-left transition-all duration-100",
                 isActive
                   ? "border-indigo-500 bg-indigo-500/10 ring-2 ring-indigo-500/30"
-                  : isDark
-                    ? "border-white/10 hover:border-white/25 hover:bg-white/[0.03]"
-                    : "border-slate-200 hover:border-slate-300 hover:bg-slate-50",
+                  : needsAttendance
+                    ? "border-status-warn/60 hover:border-status-warn"
+                    : isDark
+                      ? "border-white/10 hover:border-white/25 hover:bg-white/[0.03]"
+                      : "border-slate-200 hover:border-slate-300 hover:bg-slate-50",
               )}
             >
+              {needsAttendance && (
+                <span
+                  aria-label="Needs attendance"
+                  className="absolute top-1.5 right-1.5 w-1.5 h-1.5 rounded-full bg-status-warn"
+                />
+              )}
               <div className={cn("text-sm font-semibold leading-tight", isActive ? "text-indigo-400" : "text-foreground")}>
                 {formatDateShort(s.date)}
               </div>

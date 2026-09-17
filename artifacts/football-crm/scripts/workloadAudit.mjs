@@ -60,6 +60,21 @@ function addDays(d, n) {
   return new Date(d.getFullYear(), d.getMonth(), d.getDate() + n);
 }
 
+// PostgREST silently truncates an unpaginated select at 1000 rows — no
+// error, just a short payload. session_attendance passed 1000 in Aug 2026,
+// so every fetch here pages through the whole table rather than risk it.
+const PAGE_SIZE = 1000;
+async function fetchAllRows(supabase, table, select) {
+  const out = [];
+  for (let from = 0; ; from += PAGE_SIZE) {
+    const { data, error } = await supabase.from(table).select(select).range(from, from + PAGE_SIZE - 1);
+    if (error) return { data: null, error };
+    out.push(...(data ?? []));
+    if (!data || data.length < PAGE_SIZE) break;
+  }
+  return { data: out, error: null };
+}
+
 try {
   const report = await vite.ssrLoadModule("/src/lib/report.ts");
   const { buildLoadRows, collapseLoadByDay, computeAcwr, teamSessionDatesFrom, CHRONIC_LOAD_FLOOR, ACWR_CONFIG } = report;
@@ -73,11 +88,11 @@ try {
     { data: attendance, error: attErr },
     { data: matchStats, error: statsErr },
   ] = await Promise.all([
-    supabase.from("players").select("*"),
-    supabase.from("sessions").select("*"),
-    supabase.from("session_rpe").select("*, sessions(*)"),
-    supabase.from("session_attendance").select("*"),
-    supabase.from("match_player_stats").select("*, matches(id, session_id, sessions(*))"),
+    fetchAllRows(supabase, "players", "*"),
+    fetchAllRows(supabase, "sessions", "*"),
+    fetchAllRows(supabase, "session_rpe", "*, sessions(*)"),
+    fetchAllRows(supabase, "session_attendance", "*"),
+    fetchAllRows(supabase, "match_player_stats", "*, matches(id, session_id, sessions(*))"),
   ]);
   for (const [name, err] of [["players", playersErr], ["sessions", sessionsErr], ["session_rpe", rpeErr], ["session_attendance", attErr], ["match_player_stats", statsErr]]) {
     if (err) { console.error(`Failed to fetch ${name}:`, err.message); process.exit(1); }

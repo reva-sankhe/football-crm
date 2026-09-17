@@ -38,6 +38,41 @@ export function countsAsAttended(status: AttendanceStatus | null | undefined): b
   return status != null && ATTENDED.has(status);
 }
 
+// ── Auto-Present ───────────────────────────────────────────────────────────
+/**
+ * Which of `candidatePlayerIds` have no attendance row yet for this session —
+ * an RPE submission or a lineup entry only auto-marks a player Present when
+ * nothing already exists for them; a real row, auto or not, always wins.
+ */
+export function playersNeedingAutoPresent(
+  existingPlayerIds: Iterable<string>,
+  candidatePlayerIds: string[],
+): string[] {
+  const existing = new Set(existingPlayerIds);
+  return candidatePlayerIds.filter((id) => !existing.has(id));
+}
+
+/**
+ * Whether a player's attendance row should keep its `auto_marked` flag on
+ * save. A coach touching that player's status in this editing session is a
+ * real decision and always clears it; leaving it untouched carries forward
+ * whatever it already was (true for a row an RPE submission or lineup entry
+ * wrote, false for anything a coach entered or the plain Absent default).
+ */
+export function resolveAutoMarked(
+  playerId: string,
+  touchedPlayerIds: ReadonlySet<string>,
+  previouslyAutoMarked: Record<string, boolean>,
+): boolean {
+  if (touchedPlayerIds.has(playerId)) return false;
+  return previouslyAutoMarked[playerId] ?? false;
+}
+
+/** A session chip needs the "needs attendance" flag — Lectures are exempt. */
+export function needsAttendanceFlag(sessionType: SessionType, taken: boolean): boolean {
+  return sessionType !== "Lecture" && !taken;
+}
+
 /** Percentage bands, matching the 75% threshold the Dashboard alerts on. */
 export function attendancePctColor(pct: number): string {
   if (pct >= 85) return STATUS_TEXT.good;

@@ -14,7 +14,7 @@ import { useTheme } from "@/context/ThemeContext";
 import { useAuth } from "@/context/AuthContext";
 import { useToast } from "@/hooks/use-toast";
 import { bulkUpsertAttendance, fetchAttendanceBySession } from "@/lib/queries";
-import { ATTENDANCE_CFG, ATTENDANCE_STATUSES } from "@/lib/attendance";
+import { ATTENDANCE_CFG, ATTENDANCE_STATUSES, resolveAutoMarked } from "@/lib/attendance";
 import type { AttendanceStatus, Player, TrainingSession } from "@/lib/types";
 import {
   DropdownMenu,
@@ -24,6 +24,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 
 export type AttendanceDraft = Record<string, AttendanceStatus>;
+type AutoMap = Record<string, boolean>;
 
 /** Dot colours for the count line — a mark carries identity, the text stays ink. */
 const STATUS_DOT: Record<AttendanceStatus, string> = {
@@ -33,7 +34,9 @@ const STATUS_DOT: Record<AttendanceStatus, string> = {
   Injured: "bg-[#ec835a]",
 };
 
-/** Everyone starts Absent; existing rows override. */
+/** Everyone starts Absent; existing rows override — an RPE-submitted or
+ * lineup-entered Present is a real row like any other, so it already wins
+ * here without special-casing. */
 function buildDraft(players: Player[], rows: { player_id: string; status: AttendanceStatus }[]): AttendanceDraft {
   const draft: AttendanceDraft = {};
   for (const p of players) draft[p.id] = "Absent";
@@ -41,6 +44,12 @@ function buildDraft(players: Player[], rows: { player_id: string; status: Attend
     if (r.player_id in draft) draft[r.player_id] = r.status;
   }
   return draft;
+}
+
+function buildAutoMap(rows: { player_id: string; auto_marked: boolean }[]): AutoMap {
+  const map: AutoMap = {};
+  for (const r of rows) map[r.player_id] = r.auto_marked;
+  return map;
 }
 
 function sameDraft(a: AttendanceDraft, b: AttendanceDraft): boolean {
@@ -75,6 +84,13 @@ export function MarkAttendance({
 
   const [draft, setDraft] = useState<AttendanceDraft>({});
   const [saved, setSaved] = useState<AttendanceDraft>({});
+  /** Whether each player's current row was written by an RPE submission or a
+   * lineup entry rather than a coach. Carried separately from `draft` so a
+   * full-roster save can tell which cells to keep flagged. */
+  const [autoMarked, setAutoMarked] = useState<AutoMap>({});
+  /** Players the coach has explicitly changed since this session was loaded —
+   * touching a cell always clears its auto flag on save, whatever it was. */
+  const [touched, setTouched] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [search, setSearch] = useState("");
@@ -84,6 +100,8 @@ export function MarkAttendance({
     if (!session) {
       setDraft({});
       setSaved({});
+      setAutoMarked({});
+      setTouched(new Set());
       return;
     }
     let cancelled = false;
@@ -95,6 +113,8 @@ export function MarkAttendance({
         const next = buildDraft(players, rows);
         setDraft(next);
         setSaved(next);
+        setAutoMarked(buildAutoMap(rows));
+        setTouched(new Set());
       })
       .catch((err) => {
         if (cancelled) return;
@@ -102,6 +122,8 @@ export function MarkAttendance({
         const fallback = buildDraft(players, []);
         setDraft(fallback);
         setSaved(fallback);
+        setAutoMarked({});
+        setTouched(new Set());
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
@@ -138,9 +160,13 @@ export function MarkAttendance({
   }, [players, search]);
 
   // ── Interactions ───────────────────────────────────────────────────────────
+  // Every mutator here is a coach decision, so it marks the player touched —
+  // resolveAutoMarked then clears their auto flag at save time regardless of
+  // what they were set to before.
   const setStatus = (playerId: string, status: AttendanceStatus) => {
     if (!isAdmin) return;
     setDraft((d) => ({ ...d, [playerId]: status }));
+    setTouched((t) => new Set(t).add(playerId));
   };
 
   const toggleRow = (playerId: string) => {
@@ -151,6 +177,7 @@ export function MarkAttendance({
       // back to Absent rather than flipping to Present.
       [playerId]: d[playerId] === "Present" ? "Absent" : "Present",
     }));
+    setTouched((t) => new Set(t).add(playerId));
   };
 
   const setAll = (status: AttendanceStatus) => {
@@ -158,19 +185,34 @@ export function MarkAttendance({
     const next: AttendanceDraft = {};
     for (const p of players) next[p.id] = status;
     setDraft(next);
+    setTouched(new Set(players.map((p) => p.id)));
   };
 
   const handleSave = async () => {
     if (!session) return;
     setSaving(true);
     const snapshot = draft;
+    const touchedSnapshot = touched;
+    const autoSnapshot = autoMarked;
     try {
       // One request writing a row for every active player, Absents included.
+      // A player nobody touched keeps whatever auto flag they already had —
+      // only a coach's own change here clears it.
       await bulkUpsertAttendance(
         session.id,
-        players.map((p) => ({ player_id: p.id, status: snapshot[p.id] ?? "Absent" })),
+        players.map((p) => ({
+          player_id: p.id,
+          status: snapshot[p.id] ?? "Absent",
+          auto_marked: resolveAutoMarked(p.id, touchedSnapshot, autoSnapshot),
+        })),
       );
       setSaved(snapshot);
+      setAutoMarked((prev) => {
+        const next: AutoMap = {};
+        for (const p of players) next[p.id] = resolveAutoMarked(p.id, touchedSnapshot, prev);
+        return next;
+      });
+      setTouched(new Set());
       onSaved(session.id);
       toast({ title: "Attendance saved", description: `${counts.Present + counts.Late} of ${players.length} attended` });
     } catch (err) {
@@ -293,6 +335,7 @@ export function MarkAttendance({
             const StatusIcon = cfg.icon;
             const isException = status === "Late" || status === "Injured";
             const isPresent = status === "Present";
+            const isAuto = isPresent && resolveAutoMarked(player.id, touched, autoMarked);
 
             return (
               <div
@@ -340,6 +383,14 @@ export function MarkAttendance({
                     <div className="text-sm font-medium text-foreground truncate leading-tight">{player.name}</div>
                     {isException && (
                       <div className="text-[11px] text-muted-foreground truncate mt-0.5">{cfg.label}</div>
+                    )}
+                    {isAuto && (
+                      <div
+                        className="text-[10px] text-muted-foreground/70 truncate mt-0.5"
+                        title="Marked Present automatically from an RPE submission or lineup entry — not yet confirmed by a coach"
+                      >
+                        Auto
+                      </div>
                     )}
                   </div>
 

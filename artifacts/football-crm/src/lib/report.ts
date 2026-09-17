@@ -228,16 +228,23 @@ export interface LoadRow {
  *
  * The match grid (`match_player_stats`) is the primary source of match
  * minutes: a grid row's minutes are paired with that player's own logged
- * match RPE when they submitted one, else MATCH_RPE (7), flagged `estimated`
- * accordingly. A real grid row always wins, even one recording 0 minutes for
- * an unused sub — that's a deliberate signal, not missing data.
+ * match RPE when they submitted one, else MATCH_RPE (7). A real grid row
+ * always wins, even one recording 0 minutes for an unused sub — that's a
+ * deliberate signal, not missing data.
  *
  * A player who submitted a match RPE with their own `minutes_played` but has
- * no grid row for that match still counts — that's real, player-reported
- * data, not a fabricated estimate — but only when that self-reported minutes
- * figure is greater than 0. Attendance alone never establishes minutes
- * played and so never creates match load on its own; nor does a match with
- * no grid row and no self-reported minutes.
+ * no grid row for that match still counts — that's reported data, not a
+ * fabricated estimate — but only when that self-reported minutes figure is
+ * greater than 0. Attendance alone never establishes minutes played and so
+ * never creates match load on its own; nor does a match with no grid row
+ * and no self-reported minutes.
+ *
+ * `estimated` on the resulting row means "not the player's own genuine
+ * rating", which is broader than "no rating at all": a `session_rpe` row can
+ * itself carry `estimated: true` — a flat backfilled figure (a tournament
+ * weekend rated at a single RPE after the fact, say) rather than something
+ * the player reported — and that flag always survives onto the load row it
+ * produces, on both the match and training side.
  *
  * Training works differently: a non-Match session has no per-player minutes
  * grid, only whether they attended. A player who attended but never submitted
@@ -279,7 +286,10 @@ export function buildLoadRows(
       load_au: Math.round(effort * s.minutes_played),
       source: "match",
       rpe: effort,
-      estimated: rated === undefined,
+      // No player rating at all falls back to MATCH_RPE — always an
+      // estimate. A real rating can itself be a backfilled figure (e.g. a
+      // flat tournament RPE) rather than something the player reported.
+      estimated: rated === undefined || rated.estimated === true,
       planned_load_au: null,
     });
   }
@@ -298,7 +308,7 @@ export function buildLoadRows(
         load_au: Math.round(r.rpe * r.minutes_played),
         source: "match",
         rpe: r.rpe,
-        estimated: false,
+        estimated: r.estimated === true,
         planned_load_au: null,
       });
       continue;
@@ -309,7 +319,7 @@ export function buildLoadRows(
       load_au: r.load_au,
       source: "session",
       rpe: r.rpe,
-      estimated: false,
+      estimated: r.estimated === true,
       planned_load_au: r.sessions?.planned_load_au ?? null,
     });
   }

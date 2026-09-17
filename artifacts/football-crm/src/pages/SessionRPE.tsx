@@ -147,6 +147,7 @@ export default function SessionRPE() {
         minutes_played: minsToSave,
         load_au: minsToSave != null ? Math.round(selectedRPE * minsToSave) : 0,
         notes: notes || null,
+        estimated: false,
       });
       // Refresh logged IDs — player disappears from dropdown
       await refreshLoggedIds(selectedSessionId);

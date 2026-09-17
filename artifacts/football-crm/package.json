@@ -10,7 +10,9 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test:fitness-precision": "node scripts/fitnessAnalytics.precision.test.mjs",
     "test:workload-ratio": "node scripts/workloadRatio.test.mjs",
-    "audit:workload": "node scripts/workloadAudit.mjs"
+    "test:attendance": "node scripts/attendance.test.mjs",
+    "audit:workload": "node scripts/workloadAudit.mjs",
+    "audit:completeness": "node scripts/dataCompletenessAudit.mjs"
   },
   "devDependencies": {
     "@hookform/resolvers": "^3.10.0",

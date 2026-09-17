@@ -113,6 +113,8 @@ export interface SessionAttendance {
   player_id: string;
   status: AttendanceStatus;
   notes: string | null;
+  /** Written by the app (an RPE submission or a lineup entry), not a coach. */
+  auto_marked: boolean;
   created_at: string;
 }
 
@@ -141,6 +143,8 @@ export interface SessionRPE {
   minutes_played: number | null;  // individual time on pitch; used for load_au = rpe × minutes_played
   load_au: number;
   notes: string | null;
+  /** A backfilled figure (e.g. a flat tournament RPE), not player-reported. */
+  estimated: boolean;
   created_at: string;
 }
 

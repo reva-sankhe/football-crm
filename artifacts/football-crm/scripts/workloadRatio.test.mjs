@@ -38,7 +38,7 @@ function establishedRows(acute) {
   ];
 }
 
-function matchRpe(sessionId, effort, minutes) {
+function matchRpe(sessionId, effort, minutes, extra = {}) {
   return {
     id: `rpe-${sessionId}`,
     player_id: "player",
@@ -47,8 +47,10 @@ function matchRpe(sessionId, effort, minutes) {
     minutes_played: minutes,
     load_au: effort * minutes,
     notes: null,
+    estimated: false,
     created_at: "2026-08-24T00:00:00.000Z",
     sessions: { id: sessionId, date: "2026-08-24", session_type: "Match" },
+    ...extra,
   };
 }
 
@@ -283,6 +285,24 @@ try {
   const rpeOnly = report.buildLoadRows([matchRpe("rpe-only", 6, 20)], []);
   assert.equal(rpeOnly[0].load_au, 120, "an ungridded match RPE uses the player's own logged minutes and RPE");
   assert.equal(rpeOnly[0].estimated, false, "a real, self-reported RPE-and-minutes row is not estimated");
+
+  // A backfilled RPE row (e.g. a flat tournament rating) is a real "rated"
+  // row for pairing-with-grid-minutes purposes, but its own estimated flag
+  // must survive onto the resulting load row — it's still not a genuine
+  // player rating, whichever path produced the load.
+  const backfilledWithGrid = report.buildLoadRows(
+    [matchRpe("backfilled-grid", 8, 90, { estimated: true })],
+    [matchStat("backfilled-grid", 70)], // grid minutes differ from the RPE row's own minutes on purpose
+  );
+  assert.equal(backfilledWithGrid[0].load_au, 560, "grid minutes (70) are used, paired with the backfilled RPE (8)");
+  assert.equal(backfilledWithGrid[0].estimated, true, "a backfilled RPE row stays estimated even though it's a real 'rated' row");
+
+  const backfilledNoGrid = report.buildLoadRows(
+    [matchRpe("backfilled-no-grid", 8, 65, { estimated: true })],
+    [],
+  );
+  assert.equal(backfilledNoGrid[0].load_au, 520, "8 × 65 self-reported minutes");
+  assert.equal(backfilledNoGrid[0].estimated, true, "the self-reported-minutes path also carries the row's own estimated flag through");
 
   // The self-reported path only fires when minutes_played is actually > 0 —
   // a rated match RPE with no minutes logged is not enough to fabricate load.
