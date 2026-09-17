@@ -1,10 +1,10 @@
 import { useEffect, useState, useCallback } from "react";
 import { useLocation } from "wouter";
-import { CalendarDays, Clock, Zap } from "lucide-react";
-import { cn } from "@/lib/utils";
+import { CalendarDays, ChevronDown, Clock, Loader2, Zap } from "lucide-react";
+import { cn, getErrorMessage } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/context/AuthContext";
-import { fetchTrainingSessions, createTrainingSession } from "@/lib/queries";
+import { fetchNonMatchSessionsPage, createTrainingSession } from "@/lib/queries";
 import { SESSION_TYPES, dayFromISO, todayISO } from "@/lib/attendance";
 import { SessionTypeBadge } from "@/components/Badges";
 import { AddButton } from "@/components/AddButton";
@@ -194,8 +194,36 @@ function NewSessionModal({ onClose, onSaved }: NewSessionModalProps) {
 }
 
 // ── The session archive ───────────────────────────────────────────────────────
+const PAGE_SIZE = 10;
+
+/** Fetches RPE counts/averages for one batch of sessions — split out so
+ * loadMore can extend the existing maps instead of recomputing them for
+ * sessions already on screen. */
+async function fetchLoadStats(sess: TrainingSession[]) {
+  const counts: Record<string, number> = {};
+  const avgs: Record<string, number | null> = {};
+  await Promise.all(
+    sess.map(async (s) => {
+      const { data } = await supabase
+        .from("session_rpe")
+        .select("player_id, load_au")
+        .eq("session_id", s.id);
+      counts[s.id] = data ? data.length : 0;
+      if (data && data.length > 0) {
+        const total = data.reduce((sum: number, r: { load_au: number }) => sum + (r.load_au ?? 0), 0);
+        avgs[s.id] = Math.round(total / data.length);
+      } else {
+        avgs[s.id] = null;
+      }
+    })
+  );
+  return { counts, avgs };
+}
+
 /**
- * Every training session, newest first. Matches are excluded: they live under
+ * The last {@link PAGE_SIZE} training sessions, newest first, with older ones
+ * fetched on demand via "Load more" — a full unpaginated fetch got slower as
+ * the season's session count grew. Matches are excluded: they live under
  * Tournaments, and a fixture is not a training session even though both are
  * rows in `sessions`.
  */
@@ -206,33 +234,19 @@ export function SessionsTab() {
   const [loggedCounts, setLoggedCounts] = useState<Record<string, number>>({});
   const [avgLoads, setAvgLoads] = useState<Record<string, number | null>>({});
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [hasMore, setHasMore] = useState(false);
   const [showNew, setShowNew] = useState(false);
+  const { toast } = useToast();
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      // Matches live under Tournaments — this tab is the training archive only.
-      const sess = (await fetchTrainingSessions()).filter((s) => s.session_type !== "Match");
-      setSessions(sess);
-
-      if (sess.length > 0) {
-        const counts: Record<string, number> = {};
-        const avgs: Record<string, number | null> = {};
-        await Promise.all(
-          sess.map(async (s) => {
-            const { data } = await supabase
-              .from("session_rpe")
-              .select("player_id, load_au")
-              .eq("session_id", s.id);
-            counts[s.id] = data ? data.length : 0;
-            if (data && data.length > 0) {
-              const total = data.reduce((sum: number, r: { load_au: number }) => sum + (r.load_au ?? 0), 0);
-              avgs[s.id] = Math.round(total / data.length);
-            } else {
-              avgs[s.id] = null;
-            }
-          })
-        );
+      const page = await fetchNonMatchSessionsPage(0, PAGE_SIZE);
+      setSessions(page.sessions);
+      setHasMore(page.hasMore);
+      if (page.sessions.length > 0) {
+        const { counts, avgs } = await fetchLoadStats(page.sessions);
         setLoggedCounts(counts);
         setAvgLoads(avgs);
       }
@@ -240,6 +254,24 @@ export function SessionsTab() {
       setLoading(false);
     }
   }, []);
+
+  const loadMore = useCallback(async () => {
+    setLoadingMore(true);
+    try {
+      const page = await fetchNonMatchSessionsPage(sessions.length, PAGE_SIZE);
+      setSessions((prev) => [...prev, ...page.sessions]);
+      setHasMore(page.hasMore);
+      if (page.sessions.length > 0) {
+        const { counts, avgs } = await fetchLoadStats(page.sessions);
+        setLoggedCounts((prev) => ({ ...prev, ...counts }));
+        setAvgLoads((prev) => ({ ...prev, ...avgs }));
+      }
+    } catch (err) {
+      toast({ title: "Failed to load more sessions", description: getErrorMessage(err), variant: "destructive" });
+    } finally {
+      setLoadingMore(false);
+    }
+  }, [sessions.length, toast]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -340,6 +372,20 @@ export function SessionsTab() {
               </tbody>
             </table>
           </div>
+
+          {hasMore && (
+            <div className="flex justify-center">
+              <button
+                onClick={loadMore}
+                disabled={loadingMore}
+                data-testid="button-load-more-sessions"
+                className="flex items-center gap-1.5 px-4 py-2 text-sm text-muted-foreground hover:text-foreground border border-border rounded-lg transition-colors disabled:opacity-60"
+              >
+                {loadingMore ? <Loader2 size={14} className="animate-spin" /> : <ChevronDown size={14} />}
+                {loadingMore ? "Loading…" : "Load more"}
+              </button>
+            </div>
+          )}
         </>
       )}
 

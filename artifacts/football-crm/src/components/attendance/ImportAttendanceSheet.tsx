@@ -7,7 +7,7 @@ import {
   FileSpreadsheet,
   AlertCircle,
 } from "lucide-react";
-import { cn } from "@/lib/utils";
+import { cn, getErrorMessage } from "@/lib/utils";
 import { useTheme } from "@/context/ThemeContext";
 import { useToast } from "@/hooks/use-toast";
 import { SessionTypeBadge } from "@/components/Badges";
@@ -259,8 +259,7 @@ export function ImportAttendanceSheet({
       setImportStep("done");
       onImported();
     } catch (err) {
-      const msg = err instanceof Error ? err.message : (err as { message?: string })?.message ?? String(err);
-      toast({ title: "Import failed", description: msg, variant: "destructive" });
+      toast({ title: "Import failed", description: getErrorMessage(err), variant: "destructive" });
     } finally {
       setImporting(false);
     }

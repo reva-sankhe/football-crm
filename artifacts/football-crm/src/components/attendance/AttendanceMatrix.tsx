@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "wouter";
 import { CalendarRange, Check, RefreshCw, SlidersHorizontal } from "lucide-react";
-import { cn } from "@/lib/utils";
+import { cn, getErrorMessage } from "@/lib/utils";
 import { useTheme } from "@/context/ThemeContext";
 import { useAuth } from "@/context/AuthContext";
 import { useToast } from "@/hooks/use-toast";
@@ -118,7 +118,7 @@ export function AttendanceMatrix({ sessions, matchesOnDay, players, refreshKey, 
         setGrid(next);
       })
       .catch((err) => {
-        if (!cancelled) toast({ title: "Failed to load attendance", description: String(err), variant: "destructive" });
+        if (!cancelled) toast({ title: "Failed to load attendance", description: getErrorMessage(err), variant: "destructive" });
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
@@ -200,7 +200,7 @@ export function AttendanceMatrix({ sessions, matchesOnDay, players, refreshKey, 
         else delete next[playerId][sessionId];
         return next;
       });
-      toast({ title: "Failed to update", description: String(err), variant: "destructive" });
+      toast({ title: "Failed to update", description: getErrorMessage(err), variant: "destructive" });
     }
   };
 

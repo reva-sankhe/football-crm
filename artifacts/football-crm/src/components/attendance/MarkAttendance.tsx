@@ -9,7 +9,7 @@ import {
   Users,
   X,
 } from "lucide-react";
-import { cn } from "@/lib/utils";
+import { cn, getErrorMessage } from "@/lib/utils";
 import { useTheme } from "@/context/ThemeContext";
 import { useAuth } from "@/context/AuthContext";
 import { useToast } from "@/hooks/use-toast";
@@ -98,7 +98,7 @@ export function MarkAttendance({
       })
       .catch((err) => {
         if (cancelled) return;
-        toast({ title: "Failed to load attendance", description: String(err), variant: "destructive" });
+        toast({ title: "Failed to load attendance", description: getErrorMessage(err), variant: "destructive" });
         const fallback = buildDraft(players, []);
         setDraft(fallback);
         setSaved(fallback);
@@ -174,8 +174,7 @@ export function MarkAttendance({
       onSaved(session.id);
       toast({ title: "Attendance saved", description: `${counts.Present + counts.Late} of ${players.length} attended` });
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      toast({ title: "Failed to save attendance", description: msg, variant: "destructive" });
+      toast({ title: "Failed to save attendance", description: getErrorMessage(err), variant: "destructive" });
     } finally {
       setSaving(false);
     }

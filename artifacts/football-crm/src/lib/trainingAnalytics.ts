@@ -1,5 +1,8 @@
-import { computeAcwr, collapseLoadByDay, type AcwrResult, type LoadRow } from "./report";
-import type { Player } from "./types";
+import {
+  computeAcwr, collapseLoadByDay, teamSessionDatesFrom,
+  type AcwrResult, type LoadRow,
+} from "./report";
+import type { Player, TrainingSession } from "./types";
 
 /**
  * Team training-load analytics — the figures behind Training → Overview.
@@ -108,8 +111,10 @@ export function buildPlayerLoadDistribution(
   all: LoadRow[],
   players: Player[],
   now: Date = new Date(),
+  sessions: Pick<TrainingSession, "date" | "session_type">[] = [],
 ): PlayerLoadLine[] {
   const byId = new Map(players.map((p) => [p.id, p] as const));
+  const teamSessionDates = teamSessionDatesFrom(sessions);
 
   const grouped = new Map<string, LoadRow[]>();
   for (const r of windowed) {
@@ -145,7 +150,7 @@ export function buildPlayerLoadDistribution(
       days: days.length,
       matchShare: totalAu > 0 ? matchAu / totalAu : 0,
       estimatedMatchShare: totalAu > 0 ? estimatedMatchAu / totalAu : 0,
-      acwr: computeAcwr(collapseLoadByDay(allByPlayer.get(playerId) ?? []), now),
+      acwr: computeAcwr(collapseLoadByDay(allByPlayer.get(playerId) ?? []), now, undefined, teamSessionDates),
     });
   }
 
@@ -223,9 +228,7 @@ export function interpretLoadDistribution(lines: PlayerLoadLine[]): string {
     );
   }
 
-  const flagged = lines.filter((l) =>
-    l.acwr.status === "elevated" || l.acwr.status === "high_spike" || l.acwr.status === "very_high_spike",
-  );
+  const flagged = lines.filter((l) => l.acwr.status === "elevated" || l.acwr.status === "spike");
   if (flagged.length > 0) {
     parts.push(
       `${flagged.map((l) => `${l.player.name} (${round1(l.acwr.acwr ?? 0)})`).join(", ")} `

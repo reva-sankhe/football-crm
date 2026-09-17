@@ -19,7 +19,7 @@ import {
  */
 const LOAD_WINDOW_DAYS = 35;
 import {
-  ACWR_CONFIG, MATCH_RPE, buildLoadRows, collapseLoadByDay, computeAcwr, isMatchSession,
+  ACWR_CONFIG, MATCH_RPE, buildLoadRows, collapseLoadByDay, computeAcwr, isMatchSession, teamSessionDatesFrom,
   teamBandFor,
 } from "@/lib/report";
 import { ChartSkeleton, Skeleton } from "@/components/Skeleton";
@@ -178,9 +178,9 @@ export default function PlayerDetail() {
   // stretch back to the player's first ever fixture.
   const loadRows = useMemo(() => {
     const since = isoDaysAgo(LOAD_WINDOW_DAYS);
-    return buildLoadRows(recentLoad, matchStats)
+    return buildLoadRows(recentLoad, matchStats, playerAttendance, allSessions)
       .filter((r) => r.date != null && r.date >= since);
-  }, [recentLoad, matchStats]);
+  }, [recentLoad, matchStats, playerAttendance, allSessions]);
 
   /**
    * What the chart plots and the workload ratio reads: one entry per day, so a tournament day
@@ -217,8 +217,8 @@ export default function PlayerDetail() {
 
   // Shared with the printable report so workload figures cannot disagree.
   const {
-    acwr, acute: acuteLoad, baselineWeeklyAvg, historyDays, status: acwrStatus,
-  } = computeAcwr(dailyLoad);
+    acwr, acute: acuteLoad, weekOnWeekPct, baselineWeeklyAvg, historyDays, status: acwrStatus,
+  } = computeAcwr(dailyLoad, undefined, undefined, teamSessionDatesFrom(allSessions));
   const acwrCfg = ACWR_CONFIG[acwrStatus];
 
   // ── Attendance ────────────────────────────────────────────────────────────
@@ -539,7 +539,12 @@ export default function PlayerDetail() {
                   <div className="text-xs font-medium mt-1" style={{ color: acwrCfg.color }}>{acwrCfg.label}</div>
                 </div>
                 <div className="text-right text-[11px] text-muted-foreground space-y-1">
-                  <div>Last 7 days <span className="text-foreground font-time font-bold">{Math.round(acuteLoad)}</span></div>
+                  <div>
+                    Last 7 days <span className="text-foreground font-time font-bold">{Math.round(acuteLoad)}</span>
+                    {weekOnWeekPct != null && (
+                      <span className="font-time"> ({weekOnWeekPct >= 0 ? "+" : ""}{Math.round(weekOnWeekPct)}% wk/wk)</span>
+                    )}
+                  </div>
                   <div>Prior 3-wk avg <span className="text-foreground font-time font-bold">{Math.round(baselineWeeklyAvg)}</span></div>
                 </div>
               </div>
@@ -549,14 +554,13 @@ export default function PlayerDetail() {
                   : `${acwrCfg.desc} This is a workload monitoring signal, not an injury prediction.`}
               </p>
               <div className="flex h-1.5 rounded-full overflow-hidden gap-px mt-auto">
-                <div className="w-[25%] bg-slate-400/40" title="< 0.8 Below baseline" />
-                <div className="w-[25%] bg-status-good" title="0.8–1.3 Typical range" />
-                <div className="w-[15%] bg-status-warn" title="1.3–1.5 Elevated" />
-                <div className="w-[20%] bg-status-warn/70" title="1.5–2.0 High spike" />
-                <div className="w-[15%] bg-status-bad" title="> 2.0 Very high spike" />
+                <div className="w-[25%] bg-slate-400/40" title="< 0.8 Low" />
+                <div className="w-[25%] bg-status-good" title="0.8–1.3 Typical" />
+                <div className="w-[20%] bg-status-warn" title="1.3–1.5 Elevated" />
+                <div className="w-[30%] bg-status-bad" title="> 1.5 Spike" />
               </div>
               <div className="flex justify-between text-[10px] text-muted-foreground mt-1">
-                <span>0.8</span><span>1.3</span><span>1.5</span><span>2.0+</span>
+                <span>0.8</span><span>1.3</span><span>1.5+</span>
               </div>
             </div>
 

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ChevronLeft, ChevronRight, Plus, Zap } from "lucide-react";
-import { cn } from "@/lib/utils";
+import { ChevronLeft, ChevronRight, Loader2, Plus, Zap } from "lucide-react";
+import { cn, getErrorMessage } from "@/lib/utils";
 import { useTheme } from "@/context/ThemeContext";
 import { useAuth } from "@/context/AuthContext";
 import { useToast } from "@/hooks/use-toast";
@@ -21,6 +21,11 @@ interface SessionStripProps {
   onSessionCreated: (session: TrainingSession) => void;
   /** Guard hook — return false to block switching away from an unsaved session. */
   canLeaveSession?: () => boolean;
+  /** Whether older sessions exist beyond what's currently loaded. */
+  hasMore?: boolean;
+  /** Fetches the next batch of older sessions. */
+  onLoadMore?: () => void;
+  loadingMore?: boolean;
 }
 
 export function SessionStrip({
@@ -32,6 +37,9 @@ export function SessionStrip({
   rosterSize,
   onSessionCreated,
   canLeaveSession,
+  hasMore,
+  onLoadMore,
+  loadingMore,
 }: SessionStripProps) {
   const { theme } = useTheme();
   const isDark = theme === "dark";
@@ -55,6 +63,22 @@ export function SessionStrip({
     if (id === activeSessionId) return;
     if (canLeaveSession && !canLeaveSession()) return;
     onSelect(id);
+  };
+
+  // The right arrow scrolls like normal while there's room to scroll into;
+  // once it's already at (or past) the end — including when the loaded page
+  // is short enough that there was never anything to scroll — it fetches
+  // older sessions instead, so the arrow keeps working past the first page.
+  const handleScrollRight = () => {
+    const el = scrollRef.current;
+    if (el && hasMore && onLoadMore && !loadingMore) {
+      const atEnd = el.scrollLeft + el.clientWidth >= el.scrollWidth - 40;
+      if (atEnd) {
+        onLoadMore();
+        return;
+      }
+    }
+    scrollBy(320);
   };
 
   return (
@@ -113,11 +137,17 @@ export function SessionStrip({
         {sessions.length === 0 && (
           <div className="text-sm text-muted-foreground py-3">No sessions yet — create one →</div>
         )}
+
+        {loadingMore && (
+          <div className="shrink-0 w-[104px] flex items-center justify-center text-muted-foreground">
+            <Loader2 size={16} className="animate-spin" />
+          </div>
+        )}
       </div>
 
       <button
-        onClick={() => scrollBy(320)}
-        aria-label="Scroll sessions right"
+        onClick={handleScrollRight}
+        aria-label={hasMore ? "Scroll sessions right, or load older sessions" : "Scroll sessions right"}
         className={cn(
           "hidden sm:flex w-8 h-8 shrink-0 items-center justify-center rounded-lg transition-colors",
           isDark ? "text-slate-400 hover:bg-white/8" : "text-slate-500 hover:bg-slate-100",
@@ -195,7 +225,7 @@ function NewSessionForm({
       });
       onCreated(session);
     } catch (err) {
-      toast({ title: "Failed to create session", description: String(err), variant: "destructive" });
+      toast({ title: "Failed to create session", description: getErrorMessage(err), variant: "destructive" });
     } finally {
       setSaving(false);
     }

@@ -54,14 +54,26 @@ export function isMatchSession(s: { session_type: string }): boolean {
 
 export interface AcwrResult {
   acwr: number | null;
+  /** This week's total load — the latest 7 calendar days. Same value as `acute`. */
   acute: number;
+  /** The single week immediately before the acute week (not the 3-week baseline). */
+  previousWeekAu: number;
+  /** (acute − previousWeekAu) ÷ previousWeekAu × 100. Null when the previous week had no load. */
+  weekOnWeekPct: number | null;
   /** Average weekly load over the 21 days before the acute week. */
   baselineWeeklyAvg: number;
   /** Calendar days from the first logged workload through the anchor date. */
   historyDays: number;
   /** A ratio is only meaningful after a complete 28-day workload history. */
   hasBaseline: boolean;
-  status: "below_baseline" | "typical" | "elevated" | "high_spike" | "very_high_spike" | "building";
+  /**
+   * "low_base" takes priority over the ratio-derived bands whenever
+   * `baselineWeeklyAvg` is below `CHRONIC_LOAD_FLOOR` (once a baseline exists
+   * at all) — a small absolute increase on a near-zero baseline can otherwise
+   * read as a dramatic ratio. `acwr` stays populated either way; only the
+   * classification is suppressed.
+   */
+  status: "building" | "low_base" | "low" | "typical" | "elevated" | "spike";
   /** The date the rolling windows were measured back from. */
   asAt: string;
 }
@@ -179,6 +191,12 @@ function isoOf(d: Date): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
+/** Parses an ISO date string as a local-midnight Date — never UTC. */
+function toLocalDate(iso: string): Date {
+  const [y, m, d] = iso.slice(0, 10).split("-").map(Number);
+  return new Date(y, m - 1, d);
+}
+
 // ── Load ──────────────────────────────────────────────────────────────────────
 /**
  * Fallback used only when minutes are known but that player did not submit a
@@ -216,10 +234,21 @@ export interface LoadRow {
  * Attendance alone does not establish minutes played, so it never creates an
  * estimated full-match load. This avoids turning an unused substitute or an
  * unknown appearance into a 90-minute workload.
+ *
+ * Training works differently: a non-Match session has no per-player minutes
+ * grid, only whether they attended. A player who attended but never submitted
+ * RPE gets an estimate — the session's own team median RPE (needs at least 3
+ * other submissions to be a meaningful signal, not one teammate's rating
+ * standing in for "the team"), else the session's `planned_rpe`, else no row
+ * at all — same "don't fabricate data" principle as the match side. A `Late`
+ * player is estimated at the session's full `duration_mins`, not a prorated
+ * one; a deliberate simplification, not a bug.
  */
 export function buildLoadRows(
   rpe: RpeRow[],
   matchStats: PlayerMatchStat[],
+  attendance: AttendanceRow[] = [],
+  sessions: TrainingSession[] = [],
 ): LoadRow[] {
   const out: LoadRow[] = [];
   /** (player, session) pairs the match grid has already accounted for. */
@@ -251,6 +280,34 @@ export function buildLoadRows(
     });
   }
 
+  // A player marked Present/Late for a match with neither a grid row nor a
+  // rated RPE currently gets zero load, even though they clearly attended.
+  // There's no per-player minutes signal to work from at all here (unlike the
+  // grid-with-no-RPE case above, which at least has real minutes), so this
+  // estimates at MATCH_RPE × the match's own scheduled duration — the same
+  // "no data to fabricate from" caution as everywhere else, just with a
+  // coarser fallback since it's genuinely the last resort.
+  for (const session of sessions) {
+    if (session.session_type !== "Match") continue;
+    const attendedPlayerIds = attendance
+      .filter((a) => a.session_id === session.id && countsAsAttended(a.status))
+      .map((a) => a.player_id);
+    for (const playerId of attendedPlayerIds) {
+      const key = `${playerId}:${session.id}`;
+      if (fromGrid.has(key)) continue; // has a real (possibly 0-minute) grid row
+      if (ratedMatchRpe.has(key)) continue; // has a rated RPE row, handled below
+      out.push({
+        player_id: playerId,
+        date: session.date,
+        load_au: Math.round(MATCH_RPE * session.duration_mins),
+        source: "match",
+        rpe: MATCH_RPE,
+        estimated: true,
+        planned_load_au: null,
+      });
+    }
+  }
+
   for (const r of rpe) {
     const isMatch = r.sessions ? isMatchSession(r.sessions) : false;
     if (isMatch) {
@@ -279,6 +336,53 @@ export function buildLoadRows(
     });
   }
 
+  // ── Training-side missing-RPE estimate ─────────────────────────────────
+  const submittedKeys = new Set(rpe.map((r) => `${r.player_id}:${r.session_id}`));
+  const rpeBySession = new Map<string, number[]>();
+  for (const r of rpe) {
+    if (r.sessions && isMatchSession(r.sessions)) continue; // matches use their own fallback, above
+    if (!rpeBySession.has(r.session_id)) rpeBySession.set(r.session_id, []);
+    rpeBySession.get(r.session_id)!.push(r.rpe);
+  }
+  const median = (nums: number[]): number => {
+    const sorted = [...nums].sort((a, b) => a - b);
+    const mid = Math.floor(sorted.length / 2);
+    return sorted.length % 2 === 0 ? (sorted[mid - 1] + sorted[mid]) / 2 : sorted[mid];
+  };
+
+  for (const session of sessions) {
+    // Strictly "Training" — not just "not a Match". A Lecture carries no
+    // physical load by design (see SessionsTab.tsx: "a lecture carries no
+    // physical load — it's an attendance record"), so estimating an RPE×
+    // duration load for a missed Lecture RPE would fabricate load that was
+    // never supposed to exist in the first place.
+    if (session.session_type !== "Training") continue;
+    const attendedPlayerIds = attendance
+      .filter((a) => a.session_id === session.id && countsAsAttended(a.status))
+      .map((a) => a.player_id);
+    if (attendedPlayerIds.length === 0) continue;
+    const sessionRpes = rpeBySession.get(session.id) ?? [];
+
+    for (const playerId of attendedPlayerIds) {
+      if (submittedKeys.has(`${playerId}:${session.id}`)) continue; // already has a real row
+
+      const effort = sessionRpes.length >= 3 ? median(sessionRpes)
+        : session.planned_rpe > 0 ? session.planned_rpe
+        : null;
+      if (effort === null) continue;
+
+      out.push({
+        player_id: playerId,
+        date: session.date,
+        load_au: Math.round(effort * session.duration_mins),
+        source: "session",
+        rpe: effort,
+        estimated: true,
+        planned_load_au: session.planned_load_au ?? null,
+      });
+    }
+  }
+
   return out;
 }
 
@@ -292,8 +396,9 @@ export function buildLoadRows(
  * four days". Totals are unchanged, so the workload ratio is identical either way; this is
  * about the unit the load is expressed in.
  *
- * A day carrying any match load is marked `"match"`. Its `estimated` flag stays
- * true when any match minutes on that day used the RPE 7 fallback.
+ * A day carrying any match load is marked `"match"`. Its `estimated` flag
+ * stays true when any row folded into it — match or training — used an
+ * estimated fallback, regardless of which row happened to be first.
  */
 export function collapseLoadByDay(rows: LoadRow[]): LoadRow[] {
   const byDay = new Map<string, LoadRow>();
@@ -313,21 +418,161 @@ export function collapseLoadByDay(rows: LoadRow[]): LoadRow[] {
     }
     if (r.source === "match") {
       day.source = "match";
-      day.estimated ||= r.estimated;
     }
+    day.estimated ||= r.estimated;
   }
 
   return [...byDay.values(), ...undated];
 }
 
+// ── Dense daily series (for monotony/strain — not wired into any page yet) ────
+export interface DenseDayLoad {
+  date: string;
+  load_au: number;
+}
+
+/**
+ * Every calendar day in [start, end], zero where `dayRows` (already
+ * collapsed to one row per day, per player — see collapseLoadByDay) has no
+ * entry for it. ACWR is a sum, so a sparse series works fine for it; a real
+ * per-day standard deviation (monotony, strain) needs rest days to actually
+ * be zeros, not silently absent.
+ */
+export function denseDailyLoad(dayRows: LoadRow[], start: Date, end: Date): DenseDayLoad[] {
+  const byDate = new Map<string, number>();
+  for (const r of dayRows) {
+    if (r.date == null) continue;
+    byDate.set(r.date, (byDate.get(r.date) ?? 0) + r.load_au);
+  }
+  const out: DenseDayLoad[] = [];
+  const cur = new Date(start.getFullYear(), start.getMonth(), start.getDate());
+  const last = new Date(end.getFullYear(), end.getMonth(), end.getDate());
+  while (cur <= last) {
+    const key = isoOf(cur);
+    out.push({ date: key, load_au: byDate.get(key) ?? 0 });
+    cur.setDate(cur.getDate() + 1);
+  }
+  return out;
+}
+
+/**
+ * A player's activity window for `denseDailyLoad` — not their squad tenure,
+ * just the earliest/latest dates there's actual signal for.
+ *
+ * Start: the earliest of their row's `created_at`, or any attendance/RPE/
+ * match date — `created_at` alone is an imperfect proxy, since a player's DB
+ * row can post-date their real first activity.
+ *
+ * End: `windowEnd` while still active — the window keeps going. Once
+ * inactive, the latest of their RPE/match dates or a Present/Late attendance
+ * date; Absent and Injured attendance dates are excluded, since neither is
+ * evidence the player was actually there.
+ *
+ * Dates outside [start, end] are meant to be left out of a dense series
+ * entirely, never zeroed — zeroing them would fabricate a "rest day" for
+ * someone not yet (or no longer) on the squad, distorting monotony's mean
+ * for a mid-window joiner or leaver.
+ */
+export function playerActivityBounds(
+  createdAt: string,
+  attendance: { date: string; status: string }[],
+  rpeAndMatchDates: string[],
+  isActive: boolean,
+  windowEnd: Date,
+): { start: Date; end: Date } {
+  const earliest = (dates: Date[]): Date => dates.reduce((a, b) => (b < a ? b : a));
+  const latest = (dates: Date[]): Date => dates.reduce((a, b) => (b > a ? b : a));
+
+  const start = earliest([
+    toLocalDate(createdAt),
+    ...attendance.map((a) => toLocalDate(a.date)),
+    ...rpeAndMatchDates.map(toLocalDate),
+  ]);
+
+  if (isActive) return { start, end: windowEnd };
+
+  const presenceDates = [
+    ...attendance.filter((a) => a.status === "Present" || a.status === "Late").map((a) => toLocalDate(a.date)),
+    ...rpeAndMatchDates.map(toLocalDate),
+  ];
+  // No real activity at all beyond their own row existing — a degenerate
+  // single-day window rather than an empty or reversed range.
+  const end = presenceDates.length > 0 ? latest(presenceDates) : start;
+  return { start, end };
+}
+
 // ── Workload ratio (uncoupled ACWR) ────────────────────────────────────────────
+/**
+ * Below this weekly baseline, a ratio is classified "low_base" instead of by
+ * its numeric band — a small absolute increase on a near-zero baseline (e.g.
+ * a player just back from injury) can otherwise read as a dramatic spike.
+ *
+ * Fixed rule, not tuned from current data: 300 AU/week is roughly one light
+ * session per week. This is meant to hold every season, not be recalibrated
+ * off whatever's currently in the database.
+ */
+export const CHRONIC_LOAD_FLOOR = 300;
+
+/**
+ * A team-wide dead period of at least this many consecutive calendar days
+ * with no Training or Match session — a real off-season/break, not any one
+ * player's own absence — qualifies as a break worth resetting for. How long
+ * ratios then stay "building" afterward is not this number: it's however
+ * long the full 28-day acute+baseline window takes to move entirely past
+ * the break (see `computeAcwr`), which is longer than this by definition.
+ */
+export const GAP_RESET_DAYS = 21;
+
+/**
+ * Every date the *whole squad* has a Training or Match session — the input
+ * `computeAcwr`'s `teamSessionDates` param expects. Pass the full `sessions`
+ * table (or every session in scope), not one player's rows; team-break
+ * detection is squad-wide by design.
+ */
+export function teamSessionDatesFrom(sessions: Pick<TrainingSession, "date" | "session_type">[]): string[] {
+  return sessions
+    .filter((s) => s.session_type === "Training" || s.session_type === "Match")
+    .map((s) => s.date);
+}
+
+/**
+ * The date the squad's own session calendar most recently resumed after a
+ * gap of at least `gapDays` *empty* days (no Training/Match at all) — null
+ * if no such gap exists in `teamSessionDates` up to `anchor`.
+ *
+ * This is deliberately about the team's calendar, never an individual
+ * player's attendance — an injury, illness, or being dropped from the squad
+ * must never trigger this; only a genuine team-wide gap does. `low_base`
+ * already covers a player whose own baseline is thin for other reasons.
+ *
+ * "At least `gapDays` empty days between session A and session B" means the
+ * two dates are `gapDays + 1` calendar days apart (the days strictly between
+ * them are the empty ones) — so with the default 21, a 22-day gap between
+ * consecutive sessions triggers a reset and a 20-day gap does not.
+ */
+function findTeamBreakResumeDate(teamSessionDates: string[], anchor: Date, gapDays: number): Date | null {
+  const dates = [...new Set(teamSessionDates)]
+    .map(toLocalDate)
+    .filter((d) => d <= anchor)
+    .sort((a, b) => a.getTime() - b.getTime());
+
+  let resumeDate: Date | null = null;
+  for (let i = 1; i < dates.length; i++) {
+    const daysApart = Math.round((dates[i].getTime() - dates[i - 1].getTime()) / 86_400_000);
+    if (daysApart - 1 >= gapDays) resumeDate = dates[i];
+  }
+  return resumeDate;
+}
+
+// Boundaries are exact and intentionally asymmetric at 1.3 vs 1.5: Typical
+// runs [0.8, 1.3), Elevated [1.3, 1.5] — see computeAcwr below.
 export const ACWR_CONFIG: Record<AcwrResult["status"], { label: string; color: string; desc: string }> = {
-  below_baseline: { label: "Below Baseline", color: "#94a3b8",       desc: "Recent workload is lower than the previous three-week average." },
-  typical:        { label: "Typical Range",  color: STATUS.good,     desc: "Recent workload is broadly in line with the previous three weeks." },
-  elevated:       { label: "Elevated",       color: STATUS.warning,  desc: "Recent workload is above the previous three-week average. Review recovery and upcoming sessions." },
-  high_spike:     { label: "High Spike",     color: STATUS.warning,  desc: "Recent workload is substantially above the previous three-week average. Review the next few days." },
-  very_high_spike:{ label: "Very High Spike",color: STATUS.critical, desc: "Recent workload is more than twice the previous three-week average. Review workload, recovery, and upcoming sessions." },
-  building:       { label: "Building Baseline", color: "#94a3b8",    desc: "A complete 28-day workload history is needed before this ratio is classified." },
+  low:      { label: "Low",            color: "#94a3b8",      desc: "Recent workload is lower than the player's previous three-week average." },
+  typical:  { label: "Typical",        color: STATUS.good,    desc: "Recent workload is broadly in line with the player's previous three weeks." },
+  elevated: { label: "Elevated",       color: STATUS.warning, desc: "Recent workload is above the player's previous three-week average — worth monitoring alongside recovery and upcoming sessions." },
+  spike:    { label: "Spike",          color: STATUS.critical,desc: "Recent workload is well above the player's previous three-week average — worth a closer look at workload, recovery, and upcoming sessions." },
+  low_base: { label: "Low Base",       color: "#94a3b8",      desc: "The player's own three-week average is too low for this ratio to be a meaningful signal yet." },
+  building: { label: "Building Baseline", color: "#94a3b8",   desc: "A complete 28-day workload history is needed before this ratio is classified." },
 };
 
 export function workloadRatioWindows(anchor?: Date): WorkloadRatioWindows {
@@ -353,8 +598,28 @@ export function workloadRatioWindows(anchor?: Date): WorkloadRatioWindows {
  * weeks." Reports anchor to the end of the selected range so the number matches
  * the period being printed rather than silently reflecting the present day.
  */
-export function computeAcwr(rows: LoadRow[], anchor?: Date): AcwrResult {
+/**
+ * `floor` defaults to the real `CHRONIC_LOAD_FLOOR` constant; only tests pass
+ * a different value, since the real one is a placeholder (0, inert) until
+ * tuned against actual weekly-load percentiles.
+ *
+ * `teamSessionDates` — every date the whole squad had a Training/Match
+ * session (not this one player's rows) — is optional and defaults to `[]`,
+ * meaning "no team-break detection." Pass it to have a real team-wide gap
+ * (see `GAP_RESET_DAYS`) force `status: "building"` until a fresh baseline
+ * has rebuilt since the break ended, regardless of what this player's own
+ * ratio would otherwise read.
+ */
+export function computeAcwr(
+  rows: LoadRow[],
+  anchor?: Date,
+  floor: number = CHRONIC_LOAD_FLOOR,
+  teamSessionDates: string[] = [],
+): AcwrResult {
   const { end, acuteStart, baselineStart, baselineEnd } = workloadRatioWindows(anchor);
+  // The single week right before the acute week — baselineEnd is already
+  // exactly one day before acuteStart, so this just extends 7 days further back.
+  const previousWeekStart = new Date(baselineEnd.getFullYear(), baselineEnd.getMonth(), baselineEnd.getDate() - 6);
   const at = (r: LoadRow) => (r.date ? new Date(r.date + "T00:00:00") : null);
   const dated = rows.flatMap((r) => {
     const date = at(r);
@@ -363,6 +628,9 @@ export function computeAcwr(rows: LoadRow[], anchor?: Date): AcwrResult {
 
   const acute = dated.reduce((sum, row) =>
     row.at >= acuteStart && row.at <= end ? sum + row.load_au : sum, 0);
+  const previousWeekAu = dated.reduce((sum, row) =>
+    row.at >= previousWeekStart && row.at <= baselineEnd ? sum + row.load_au : sum, 0);
+  const weekOnWeekPct = previousWeekAu > 0 ? ((acute - previousWeekAu) / previousWeekAu) * 100 : null;
   const baselineTotal = dated.reduce((sum, row) =>
     row.at >= baselineStart && row.at <= baselineEnd ? sum + row.load_au : sum, 0);
   const baselineWeeklyAvg = baselineTotal / 3;
@@ -376,15 +644,48 @@ export function computeAcwr(rows: LoadRow[], anchor?: Date): AcwrResult {
   const hasBaseline = firstLogged !== null && firstLogged <= baselineStart && baselineWeeklyAvg > 0;
   const acwr = hasBaseline ? acute / baselineWeeklyAvg : null;
 
-  const status: AcwrResult["status"] =
+  // low_base only ever replaces what would otherwise be Spike — a low/typical/
+  // elevated reading stays as-is even when the baseline is below the floor.
+  // `hasBaseline` already requires baselineWeeklyAvg > 0, so a baseline of
+  // exactly 0 routes to "building" above and never reaches this check at all.
+  const ratioStatus: AcwrResult["status"] =
     acwr === null ? "building"
-    : acwr < 0.8 ? "below_baseline"
-    : acwr <= 1.3 ? "typical"
+    : acwr < 0.8 ? "low"
+    : acwr < 1.3 ? "typical"
     : acwr <= 1.5 ? "elevated"
-    : acwr <= 2 ? "high_spike"
-    : "very_high_spike";
+    : "spike";
+  const withFloor: AcwrResult["status"] =
+    ratioStatus === "spike" && baselineWeeklyAvg < floor ? "low_base" : ratioStatus;
 
-  return { acwr, acute, baselineWeeklyAvg, historyDays, hasBaseline, status, asAt: isoOf(end) };
+  // Team-wide break: overrides everything above, including a "building" the
+  // ratio math alone would already have produced — a fresh team-wide start
+  // needs its own rebuilt baseline, not a partial one spanning the break.
+  // Stays "building" until the *entire* 28-day window (baselineStart through
+  // end) falls on or after the resume date — comparing dates directly rather
+  // than counting days avoids re-deriving the same 28-day-window arithmetic
+  // as a separate, easy-to-desync magic number.
+  const resumeDate = findTeamBreakResumeDate(teamSessionDates, end, GAP_RESET_DAYS);
+  const inTeamBreakRebuild = resumeDate !== null && baselineStart < resumeDate;
+
+  // A week with zero team Training/Match sessions in it (mid-break, before
+  // any resume date is even detectable) has nothing to measure — reporting
+  // "Low (0.00)" would read as a real, calm week rather than as no data.
+  // Only applies when team dates were actually supplied (`[]` means "team-
+  // break detection is off", not "the team did nothing this week").
+  const acuteWeekIsTeamDead = teamSessionDates.length > 0 && !teamSessionDates.some((iso) => {
+    const d = toLocalDate(iso);
+    return d >= acuteStart && d <= end;
+  });
+
+  const forcedBuilding = inTeamBreakRebuild || acuteWeekIsTeamDead;
+  const status: AcwrResult["status"] = forcedBuilding ? "building" : withFloor;
+  const finalAcwr = forcedBuilding ? null : acwr;
+  const finalHasBaseline = forcedBuilding ? false : hasBaseline;
+
+  return {
+    acwr: finalAcwr, acute, previousWeekAu, weekOnWeekPct, baselineWeeklyAvg,
+    historyDays, hasBaseline: finalHasBaseline, status, asAt: isoOf(end),
+  };
 }
 
 // ── Report builder ────────────────────────────────────────────────────────────
@@ -511,6 +812,8 @@ export function buildPlayerReport(
   const playerLoad = buildLoadRows(
     data.rpe.filter((r) => r.player_id === player.id),
     data.matchStats.filter((m) => m.player_id === player.id),
+    data.attendance.filter((a) => a.player_id === player.id),
+    data.sessions,
   );
   const scopedLoad = playerLoad.filter((r) => inRange(r.date, range));
   // ACWR needs the full history (its 28-day window may reach before the range).
@@ -527,7 +830,7 @@ export function buildPlayerReport(
       ? new Date(lastSessionDate + "T00:00:00")
       : undefined;
   // Per day, matching the profile. Totals are the same either way; the unit isn't.
-  const acwr = computeAcwr(collapseLoadByDay(playerLoad), anchor);
+  const acwr = computeAcwr(collapseLoadByDay(playerLoad), anchor, CHRONIC_LOAD_FLOOR, teamSessionDatesFrom(data.sessions));
   const ratioWindows = workloadRatioWindows(anchor);
   const estimatedMatchRows = playerLoad.filter((r) => r.source === "match" && r.estimated && r.date !== null);
   const estimatedIn = (from: Date, to: Date) => estimatedMatchRows.reduce((sum, row) => {

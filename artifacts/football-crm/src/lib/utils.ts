@@ -86,3 +86,17 @@ export function calcAgeRange(yearOfBirth: number | null): "U18" | "18-24" | "25+
   return "25+";
 }
 
+/**
+ * A caught error's human-readable message. `String(err)` alone is a trap: a
+ * Supabase/PostgREST error is a plain `{ message, details, hint, code }`
+ * object with no custom `toString()`, so `String(err)` prints the useless
+ * literal "[object Object]" instead of what actually went wrong.
+ */
+export function getErrorMessage(err: unknown): string {
+  if (err instanceof Error) return err.message;
+  if (err && typeof err === "object" && "message" in err && typeof (err as { message: unknown }).message === "string") {
+    return (err as { message: string }).message;
+  }
+  return String(err);
+}
+

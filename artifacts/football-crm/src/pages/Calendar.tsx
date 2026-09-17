@@ -5,7 +5,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { TableSkeleton } from "@/components/Skeleton";
 import { useAuth } from "@/context/AuthContext";
 import { useToast } from "@/hooks/use-toast";
-import { cn } from "@/lib/utils";
+import { cn, getErrorMessage } from "@/lib/utils";
 import { createEvent, deleteEvent, fetchEvents, updateEvent } from "@/lib/queries";
 import { EVENT_TYPES, type CalendarEvent, type EventType } from "@/lib/types";
 import { buildRecurrenceRule, expandOccurrences, parseRecurrenceRule, WEEKDAYS, WEEKDAY_LETTER, WEEKDAY_FULL, type Weekday } from "@/lib/recurrence";
@@ -231,7 +231,7 @@ function EventModal({
       onSaved();
       onClose();
     } catch (err: unknown) {
-      toast({ title: "Failed to save event", description: String(err), variant: "destructive" });
+      toast({ title: "Failed to save event", description: getErrorMessage(err), variant: "destructive" });
     } finally {
       setSaving(false);
     }
@@ -725,7 +725,7 @@ export default function Calendar() {
       setDeleteTarget(null);
       refresh();
     } catch (err: unknown) {
-      toast({ title: "Failed to delete event", description: String(err), variant: "destructive" });
+      toast({ title: "Failed to delete event", description: getErrorMessage(err), variant: "destructive" });
     }
   };
 
@@ -753,7 +753,7 @@ export default function Calendar() {
       setDeleteTarget(null);
       refresh();
     } catch (err: unknown) {
-      toast({ title: "Failed to delete occurrence", description: String(err), variant: "destructive" });
+      toast({ title: "Failed to delete occurrence", description: getErrorMessage(err), variant: "destructive" });
     }
   };
 

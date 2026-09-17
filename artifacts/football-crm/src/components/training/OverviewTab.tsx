@@ -9,13 +9,13 @@ import { useTheme } from "@/context/ThemeContext";
 import { useToast } from "@/hooks/use-toast";
 import { MiniTable, OverviewCard, tooltipStyle } from "@/components/OverviewCard";
 import { HIGHLIGHT, ink, posColor, type Mode } from "@/lib/viz";
-import { fetchAllMatchStats, fetchAllRPEWithSessions, fetchPlayers } from "@/lib/queries";
+import { fetchAllAttendanceStats, fetchAllMatchStats, fetchAllRPEWithSessions, fetchPlayers, fetchTrainingSessions } from "@/lib/queries";
 import { ACWR_CONFIG, buildLoadRows, type LoadRow } from "@/lib/report";
 import {
   buildPlayerLoadDistribution, buildWeeklyTeamLoad, interpretLoadDistribution,
   interpretWeeklyLoad, withinWeeks, type PlayerLoadLine,
 } from "@/lib/trainingAnalytics";
-import type { Player } from "@/lib/types";
+import type { Player, TrainingSession } from "@/lib/types";
 
 /**
  * Training → Overview: what the load actually says.
@@ -44,23 +44,33 @@ export function OverviewTab() {
 
   const [players, setPlayers] = useState<Player[]>([]);
   const [rows, setRows] = useState<LoadRow[]>([]);
+  const [sessions, setSessions] = useState<TrainingSession[]>([]);
   const [loading, setLoading] = useState(true);
   const [weeks, setWeeks] = useState<number | null>(16);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [ps, rpe, matchStats] = await Promise.all([
+      const [ps, rpe, matchStats, attendance, sessions] = await Promise.all([
         fetchPlayers(),
         fetchAllRPEWithSessions(),
         fetchAllMatchStats(),
+        fetchAllAttendanceStats(),
+        fetchTrainingSessions(),
       ]);
-      const squad = new Set(ps.map((p) => p.id));
-      setPlayers(ps);
+      // Squad-wide totals and the per-player list are active-roster only — a
+      // player marked inactive drops out of team load figures entirely, not
+      // just the alert engine.
+      const activePs = ps.filter((p) => p.is_active);
+      const squad = new Set(activePs.map((p) => p.id));
+      setPlayers(activePs);
+      setSessions(sessions);
       setRows(
         buildLoadRows(
           rpe.filter((r) => squad.has(r.player_id)),
           matchStats.filter((s) => squad.has(s.player_id)),
+          attendance.filter((a) => squad.has(a.player_id)),
+          sessions,
         ),
       );
     } catch (err) {
@@ -76,15 +86,13 @@ export function OverviewTab() {
   const weekly = useMemo(() => buildWeeklyTeamLoad(windowed), [windowed]);
   const distribution = useMemo(
     // The ratio reads full history: a display window cannot truncate its baseline.
-    () => buildPlayerLoadDistribution(windowed, rows, players),
-    [windowed, rows, players],
+    () => buildPlayerLoadDistribution(windowed, rows, players, new Date(), sessions),
+    [windowed, rows, players, sessions],
   );
 
   const totalAu = weekly.reduce((s, w) => s + w.totalAu, 0);
   const avgPerWeek = weekly.length > 0 ? Math.round(totalAu / weekly.length) : 0;
-  const flagged = distribution.filter((l) =>
-    l.acwr.status === "elevated" || l.acwr.status === "high_spike" || l.acwr.status === "very_high_spike",
-  );
+  const flagged = distribution.filter((l) => l.acwr.status === "elevated" || l.acwr.status === "spike");
 
   if (loading) {
     return (
@@ -262,6 +270,8 @@ export function OverviewTab() {
                     totalAu: l.totalAu,
                     acwr: l.acwr.acwr,
                     status: l.acwr.status,
+                    weekAu: l.acwr.acute,
+                    weekOnWeekPct: l.acwr.weekOnWeekPct,
                     matchShare: l.matchShare,
                     estimatedMatchShare: l.estimatedMatchShare,
                     fill: posColor(mode, l.player.primary_position),
@@ -309,6 +319,10 @@ export function OverviewTab() {
                 <span className="text-foreground font-medium">{l.player.name}</span>
                 <span className="font-time text-muted-foreground">
                   Ratio {l.acwr.acwr?.toFixed(2) ?? "—"} · {ACWR_CONFIG[l.acwr.status].label}
+                  {" · "}{Math.round(l.acwr.acute)} AU
+                  {l.acwr.weekOnWeekPct != null && (
+                    <> ({l.acwr.weekOnWeekPct >= 0 ? "+" : ""}{Math.round(l.acwr.weekOnWeekPct)}% wk/wk)</>
+                  )}
                 </span>
               </Link>
             ))}
@@ -350,6 +364,8 @@ interface LoadPoint {
   totalAu: number;
   acwr: number | null;
   status: PlayerLoadLine["acwr"]["status"];
+  weekAu: number;
+  weekOnWeekPct: number | null;
   matchShare: number;
   estimatedMatchShare: number;
 }
@@ -373,6 +389,10 @@ function LoadTooltip({ active, payload, INK }: {
       </div>
       <div className="font-time" style={{ color: ACWR_CONFIG[d.status].color }}>
         Ratio {d.acwr?.toFixed(2) ?? "—"} · {ACWR_CONFIG[d.status].label}
+      </div>
+      <div className="font-time" style={{ color: INK.secondary }}>
+        {Math.round(d.weekAu)} AU this week
+        {d.weekOnWeekPct != null && ` · ${d.weekOnWeekPct >= 0 ? "+" : ""}${Math.round(d.weekOnWeekPct)}% wk/wk`}
       </div>
       {d.matchShare > 0 && (
         <div className="font-time" style={{ color: INK.muted }}>

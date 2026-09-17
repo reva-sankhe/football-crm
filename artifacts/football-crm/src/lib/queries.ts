@@ -168,6 +168,50 @@ export async function fetchTrainingSessions(): Promise<TrainingSession[]> {
   return data as TrainingSession[];
 }
 
+export interface SessionPage {
+  sessions: TrainingSession[];
+  hasMore: boolean;
+}
+
+/**
+ * One page of sessions, newest first, every type included — backs the
+ * Attendance strip, which needs a match day in the mix same as everything
+ * else. `date` alone isn't a unique order, so `created_at` breaks ties;
+ * without that, a `.range()` page boundary could skip or repeat a row that
+ * shares its date with one on the neighboring page.
+ */
+export async function fetchTrainingSessionsPage(offset: number, limit: number): Promise<SessionPage> {
+  const { data, error } = await supabase
+    .from("sessions")
+    .select("*")
+    .order("date", { ascending: false })
+    .order("created_at", { ascending: false })
+    // One extra row reveals whether there's a next page without a second round trip.
+    .range(offset, offset + limit);
+  if (error) throw error;
+  const rows = (data ?? []) as TrainingSession[];
+  const hasMore = rows.length > limit;
+  return { sessions: hasMore ? rows.slice(0, limit) : rows, hasMore };
+}
+
+/** Same shape, but Match rows excluded at the query level — Training's own
+ * session archive, which would otherwise short a page whenever a match
+ * fell inside it (filtering client-side after the fact loses rows, not
+ * just re-labels them). */
+export async function fetchNonMatchSessionsPage(offset: number, limit: number): Promise<SessionPage> {
+  const { data, error } = await supabase
+    .from("sessions")
+    .select("*")
+    .neq("session_type", "Match")
+    .order("date", { ascending: false })
+    .order("created_at", { ascending: false })
+    .range(offset, offset + limit);
+  if (error) throw error;
+  const rows = (data ?? []) as TrainingSession[];
+  const hasMore = rows.length > limit;
+  return { sessions: hasMore ? rows.slice(0, limit) : rows, hasMore };
+}
+
 export async function fetchTrainingSession(id: string): Promise<TrainingSession> {
   const { data, error } = await supabase
     .from("sessions")

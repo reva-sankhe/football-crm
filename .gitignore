@@ -47,3 +47,10 @@ Thumbs.db
 # Replit
 .cache/
 .local/
+
+# Local secrets — never commit real credentials (Supabase service role keys,
+# audit-script credentials, etc). Any .env* file anywhere in the repo,
+# committed or not.
+.env
+.env.*
+!.env.example
