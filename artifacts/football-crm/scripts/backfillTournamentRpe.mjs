@@ -42,9 +42,13 @@ const perMatchCounts = [];
 for (const match of matches) {
   const session = sessionById.get(match.session_id);
   const gridRows = matchStats.filter((m) => m.match_id === match.id);
-  let created = 0, alreadyRated = 0;
+  let created = 0, alreadyRated = 0, noMinutes = 0;
   for (const g of gridRows) {
     if (existingKeys.has(`${session.id}:${g.player_id}`)) { alreadyRated++; continue; }
+    // A squad member with a lineup row but 0 minutes never took the field
+    // (unused sub) — there's no exertion to rate, and session_rpe's check
+    // constraint on minutes_played correctly rejects a 0-minute RPE anyway.
+    if (!g.minutes_played) { noMinutes++; continue; }
     rows.push({
       session_id: session.id,
       player_id: g.player_id,
@@ -55,7 +59,7 @@ for (const match of matches) {
     });
     created++;
   }
-  perMatchCounts.push({ date: session.date, matchId: match.id, gridRows: gridRows.length, created, alreadyRated });
+  perMatchCounts.push({ date: session.date, matchId: match.id, gridRows: gridRows.length, created, alreadyRated, noMinutes });
 }
 
 console.log(`── Skipped (no matches row) ──`);
@@ -64,7 +68,7 @@ for (const s of skipped) console.log(`  ${s.date}  session ${s.id}`);
 
 console.log(`\n── Per-match row counts ──`);
 for (const c of perMatchCounts.sort((a, b) => a.date.localeCompare(b.date))) {
-  console.log(`  ${c.date}  match ${c.matchId}  lineup_rows=${c.gridRows}  will_create=${c.created}${c.alreadyRated ? `  already_rated=${c.alreadyRated}` : ""}`);
+  console.log(`  ${c.date}  match ${c.matchId}  lineup_rows=${c.gridRows}  will_create=${c.created}${c.alreadyRated ? `  already_rated=${c.alreadyRated}` : ""}${c.noMinutes ? `  no_minutes=${c.noMinutes}` : ""}`);
 }
 console.log(`\nTotal rows to create: ${rows.length}`);
 
