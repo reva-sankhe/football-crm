@@ -489,6 +489,135 @@ export function playerActivityBounds(
   return { start, end };
 }
 
+// ── Weekly load (standalone — not coupled to the ACWR baseline) ────────────────
+export interface WeeklyLoad {
+  weekStart: string;
+  weekEnd: string;
+  loadAu: number;
+  /**
+   * True when this window is cut short by `end` — fewer than 7 days, so its
+   * `loadAu` isn't comparable to a full week's. Only the final entry can be
+   * partial; every entry before it is a full 7-day week by construction.
+   */
+  isPartial: boolean;
+  /** (loadAu − previous week's loadAu) ÷ previous week's loadAu × 100. Null for the first week, or when the previous week had no load. */
+  weekOnWeekPct: number | null;
+}
+
+/**
+ * One row per non-overlapping 7-day week from `start` through `end`
+ * (inclusive) — week 1 is [start, start+6], week 2 is [start+7, start+13],
+ * and so on, tiled the same way the season's own weekly anchors are already
+ * stepped elsewhere (workloadAudit.mjs's status-change loop). A trailing
+ * partial week is still emitted (see `isPartial`) rather than dropped, so a
+ * trend chart can show "this week so far".
+ *
+ * Deliberately standalone: this is the same acute-window load `computeAcwr`
+ * reports as `.acute` for one week ending at its anchor, generalized into a
+ * full series with no baseline, floor, or team-break logic attached — a
+ * trend chart or a z-score against a player's own history needs the raw
+ * weekly numbers, not an ACWR classification.
+ */
+export function computeWeeklyLoad(rows: LoadRow[], start: Date, end: Date): WeeklyLoad[] {
+  const at = (r: LoadRow) => (r.date ? new Date(r.date + "T00:00:00") : null);
+  const dated = rows.flatMap((r) => {
+    const date = at(r);
+    return date ? [{ ...r, at: date }] : [];
+  });
+
+  const out: WeeklyLoad[] = [];
+  let previousLoadAu: number | null = null;
+  for (
+    let weekStart = new Date(start.getFullYear(), start.getMonth(), start.getDate());
+    weekStart <= end;
+    weekStart = new Date(weekStart.getFullYear(), weekStart.getMonth(), weekStart.getDate() + 7)
+  ) {
+    const fullWeekEnd = new Date(weekStart.getFullYear(), weekStart.getMonth(), weekStart.getDate() + 6);
+    const isPartial = fullWeekEnd > end;
+    const weekEnd = isPartial ? end : fullWeekEnd;
+    const loadAu = dated.reduce((sum, row) =>
+      row.at >= weekStart && row.at <= weekEnd ? sum + row.load_au : sum, 0);
+    const weekOnWeekPct = previousLoadAu !== null && previousLoadAu > 0
+      ? ((loadAu - previousLoadAu) / previousLoadAu) * 100
+      : null;
+    out.push({ weekStart: isoOf(weekStart), weekEnd: isoOf(weekEnd), loadAu: Math.round(loadAu), isPartial, weekOnWeekPct });
+    previousLoadAu = loadAu;
+  }
+  return out;
+}
+
+// ── Monotony & strain (standalone — not coupled to the ACWR baseline) ──────────
+export interface WeeklyMonotonyStrain {
+  weekStart: string;
+  weekEnd: string;
+  loadAu: number;
+  meanDailyLoad: number;
+  /** Population SD of that week's daily loads — every day in [weekStart, weekEnd], rest days counted as 0 (see denseDailyLoad). */
+  sdDailyLoad: number;
+  /** meanDailyLoad ÷ sdDailyLoad — an undefined ratio when sdDailyLoad is 0 (every day identical, rest days included), so null rather than Infinity. */
+  monotony: number | null;
+  /** loadAu × monotony. Null whenever monotony is null — there's nothing to multiply. */
+  strain: number | null;
+  /** True once monotony exceeds 2.0 — training varied too little for the volume carried that week, a recognized injury-risk signal (Foster, 1998). Never true when monotony is null. */
+  highMonotony: boolean;
+  /** Same meaning as WeeklyLoad.isPartial — only the final entry can be true. */
+  isPartial: boolean;
+}
+
+/**
+ * Weekly monotony (mean daily load ÷ SD of daily load) and strain (weekly
+ * load × monotony), tiled into the same non-overlapping 7-day weeks as
+ * `computeWeeklyLoad` — see that function's docs for the tiling rule and the
+ * `isPartial` trailing-week behavior.
+ *
+ * Built on `denseDailyLoad`: monotony's SD needs rest days to actually be
+ * zeros, not silently absent — a week with one hard session and six real
+ * rest days is very different from one with one hard session and six days
+ * with no data, and only the dense, zero-filled series tells them apart.
+ * Callers should pass `start`/`end` already clipped to the player's own
+ * activity window (see `playerActivityBounds`) so an inactive stretch before
+ * a player joined or after they left isn't zeroed into their monotony.
+ *
+ * Deliberately standalone, like `computeWeeklyLoad`: no ACWR baseline,
+ * floor, or team-break logic attached.
+ */
+export function computeWeeklyMonotonyStrain(rows: LoadRow[], start: Date, end: Date): WeeklyMonotonyStrain[] {
+  const out: WeeklyMonotonyStrain[] = [];
+  for (
+    let weekStart = new Date(start.getFullYear(), start.getMonth(), start.getDate());
+    weekStart <= end;
+    weekStart = new Date(weekStart.getFullYear(), weekStart.getMonth(), weekStart.getDate() + 7)
+  ) {
+    const fullWeekEnd = new Date(weekStart.getFullYear(), weekStart.getMonth(), weekStart.getDate() + 6);
+    const isPartial = fullWeekEnd > end;
+    const weekEnd = isPartial ? end : fullWeekEnd;
+
+    const dailyLoads = denseDailyLoad(rows, weekStart, weekEnd).map((d) => d.load_au);
+    const n = dailyLoads.length;
+    const loadAu = dailyLoads.reduce((s, v) => s + v, 0);
+    const meanDailyLoad = n > 0 ? loadAu / n : 0;
+    const variance = n > 0
+      ? dailyLoads.reduce((s, v) => s + (v - meanDailyLoad) ** 2, 0) / n
+      : 0;
+    const sdDailyLoad = Math.sqrt(variance);
+    const monotony = sdDailyLoad > 0 ? meanDailyLoad / sdDailyLoad : null;
+    const strain = monotony !== null ? loadAu * monotony : null;
+
+    out.push({
+      weekStart: isoOf(weekStart),
+      weekEnd: isoOf(weekEnd),
+      loadAu: Math.round(loadAu),
+      meanDailyLoad,
+      sdDailyLoad,
+      monotony,
+      strain,
+      highMonotony: monotony !== null && monotony > 2.0,
+      isPartial,
+    });
+  }
+  return out;
+}
+
 // ── Workload ratio (uncoupled ACWR) ────────────────────────────────────────────
 /**
  * Below this weekly baseline, a ratio is classified "low_base" instead of by
@@ -673,6 +802,164 @@ export function computeAcwr(
   return {
     acwr: finalAcwr, acute, previousWeekAu, weekOnWeekPct, baselineWeeklyAvg,
     historyDays, hasBaseline: finalHasBaseline, status, asAt: isoOf(end),
+  };
+}
+
+// ── EWMA ACWR (alongside computeAcwr, not a replacement for it) ────────────────
+/**
+ * Standard smoothing constants for a 7-day acute / 28-day chronic EWMA
+ * (Williams et al., 2016): λ = 2 ÷ (N + 1).
+ */
+const EWMA_ACUTE_LAMBDA = 2 / (7 + 1);
+const EWMA_CHRONIC_LAMBDA = 2 / (28 + 1);
+const EWMA_CHRONIC_SEED_DAYS = 28;
+
+export interface EwmaAcwrResult {
+  ewmaAcute: number;
+  ewmaChronic: number;
+  /** ewmaAcute ÷ ewmaChronic. Null until a full 28-day seed window exists — same "not yet meaningful" idea as AcwrResult.hasBaseline, just for this ratio. */
+  ewmaAcwr: number | null;
+  /** Calendar days from the first logged workload through the anchor date. */
+  historyDays: number;
+  /** True once `historyDays` reaches the 28-day chronic seed window. */
+  hasBaseline: boolean;
+  asAt: string;
+}
+
+/**
+ * Exponentially-weighted acute:chronic workload ratio, measured back from
+ * `anchor` (defaults to today) — a second lens on the same load rows
+ * `computeAcwr` uses, not a replacement for it. Where `computeAcwr` is a
+ * rolling-window ratio (this week's total vs. the flat 3-week average before
+ * it), this is a smoothed daily ratio: every day's load nudges both a fast
+ * (7-day-equivalent) and slow (28-day-equivalent) exponential average, and
+ * their ratio is read at `anchor`. It reacts a little faster to genuine
+ * trend changes and doesn't have the rolling-window's hard edge where an old
+ * heavy day drops out all at once — worth showing next to the existing
+ * status, not swapping in for it.
+ *
+ * The acute EWMA is seeded naively at the first logged day's own value, then
+ * recurses forward one day at a time — standard practice, and acute's fast
+ * decay (λ=0.25) washes out that single-day seed within a couple of weeks
+ * regardless.
+ *
+ * The chronic EWMA is seeded differently, on request: instead of the same
+ * single-day start (which chronic's slow decay, λ≈0.069, would take many
+ * weeks to recover from), it's seeded at the *plain average of the first 28
+ * days* of logged load, and only then does the recursive smoothing take
+ * over from day 29 onward. `ewmaAcwr` stays null until that seed window is
+ * complete — there's no meaningful chronic value before day 28 to divide by.
+ *
+ * Every calendar day from the first logged workload through `anchor` is
+ * walked (via `denseDailyLoad`, so rest days are real zeros, not gaps) —
+ * there's no partial/windowed variant of this the way `computeWeeklyLoad`
+ * has one, since the whole point of an EWMA is that it already accounts for
+ * a player's entire history, weighted toward the recent end.
+ */
+export function computeEwmaAcwr(rows: LoadRow[], anchor?: Date): EwmaAcwrResult {
+  const { end } = workloadRatioWindows(anchor);
+  const asAt = isoOf(end);
+
+  const firstLoggedIso = rows.reduce<string | null>((min, r) => {
+    if (r.date == null) return min;
+    return min === null || r.date < min ? r.date : min;
+  }, null);
+
+  if (firstLoggedIso === null || toLocalDate(firstLoggedIso) > end) {
+    return { ewmaAcute: 0, ewmaChronic: 0, ewmaAcwr: null, historyDays: 0, hasBaseline: false, asAt };
+  }
+
+  const days = denseDailyLoad(rows, toLocalDate(firstLoggedIso), end);
+  const historyDays = days.length;
+  const hasBaseline = historyDays >= EWMA_CHRONIC_SEED_DAYS;
+
+  let ewmaAcute = days[0].load_au;
+  for (let i = 1; i < days.length; i++) {
+    ewmaAcute = days[i].load_au * EWMA_ACUTE_LAMBDA + ewmaAcute * (1 - EWMA_ACUTE_LAMBDA);
+  }
+
+  let ewmaChronic = 0;
+  if (hasBaseline) {
+    const seedWindow = days.slice(0, EWMA_CHRONIC_SEED_DAYS);
+    ewmaChronic = seedWindow.reduce((s, d) => s + d.load_au, 0) / EWMA_CHRONIC_SEED_DAYS;
+    for (let i = EWMA_CHRONIC_SEED_DAYS; i < days.length; i++) {
+      ewmaChronic = days[i].load_au * EWMA_CHRONIC_LAMBDA + ewmaChronic * (1 - EWMA_CHRONIC_LAMBDA);
+    }
+  }
+
+  const ewmaAcwr = hasBaseline && ewmaChronic > 0 ? ewmaAcute / ewmaChronic : null;
+
+  return { ewmaAcute, ewmaChronic, ewmaAcwr, historyDays, hasBaseline, asAt };
+}
+
+// ── Z-scores against a player's own recent history ──────────────────────────────
+/**
+ * At least this many prior weeks are required before a z-score is considered
+ * meaningful — below it, a "typical" reading could just be a small sample
+ * getting lucky.
+ */
+export const Z_SCORE_MIN_WEEKS = 8;
+/** At most this many of the most recent prior weeks are used as the baseline — older weeks don't get to keep influencing "recent". */
+export const Z_SCORE_MAX_WEEKS = 12;
+
+export interface ZScoreResult {
+  /** (current − mean) ÷ sd of the trailing window. Null below Z_SCORE_MIN_WEEKS of history, or when sd is 0. */
+  zScore: number | null;
+  mean: number;
+  sd: number;
+  /** How many prior weeks were actually used (after capping at Z_SCORE_MAX_WEEKS) — reported even when null, so a caller can show e.g. "5/8 weeks of history". */
+  weeksUsed: number;
+}
+
+/**
+ * Z-score of `current` against a player's own recent history — metric-
+ * agnostic: the same function scores weekly load, ACWR, or strain, whatever
+ * `priorWeeks` (most-recent-last, current week NOT included) happens to
+ * hold. Only the most recent `Z_SCORE_MAX_WEEKS` (12) entries are used; at
+ * least `Z_SCORE_MIN_WEEKS` (8) are required for `zScore` to be non-null.
+ *
+ * Population SD, matching `computeWeeklyMonotonyStrain`'s choice, for the
+ * same reason: `priorWeeks` is the complete window being described, not a
+ * sample standing in for a larger one. `sd === 0` (every prior week
+ * identical) returns a null `zScore` — an undefined ratio, not an infinite
+ * one — the same rule used for monotony and the EWMA ACWR.
+ */
+export function computeZScore(current: number, priorWeeks: number[]): ZScoreResult {
+  const window = priorWeeks.slice(Math.max(0, priorWeeks.length - Z_SCORE_MAX_WEEKS));
+  const n = window.length;
+  const mean = n > 0 ? window.reduce((s, v) => s + v, 0) / n : 0;
+  const variance = n > 0 ? window.reduce((s, v) => s + (v - mean) ** 2, 0) / n : 0;
+  const sd = Math.sqrt(variance);
+  const zScore = n >= Z_SCORE_MIN_WEEKS && sd > 0 ? (current - mean) / sd : null;
+  return { zScore, mean, sd, weeksUsed: n };
+}
+
+const NO_HISTORY_Z_SCORE: ZScoreResult = { zScore: null, mean: 0, sd: 0, weeksUsed: 0 };
+
+export interface WorkloadZScores {
+  weeklyLoad: ZScoreResult;
+  acwr: ZScoreResult;
+  strain: ZScoreResult;
+}
+
+/**
+ * The three z-scores named together: weekly load, ACWR, and strain, each
+ * against that same metric's own trailing history. A thin bundle over
+ * `computeZScore` — it doesn't compute the underlying series itself (that's
+ * `computeWeeklyLoad`, `computeAcwr`/`computeEwmaAcwr` run per week, and
+ * `computeWeeklyMonotonyStrain`, each with their own history/date-range
+ * decisions to make) — only null-safe when the current ACWR or strain value
+ * isn't available yet (e.g. still building baseline), in which case that
+ * one field comes back as a no-history result rather than throwing.
+ */
+export function computeWorkloadZScores(
+  current: { weeklyLoad: number; acwr: number | null; strain: number | null },
+  priorWeeks: { weeklyLoad: number[]; acwr: number[]; strain: number[] },
+): WorkloadZScores {
+  return {
+    weeklyLoad: computeZScore(current.weeklyLoad, priorWeeks.weeklyLoad),
+    acwr: current.acwr !== null ? computeZScore(current.acwr, priorWeeks.acwr) : NO_HISTORY_Z_SCORE,
+    strain: current.strain !== null ? computeZScore(current.strain, priorWeeks.strain) : NO_HISTORY_Z_SCORE,
   };
 }
 

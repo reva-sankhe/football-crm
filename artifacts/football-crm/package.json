@@ -10,6 +10,10 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test:fitness-precision": "node scripts/fitnessAnalytics.precision.test.mjs",
     "test:workload-ratio": "node scripts/workloadRatio.test.mjs",
+    "test:weekly-load": "node scripts/weeklyLoad.test.mjs",
+    "test:monotony-strain": "node scripts/monotonyStrain.test.mjs",
+    "test:ewma-acwr": "node scripts/ewmaAcwr.test.mjs",
+    "test:z-score": "node scripts/zScore.test.mjs",
     "test:attendance": "node scripts/attendance.test.mjs",
     "audit:workload": "node scripts/workloadAudit.mjs",
     "audit:completeness": "node scripts/dataCompletenessAudit.mjs"
