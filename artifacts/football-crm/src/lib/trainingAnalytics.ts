@@ -1,7 +1,7 @@
 import {
-  computeAcwr, collapseLoadByDay, teamSessionDatesFrom, computeWeeklyMonotonyStrain,
+  computeAcwr, collapseLoadByDay, teamSessionDatesFrom,
   computeZScore, usualRangeFor, Z_SCORE_MIN_WEEKS, CHRONIC_LOAD_FLOOR,
-  type AcwrResult, type LoadRow, type UsualRange, type WeeklyMonotonyStrain,
+  type AcwrResult, type LoadRow, type UsualRange,
 } from "./report";
 import { computeSessionCompleteness } from "./dataCompleteness";
 import type { Player, TrainingSession } from "./types";
@@ -279,14 +279,17 @@ export interface SquadWeekLoad {
   label: string;
   totalAu: number;
   /**
-   * Total ÷ the active squad size (a constant across every week), not ÷ the
-   * number of players who happened to log something that week. Dividing by
-   * turnout would just move the "well-attended week looks heavier" distortion
-   * from the numerator to the denominator — a week where only the five
-   * hardest trainers logged would still read as a uniquely heavy week.
+   * Total ÷ `players` — the number who actually logged something that week,
+   * not the constant squad size. Turnout already has its own stat card
+   * (item 3 of the layout); mixing it into this number too would answer two
+   * questions at once. This way `perPlayerAu` says only "how hard was
+   * training for whoever did it," and a low-turnout week reads as exactly
+   * that — a low-turnout week — on the players-trained card, not as a
+   * falsely light or falsely heavy load reading here. 0 when nobody logged
+   * anything (players is 0), not a division by zero.
    */
   perPlayerAu: number;
-  /** Distinct players who logged anything this week — informational, not the perPlayerAu divisor. */
+  /** Distinct players who logged anything this week — the perPlayerAu divisor, and its own stat elsewhere. */
   players: number;
   /** Distinct calendar days with any load logged. */
   days: number;
@@ -314,15 +317,11 @@ export interface SquadWeekLoad {
  * unbroken "oldest first" axis and an explicit partial trailing week
  * possible at all.
  *
- * `squadSize` is the active roster count used as the constant `perPlayerAu`
- * divisor — pass the count of active players, not `players.length` filtered
- * by anything week-specific.
  */
 export function buildSquadWeeklyLoad(
   rows: LoadRow[],
   start: Date,
   end: Date,
-  squadSize: number,
 ): SquadWeekLoad[] {
   const out: SquadWeekLoad[] = [];
   let previousPerPlayerAu: number | null = null;
@@ -344,7 +343,7 @@ export function buildSquadWeeklyLoad(
     const estimatedAu = weekRows.reduce((s, r) => (r.estimated ? s + r.load_au : s), 0);
     const players = new Set(weekRows.map((r) => r.player_id)).size;
     const days = new Set(weekRows.map((r) => r.date)).size;
-    const perPlayerAu = squadSize > 0 ? totalAu / squadSize : 0;
+    const perPlayerAu = players > 0 ? totalAu / players : 0;
 
     const weekOnWeekPerPlayerPct = !isPartial && previousPerPlayerAu !== null && previousPerPlayerAu > 0
       ? ((perPlayerAu - previousPerPlayerAu) / previousPerPlayerAu) * 100
@@ -394,8 +393,8 @@ export function computeSquadUsualLoadRange(weekly: SquadWeekLoad[]): UsualRange 
 }
 
 // ── Load to watch ─────────────────────────────────────────────────────────────
-/** Ordered worst-first: Spike, then Elevated, then Low. Low Base and Building are never watch-list material — there's no trustworthy ratio to act on yet. */
-const WATCH_TIER: Partial<Record<AcwrResult["status"], number>> = { spike: 0, elevated: 1, low: 2 };
+/** Ordered worst-first: Spike, then Elevated. Nothing else is watch-list material — Low, Low Base and Building are all excluded, either not overload or not a trustworthy ratio yet. */
+const WATCH_TIER: Partial<Record<AcwrResult["status"], number>> = { spike: 0, elevated: 1 };
 
 export interface LoadToWatchRow {
   player: Player;
@@ -408,18 +407,10 @@ export interface LoadToWatchRow {
 }
 
 /**
- * Every active player whose current ratio sits meaningfully outside their
- * own usual range — too high (Spike, Elevated) or too low (Low). A player
- * well under their usual load is as worth a coach's attention as one running
- * hot (returning too cautiously from injury, quietly disengaging, an
- * attendance problem), so this deliberately isn't a "risk" list scoped to
- * overload alone.
- *
- * Computed from `all` (each player's full history) rather than a windowed
- * slice, and over every active player rather than only those who logged
- * something recently — a player who has gone quiet is exactly the case a
- * "Low" watch entry exists to catch, and they would otherwise be invisible
- * to any calculation that only looks at players with recent rows.
+ * Active players currently reading Spike or Elevated — nobody else appears.
+ * Computed from `all` (each player's full history), not a windowed slice:
+ * the ratio needs its full 28-day baseline regardless of what date range is
+ * currently on screen.
  */
 export function buildLoadToWatch(
   all: LoadRow[],
@@ -448,95 +439,22 @@ export function buildLoadToWatch(
     });
   }
 
+  // Worst-first: Spike before Elevated, then furthest above 1.0 within a tier.
   return rows.sort((a, b) => {
     const tierDiff = WATCH_TIER[a.status]! - WATCH_TIER[b.status]!;
-    if (tierDiff !== 0) return tierDiff;
-    // Worst-first inside a tier: furthest below 1.0 for Low, furthest above for Spike/Elevated.
-    return a.status === "low" ? (a.acwr ?? 0) - (b.acwr ?? 0) : (b.acwr ?? 0) - (a.acwr ?? 0);
+    return tierDiff !== 0 ? tierDiff : (b.acwr ?? 0) - (a.acwr ?? 0);
   });
 }
 
 export function interpretLoadToWatch(rows: LoadToWatchRow[]): string {
-  if (rows.length === 0) return "Nobody is outside their usual load range right now.";
-  const counts = { spike: 0, elevated: 0, low: 0 } as Record<"spike" | "elevated" | "low", number>;
-  for (const r of rows) counts[r.status as "spike" | "elevated" | "low"]++;
+  if (rows.length === 0) return "Nobody is above their usual load range right now.";
+  const spikes = rows.filter((r) => r.status === "spike").length;
+  const elevated = rows.length - spikes;
   const parts = [
-    counts.spike > 0 ? plural(counts.spike, "spiking") : null,
-    counts.elevated > 0 ? plural(counts.elevated, "elevated") : null,
-    counts.low > 0 ? `${plural(counts.low, "player")} well below usual` : null,
+    spikes > 0 ? plural(spikes, "spiking") : null,
+    elevated > 0 ? plural(elevated, "elevated") : null,
   ].filter((p): p is string => p !== null);
-  return `${plural(rows.length, "player")} outside their usual range: ${parts.join(", ")}.`;
-}
-
-// ── Squad table ───────────────────────────────────────────────────────────────
-export interface SquadTableRow {
-  player: Player;
-  weeklyAu: number;
-  weekOnWeekPct: number | null;
-  status: AcwrResult["status"];
-  /** Rated-session rows (not match rows) logged in the display window. */
-  sessionsLogged: number;
-  /** Share of the window's total load that was estimated rather than rated, 0–1. 0 when the player logged nothing. */
-  estimatedShare: number;
-  /** Up to the last 12 complete weeks ending at `anchor`, oldest first — a sparkline shape, not a flagged metric here. */
-  monotonySparkline: { weekStart: string; monotony: number | null }[];
-}
-
-/**
- * Every active player, one row each, for the sortable squad table replacing
- * the deleted scatter — status and weekly figures from the *full* history
- * (same reasoning as `buildLoadToWatch`: a quiet player is a real row, not
- * an absence), while sessionsLogged/estimatedShare are scoped to `windowed`,
- * the currently-selected display window.
- */
-export function buildSquadTable(
-  windowed: LoadRow[],
-  all: LoadRow[],
-  players: Player[],
-  anchor: Date,
-  teamSessionDates: string[],
-): SquadTableRow[] {
-  const allByPlayer = new Map<string, LoadRow[]>();
-  for (const r of all) {
-    const list = allByPlayer.get(r.player_id);
-    if (list) list.push(r);
-    else allByPlayer.set(r.player_id, [r]);
-  }
-  const windowedByPlayer = new Map<string, LoadRow[]>();
-  for (const r of windowed) {
-    const list = windowedByPlayer.get(r.player_id);
-    if (list) list.push(r);
-    else windowedByPlayer.set(r.player_id, [r]);
-  }
-
-  // 12 clean Monday-aligned weeks ending exactly at `anchor` (always a Sunday
-  // — see pinnedWeeklyAnchor) — no partial trailing week in the sparkline.
-  const sparklineStart = new Date(anchor.getFullYear(), anchor.getMonth(), anchor.getDate() - (12 * 7 - 1));
-
-  return players.map((player) => {
-    const full = allByPlayer.get(player.id) ?? [];
-    const windowedRows = windowedByPlayer.get(player.id) ?? [];
-    const acwr = computeAcwr(collapseLoadByDay(full), anchor, CHRONIC_LOAD_FLOOR, teamSessionDates);
-    const totalAu = windowedRows.reduce((s, r) => s + r.load_au, 0);
-    const estimatedAu = windowedRows.reduce((s, r) => (r.estimated ? s + r.load_au : s), 0);
-    const monotonyWeeks: WeeklyMonotonyStrain[] = computeWeeklyMonotonyStrain(full, sparklineStart, anchor);
-
-    return {
-      player,
-      weeklyAu: Math.round(acwr.acute),
-      weekOnWeekPct: acwr.weekOnWeekPct,
-      status: acwr.status,
-      sessionsLogged: windowedRows.filter((r) => r.source === "session").length,
-      estimatedShare: totalAu > 0 ? estimatedAu / totalAu : 0,
-      monotonySparkline: monotonyWeeks.map((w) => ({ weekStart: w.weekStart, monotony: w.monotony })),
-    };
-  });
-}
-
-export function interpretSquadTable(rows: SquadTableRow[]): string {
-  if (rows.length === 0) return "No active players.";
-  const loggedThisWeek = rows.filter((r) => r.weeklyAu > 0).length;
-  return `${loggedThisWeek} of ${plural(rows.length, "player")} logged load this week.`;
+  return `${plural(rows.length, "player")} above their usual range: ${parts.join(", ")}.`;
 }
 
 export function interpretSquadWeeklyLoad(weekly: SquadWeekLoad[]): string {

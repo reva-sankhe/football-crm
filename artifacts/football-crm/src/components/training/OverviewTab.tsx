@@ -1,30 +1,43 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "wouter";
 import {
-  Area, AreaChart, CartesianGrid, ReferenceLine, ResponsiveContainer, Scatter, ScatterChart,
-  Tooltip, XAxis, YAxis, ZAxis,
+  Area, AreaChart, CartesianGrid, ReferenceArea, ResponsiveContainer,
+  Tooltip, XAxis, YAxis,
 } from "recharts";
 import { cn } from "@/lib/utils";
 import { useTheme } from "@/context/ThemeContext";
 import { useToast } from "@/hooks/use-toast";
-import { MiniTable, OverviewCard, tooltipStyle } from "@/components/OverviewCard";
-import { HIGHLIGHT, ink, posColor, type Mode } from "@/lib/viz";
-import { fetchAllAttendanceStats, fetchAllMatchStats, fetchAllRPEWithSessions, fetchPlayers, fetchTrainingSessions } from "@/lib/queries";
-import { ACWR_CONFIG, buildLoadRows, pinnedWeeklyAnchor, type LoadRow } from "@/lib/report";
+import { OverviewCard, tooltipStyle } from "@/components/OverviewCard";
+import { HIGHLIGHT, ink, type Mode } from "@/lib/viz";
 import {
-  buildPlayerLoadDistribution, buildWeeklyTeamLoad, interpretLoadDistribution,
-  interpretWeeklyLoad, withinWeeks, type PlayerLoadLine,
+  fetchAllAttendanceStats, fetchAllMatchStats, fetchAllRPEWithSessions, fetchPlayers, fetchTrainingSessions,
+} from "@/lib/queries";
+import { ACWR_CONFIG, buildLoadRows, pinnedWeeklyAnchor, teamSessionDatesFrom, type LoadRow } from "@/lib/report";
+import {
+  buildLoadToWatch, buildSquadWeeklyLoad, computeSquadUsualLoadRange,
+  interpretLoadToWatch, interpretSquadWeeklyLoad, weeksAgo, withinWeeks,
+  type LoadToWatchRow, type SquadWeekLoad,
 } from "@/lib/trainingAnalytics";
 import type { Player, TrainingSession } from "@/lib/types";
 
 /**
  * Training → Overview: what the load actually says.
  *
- * The same object as the other Overview tabs — a chart, and underneath it the
- * reading of what it shows. Load comes from `buildLoadRows`, the pipeline the
- * player profile, the printed report and the Dashboard alerts already use, so
- * the team view here cannot disagree with any of them. Matches use player-rated
- * RPE when available, and a marked RPE 7 estimate only when it is missing.
+ * Load comes from `buildLoadRows`, the pipeline the player profile, the
+ * printed report and the Dashboard alerts already use, so this page cannot
+ * disagree with any of them. Flagged-player and ratio figures anchor to
+ * `pinnedWeeklyAnchor()` (the most recently completed Sunday) rather than
+ * today, so a player's status doesn't shift just because a coach opened the
+ * page on a different day of the week — see report.ts for why. The weekly
+ * load *chart* is the one exception: it tiles through the literal present so
+ * a partial, still-building current week shows real progress, clearly
+ * marked, rather than jumping straight to Sunday.
+ *
+ * Deliberately simple by design: this page is only Flagged players, four
+ * stat cards, and the weekly load trend. No squad-wide table, no gone-quiet
+ * signal, no data-quality panel — cut in favor of a page that answers "who
+ * needs a look, and is the squad's load doing anything unusual" without
+ * asking a coach to parse a big table.
  */
 
 const WINDOWS: { label: string; weeks: number | null }[] = [
@@ -51,7 +64,7 @@ export function OverviewTab() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [ps, rpe, matchStats, attendance, sessions] = await Promise.all([
+      const [ps, rpe, matchStats, attendance, sessionsData] = await Promise.all([
         fetchPlayers(),
         fetchAllRPEWithSessions(),
         fetchAllMatchStats(),
@@ -64,13 +77,13 @@ export function OverviewTab() {
       const activePs = ps.filter((p) => p.is_active);
       const squad = new Set(activePs.map((p) => p.id));
       setPlayers(activePs);
-      setSessions(sessions);
+      setSessions(sessionsData);
       setRows(
         buildLoadRows(
           rpe.filter((r) => squad.has(r.player_id)),
           matchStats.filter((s) => squad.has(s.player_id)),
           attendance.filter((a) => squad.has(a.player_id)),
-          sessions,
+          sessionsData,
         ),
       );
     } catch (err) {
@@ -82,23 +95,53 @@ export function OverviewTab() {
 
   useEffect(() => { load(); }, [load]);
 
-  const windowed = useMemo(() => withinWeeks(rows, weeks, pinnedWeeklyAnchor()), [rows, weeks]);
-  const weekly = useMemo(() => buildWeeklyTeamLoad(windowed), [windowed]);
-  const distribution = useMemo(
-    // The ratio reads full history: a display window cannot truncate its baseline.
-    () => buildPlayerLoadDistribution(windowed, rows, players, pinnedWeeklyAnchor(), sessions),
-    [windowed, rows, players, sessions],
+  // ── Two different anchors, deliberately ────────────────────────────────────
+  // Flagged-player status uses the pinned Sunday anchor, so it reads the same
+  // all week. The weekly load *chart* tiles through the literal present
+  // instead, so a partial current week shows real in-progress data (see
+  // buildSquadWeeklyLoad's isPartial).
+  const statusAnchor = useMemo(() => pinnedWeeklyAnchor(), []);
+  const chartEnd = useMemo(() => new Date(), []);
+  const teamSessionDates = useMemo(() => teamSessionDatesFrom(sessions), [sessions]);
+
+  const earliestRowDate = useMemo(() => {
+    const dated = rows.filter((r) => r.date != null).map((r) => r.date as string).sort();
+    return dated.length > 0 ? new Date(dated[0] + "T00:00:00") : chartEnd;
+  }, [rows, chartEnd]);
+  const chartStart = useMemo(
+    () => weeksAgo(weeks, chartEnd) ?? earliestRowDate,
+    [weeks, chartEnd, earliestRowDate],
   );
 
-  const totalAu = weekly.reduce((s, w) => s + w.totalAu, 0);
-  const avgPerWeek = weekly.length > 0 ? Math.round(totalAu / weekly.length) : 0;
-  const flagged = distribution.filter((l) => l.acwr.status === "elevated" || l.acwr.status === "spike");
+  const weeklySquad = useMemo(
+    () => buildSquadWeeklyLoad(rows, chartStart, chartEnd),
+    [rows, chartStart, chartEnd],
+  );
+  const usualRange = useMemo(() => computeSquadUsualLoadRange(weeklySquad), [weeklySquad]);
+
+  const loadToWatch = useMemo(
+    () => buildLoadToWatch(rows, players, statusAnchor, teamSessionDates),
+    [rows, players, statusAnchor, teamSessionDates],
+  );
+
+  // ── Stat cards ───────────────────────────────────────────────────────────
+  const latestWeek: SquadWeekLoad | undefined = weeklySquad[weeklySquad.length - 1];
+  const previousCompleteWeek: SquadWeekLoad | undefined = latestWeek?.isPartial
+    ? weeklySquad[weeklySquad.length - 2]
+    : undefined;
+  // A partial current week has no week-on-week of its own (see buildSquadWeeklyLoad) —
+  // "change vs last week" instead reads the most recent pair of complete weeks.
+  const changeVsLastWeek = latestWeek?.isPartial
+    ? previousCompleteWeek?.weekOnWeekPerPlayerPct ?? null
+    : latestWeek?.weekOnWeekPerPlayerPct ?? null;
+
+  const weeksWithData = weeklySquad.filter((w) => w.totalAu > 0).length;
 
   if (loading) {
     return (
       <div className="space-y-4">
         <div className="bg-card border border-border rounded-2xl h-20 animate-pulse" />
-        <div className="bg-card border border-border rounded-2xl h-80 animate-pulse" />
+        <div className="bg-card border border-border rounded-2xl h-16 animate-pulse" />
         <div className="bg-card border border-border rounded-2xl h-80 animate-pulse" />
       </div>
     );
@@ -106,7 +149,7 @@ export function OverviewTab() {
 
   return (
     <div className="space-y-4">
-      {/* ── Window and team ────────────────────────────────────────────────── */}
+      {/* ── Window ─────────────────────────────────────────────────────────── */}
       <div className="bg-card border border-border rounded-2xl px-5 py-4 flex flex-wrap items-center gap-x-3 gap-y-2">
         <div className="min-w-0">
           <div className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">
@@ -116,8 +159,9 @@ export function OverviewTab() {
             {weeks ? `Last ${weeks} weeks` : "All time"}
           </div>
           <div className="text-[11px] text-muted-foreground mt-0.5">
-            {totalAu.toLocaleString()} AU across {weekly.length} {weekly.length === 1 ? "week" : "weeks"}
-            {distribution.length > 0 && ` · ${distribution.length} players`}
+            {weeks
+              ? `Last ${weeks} weeks selected · ${weeksWithData} of ${weeklySquad.length} have data logged`
+              : `${weeksWithData} of ${weeklySquad.length} weeks on record have data logged`}
           </div>
         </div>
 
@@ -142,49 +186,65 @@ export function OverviewTab() {
         </div>
       </div>
 
-      {/* ── Snapshot ───────────────────────────────────────────────────────── */}
+      {/* ── Flagged players ────────────────────────────────────────────────── */}
+      <div className="bg-card border border-border rounded-2xl px-5 py-4">
+        <h2 className="text-sm font-semibold text-foreground mb-1">Flagged players</h2>
+        <p className="text-xs text-muted-foreground mb-3">{interpretLoadToWatch(loadToWatch)}</p>
+        {loadToWatch.length === 0 ? (
+          <p className="text-sm text-muted-foreground py-1">Nobody is above their usual load range right now.</p>
+        ) : (
+          <div className="flex flex-wrap gap-2">
+            {loadToWatch.map((w) => (
+              <FlaggedPlayerChip key={w.player.id} row={w} />
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* ── Four stat cards ────────────────────────────────────────────────── */}
       <div className="flex flex-wrap gap-px bg-border border border-border rounded-2xl overflow-hidden">
-        <Stat label="Total load" value={`${totalAu.toLocaleString()} AU`} sub={`${weekly.length} weeks`} />
-        <Stat label="Avg per week" value={`${avgPerWeek.toLocaleString()} AU`} sub="whole squad" />
         <Stat
-          label="Heaviest player"
-          value={distribution[0] ? `${distribution[0].totalAu.toLocaleString()} AU` : "—"}
-          sub={distribution[0]?.player.name}
+          label="Avg load per player"
+          value={latestWeek ? `${latestWeek.perPlayerAu.toLocaleString()} AU` : "—"}
+          sub={latestWeek?.isPartial ? "this week so far" : "this week"}
         />
         <Stat
-          label="Above typical range"
-          value={flagged.length}
-          tone={flagged.length > 0 ? "text-status-warn" : undefined}
-          sub="last 7 days vs prior 3 weeks"
+          label="Change vs last week"
+          value={changeVsLastWeek === null ? "—" : `${changeVsLastWeek >= 0 ? "+" : ""}${Math.round(changeVsLastWeek)}%`}
+          sub="per player"
+        />
+        <Stat
+          label="Players trained"
+          value={latestWeek ? `${latestWeek.players} of ${players.length}` : "—"}
+          sub={latestWeek?.isPartial ? "this week so far" : "this week"}
+        />
+        <Stat
+          label="Load estimated"
+          value={latestWeek ? `${Math.round(latestWeek.estimatedShare * 100)}%` : "—"}
+          sub="this week"
         />
       </div>
 
-      {/* ── Weekly team load ───────────────────────────────────────────────── */}
+      {/* ── Weekly load chart ──────────────────────────────────────────────── */}
       <OverviewCard
         title="Weekly team load"
-        subtitle="Total AU per week, oldest first · weeks start Monday"
-        interpretation={interpretWeeklyLoad(weekly)}
-        table={
-          <MiniTable
-            head={["Week of", "Total", "Per player", "Players", "Days"]}
-            rows={weekly.map((w) => [
-              w.label,
-              `${w.totalAu.toLocaleString()} AU`,
-              `${w.perPlayerAu.toLocaleString()} AU`,
-              String(w.players),
-              String(w.days),
-            ])}
-          />
-        }
+        subtitle="Average AU per player who trained, oldest first · weeks start Monday"
+        interpretation={interpretSquadWeeklyLoad(weeklySquad)}
       >
         <div className="h-64">
-          {weekly.length === 0 ? (
+          {weeklySquad.length === 0 ? (
             <p className="text-sm text-muted-foreground py-20 text-center">No load logged in this window</p>
           ) : (
             <ResponsiveContainer width="100%" height="100%">
-              <AreaChart data={weekly} margin={{ top: 8, right: 8, left: -8, bottom: 0 }}>
+              <AreaChart
+                data={weeklySquad.map((w) => ({
+                  ...w,
+                  label: w.isPartial ? `${w.label} (so far)` : w.label,
+                }))}
+                margin={{ top: 8, right: 8, left: -8, bottom: 0 }}
+              >
                 <defs>
-                  <linearGradient id="team-load" x1="0" y1="0" x2="0" y2="1">
+                  <linearGradient id="squad-load" x1="0" y1="0" x2="0" y2="1">
                     <stop offset="0%" stopColor={HIGHLIGHT} stopOpacity={0.3} />
                     <stop offset="100%" stopColor={HIGHLIGHT} stopOpacity={0.02} />
                   </linearGradient>
@@ -192,21 +252,49 @@ export function OverviewTab() {
                 <CartesianGrid stroke={INK.grid} vertical={false} />
                 <XAxis dataKey="label" tick={{ fill: INK.secondary, fontSize: 10 }} axisLine={{ stroke: INK.axis }} tickLine={false} />
                 <YAxis tick={{ fill: INK.muted, fontSize: 10 }} axisLine={false} tickLine={false} width={48} />
+                {usualRange && (
+                  <ReferenceArea
+                    y1={Math.max(0, usualRange.low)}
+                    y2={usualRange.high}
+                    fill={HIGHLIGHT}
+                    fillOpacity={0.08}
+                    stroke="none"
+                    label={{ value: "Usual range", position: "insideTopLeft", fill: HIGHLIGHT, fontSize: 9, fontWeight: 600 }}
+                  />
+                )}
                 <Tooltip
                   {...tip}
                   labelFormatter={(label) => `Week of ${label}`}
                   formatter={(v: number, _n, item) => {
-                    const w = item?.payload as { players: number; perPlayerAu: number };
-                    return [`${v.toLocaleString()} AU · ${w?.perPlayerAu.toLocaleString()} each (${w?.players} players)`, "Total load"];
+                    const w = item?.payload as SquadWeekLoad;
+                    return [
+                      `${v.toLocaleString()} AU avg · ${w?.players ?? 0} trained · ${w?.totalAu.toLocaleString() ?? 0} total`,
+                      "Load per player",
+                    ];
                   }}
                 />
                 <Area
                   type="monotone"
-                  dataKey="totalAu"
+                  dataKey="perPlayerAu"
                   stroke={HIGHLIGHT}
                   strokeWidth={2}
-                  fill="url(#team-load)"
-                  dot={{ r: 3, fill: HIGHLIGHT, strokeWidth: 0 }}
+                  fill="url(#squad-load)"
+                  dot={(props: { cx?: number; cy?: number; payload?: SquadWeekLoad; index?: number }) => {
+                    const { cx, cy, payload, index } = props;
+                    if (cx == null || cy == null) return <g key={index} />;
+                    return (
+                      <circle
+                        key={index}
+                        cx={cx}
+                        cy={cy}
+                        r={3}
+                        fill={HIGHLIGHT}
+                        strokeWidth={payload?.isPartial ? 2 : 0}
+                        stroke={INK.surface}
+                        strokeDasharray={payload?.isPartial ? "2 2" : undefined}
+                      />
+                    );
+                  }}
                   activeDot={{ r: 5, fill: HIGHLIGHT, stroke: INK.surface, strokeWidth: 2 }}
                 />
               </AreaChart>
@@ -215,123 +303,8 @@ export function OverviewTab() {
         </div>
       </OverviewCard>
 
-      {/* ── Player load distribution ───────────────────────────────────────── */}
-      <OverviewCard
-        title="Player load distribution"
-        subtitle="Days worked against load per day · circle colour is position"
-        interpretation={interpretLoadDistribution(distribution)}
-        table={
-          <MiniTable
-            head={["Player", "Total", "Days", "Per day", "Ratio"]}
-            rows={distribution.map((l) => [
-              l.player.name,
-              `${l.totalAu.toLocaleString()} AU`,
-              String(l.days),
-              `${l.perDayAu.toLocaleString()} AU`,
-              l.acwr.acwr === null ? "—" : l.acwr.acwr.toFixed(2),
-            ])}
-          />
-        }
-      >
-        <div className="h-72">
-          {distribution.length === 0 ? (
-            <p className="text-sm text-muted-foreground py-24 text-center">No load logged in this window</p>
-          ) : (
-            <ResponsiveContainer width="100%" height="100%">
-              <ScatterChart margin={{ top: 16, right: 16, bottom: 8, left: 0 }}>
-                <CartesianGrid stroke={INK.grid} />
-                <XAxis
-                  type="number"
-                  dataKey="days"
-                  name="Days"
-                  allowDecimals={false}
-                  tick={{ fill: INK.muted, fontSize: 10 }}
-                  axisLine={{ stroke: INK.axis }}
-                  tickLine={false}
-                  label={{ value: "Days worked", position: "insideBottom", offset: -4, fill: INK.muted, fontSize: 10 }}
-                />
-                <YAxis
-                  type="number"
-                  dataKey="perDayAu"
-                  name="Load per day"
-                  tick={{ fill: INK.muted, fontSize: 10 }}
-                  axisLine={false}
-                  tickLine={false}
-                  width={48}
-                />
-                <ZAxis range={[70, 70]} />
-                <Tooltip cursor={{ strokeDasharray: "3 3", stroke: INK.axis }} content={<LoadTooltip INK={INK} />} />
-                <Scatter
-                  data={distribution.map((l) => ({
-                    days: l.days,
-                    perDayAu: l.perDayAu,
-                    name: l.player.name,
-                    position: l.player.primary_position,
-                    totalAu: l.totalAu,
-                    acwr: l.acwr.acwr,
-                    status: l.acwr.status,
-                    weekAu: l.acwr.acute,
-                    weekOnWeekPct: l.acwr.weekOnWeekPct,
-                    matchShare: l.matchShare,
-                    estimatedMatchShare: l.estimatedMatchShare,
-                    fill: posColor(mode, l.player.primary_position),
-                  }))}
-                  isAnimationActive={false}
-                />
-                {/* Squad average load per day — the line a dot sits above or below */}
-                {distribution.length > 1 && (
-                  <ReferenceLine
-                    y={Math.round(distribution.reduce((s, l) => s + l.perDayAu, 0) / distribution.length)}
-                    stroke={HIGHLIGHT}
-                    strokeDasharray="5 3"
-                    label={{ value: "Squad avg", position: "insideTopRight", fill: HIGHLIGHT, fontSize: 9, fontWeight: 600 }}
-                  />
-                )}
-              </ScatterChart>
-            </ResponsiveContainer>
-          )}
-        </div>
-
-        <div className="flex flex-wrap gap-x-3 gap-y-1 mt-2">
-          {["Forward", "Midfielder", "Defender", "Goalkeeper"]
-            .filter((pos) => distribution.some((l) => l.player.primary_position === pos))
-            .map((pos) => (
-              <span key={pos} className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
-                <span className="w-2.5 h-2.5 rounded-full" style={{ background: posColor(mode, pos) }} />
-                {pos}
-              </span>
-            ))}
-        </div>
-      </OverviewCard>
-
-      {/* ── Who to watch ───────────────────────────────────────────────────── */}
-      {flagged.length > 0 && (
-        <div className="bg-card border border-border rounded-2xl px-5 py-4">
-          <h2 className="text-sm font-semibold text-foreground mb-2">Load to watch</h2>
-          <div className="flex flex-wrap gap-2">
-            {flagged.map((l) => (
-              <Link
-                key={l.player.id}
-                href={`/players/${l.player.id}`}
-                className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg border border-border text-[11px] hover:border-indigo-500/40 transition-colors"
-              >
-                <span className="w-2 h-2 rounded-full" style={{ background: ACWR_CONFIG[l.acwr.status].color }} />
-                <span className="text-foreground font-medium">{l.player.name}</span>
-                <span className="font-time text-muted-foreground">
-                  Ratio {l.acwr.acwr?.toFixed(2) ?? "—"} · {ACWR_CONFIG[l.acwr.status].label}
-                  {" · "}{Math.round(l.acwr.acute)} AU
-                  {l.acwr.weekOnWeekPct != null && (
-                    <> ({l.acwr.weekOnWeekPct >= 0 ? "+" : ""}{Math.round(l.acwr.weekOnWeekPct)}% wk/wk)</>
-                  )}
-                </span>
-              </Link>
-            ))}
-          </div>
-        </div>
-      )}
-
       <p className="text-[11px] text-muted-foreground">
-        Load is rated sessions plus match minutes. Match minutes use the player’s RPE when logged, or a
+        Load is rated sessions plus match minutes. Match minutes use the player's RPE when logged, or a
         clearly marked RPE 7 estimate when it is missing. The workload ratio compares the latest 7 days
         with the prior 3-week average and needs 28 calendar days of history; it is a monitoring signal,
         not an injury prediction.
@@ -356,50 +329,22 @@ function Stat({ label, value, sub, tone }: {
   );
 }
 
-interface LoadPoint {
-  name: string;
-  position: string | null;
-  days: number;
-  perDayAu: number;
-  totalAu: number;
-  acwr: number | null;
-  status: PlayerLoadLine["acwr"]["status"];
-  weekAu: number;
-  weekOnWeekPct: number | null;
-  matchShare: number;
-  estimatedMatchShare: number;
-}
-
-function LoadTooltip({ active, payload, INK }: {
-  active?: boolean;
-  payload?: { payload: LoadPoint }[];
-  INK: ReturnType<typeof ink>;
-}) {
-  if (!active || !payload?.length) return null;
-  const d = payload[0].payload;
+function FlaggedPlayerChip({ row }: { row: LoadToWatchRow }) {
+  const cfg = ACWR_CONFIG[row.status];
   return (
-    <div
-      className="rounded-lg px-2.5 py-2 text-xs"
-      style={{ background: INK.tooltipBg, border: `1px solid ${INK.tooltipBorder}` }}
+    <Link
+      href={`/players/${row.player.id}`}
+      className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg border border-border text-[11px] hover:border-indigo-500/40 transition-colors"
+      title={`Ratio ${row.acwr?.toFixed(2) ?? "—"}`}
     >
-      <div className="font-semibold" style={{ color: INK.primary }}>{d.name}</div>
-      <div style={{ color: INK.secondary }}>{d.position ?? "No position"}</div>
-      <div className="font-time" style={{ color: INK.secondary }}>
-        {d.totalAu.toLocaleString()} AU over {d.days} {d.days === 1 ? "day" : "days"} · {d.perDayAu.toLocaleString()} a day
-      </div>
-      <div className="font-time" style={{ color: ACWR_CONFIG[d.status].color }}>
-        Ratio {d.acwr?.toFixed(2) ?? "—"} · {ACWR_CONFIG[d.status].label}
-      </div>
-      <div className="font-time" style={{ color: INK.secondary }}>
-        {Math.round(d.weekAu)} AU this week
-        {d.weekOnWeekPct != null && ` · ${d.weekOnWeekPct >= 0 ? "+" : ""}${Math.round(d.weekOnWeekPct)}% wk/wk`}
-      </div>
-      {d.matchShare > 0 && (
-        <div className="font-time" style={{ color: INK.muted }}>
-          {Math.round(d.matchShare * 100)}% from matches
-          {d.estimatedMatchShare > 0 && ` · ${Math.round(d.estimatedMatchShare * 100)}% estimated at RPE 7`}
-        </div>
-      )}
-    </div>
+      <span className="w-2 h-2 rounded-full" style={{ background: cfg.color }} />
+      <span className="text-foreground font-medium">{row.player.name}</span>
+      <span className="font-time" style={{ color: cfg.color }}>
+        {cfg.label}
+        {row.pctVsUsual != null && (
+          <>, {Math.abs(Math.round(row.pctVsUsual))}% {row.pctVsUsual >= 0 ? "above" : "below"} usual</>
+        )}
+      </span>
+    </Link>
   );
 }
