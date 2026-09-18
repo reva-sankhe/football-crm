@@ -15,6 +15,8 @@
     "test:ewma-acwr": "node scripts/ewmaAcwr.test.mjs",
     "test:ewma-acwr-status": "node scripts/ewmaAcwrStatus.test.mjs",
     "test:z-score": "node scripts/zScore.test.mjs",
+    "test:pinned-anchor": "node scripts/pinnedWeeklyAnchor.test.mjs",
+    "test:training-analytics": "node scripts/trainingAnalytics.test.mjs",
     "test:attendance": "node scripts/attendance.test.mjs",
     "audit:workload": "node scripts/workloadAudit.mjs",
     "audit:completeness": "node scripts/dataCompletenessAudit.mjs",

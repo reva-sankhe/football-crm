@@ -1,7 +1,9 @@
 import {
-  computeAcwr, collapseLoadByDay, teamSessionDatesFrom,
-  type AcwrResult, type LoadRow,
+  computeAcwr, collapseLoadByDay, teamSessionDatesFrom, computeWeeklyMonotonyStrain,
+  computeZScore, usualRangeFor, Z_SCORE_MIN_WEEKS, CHRONIC_LOAD_FLOOR,
+  type AcwrResult, type LoadRow, type UsualRange, type WeeklyMonotonyStrain,
 } from "./report";
+import { computeSessionCompleteness } from "./dataCompleteness";
 import type { Player, TrainingSession } from "./types";
 
 /**
@@ -34,11 +36,21 @@ function weekLabel(iso: string): string {
   return d.toLocaleDateString("en-GB", { day: "numeric", month: "short" });
 }
 
+function isoOfDate(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+/** The Date `weeks` × 7 days before `end`. null `weeks` (all time) has no cutoff. */
+export function weeksAgo(weeks: number | null, end: Date): Date | null {
+  if (!weeks) return null;
+  return new Date(end.getTime() - weeks * 7 * 86_400_000);
+}
+
 /** Rows inside the last `weeks` weeks. null keeps everything. */
 export function withinWeeks(rows: LoadRow[], weeks: number | null, now: Date = new Date()): LoadRow[] {
-  if (!weeks) return rows;
-  const cutoff = new Date(now.getTime() - weeks * 7 * 86_400_000);
-  const cutoffIso = `${cutoff.getFullYear()}-${String(cutoff.getMonth() + 1).padStart(2, "0")}-${String(cutoff.getDate()).padStart(2, "0")}`;
+  const cutoff = weeksAgo(weeks, now);
+  if (!cutoff) return rows;
+  const cutoffIso = isoOfDate(cutoff);
   return rows.filter((r) => r.date != null && r.date >= cutoffIso);
 }
 
@@ -247,4 +259,335 @@ export function interpretLoadDistribution(lines: PlayerLoadLine[]): string {
   }
 
   return parts.join(" ");
+}
+
+// ── Training Overview rebuild ────────────────────────────────────────────────
+// Everything below is new, additive data-layer support for the rebuilt tab —
+// none of it is wired into any page yet. Kept alongside the functions above
+// (buildWeeklyTeamLoad, buildPlayerLoadDistribution, and their interpretations)
+// rather than replacing them in place, so the currently-live page keeps
+// working unchanged until the new layout actually swaps over to these.
+
+/** How many of a squad-weekly series' preceding weeks feed the "usual range" band. */
+const USUAL_RANGE_MAX_WEEKS = 12;
+
+export interface SquadWeekLoad {
+  /** ISO date of the Monday this tile starts on. Sorts correctly as a string. */
+  weekStart: string;
+  /** ISO date this tile actually ends on — weekStart + 6 days, or `end` if partial. */
+  weekEnd: string;
+  label: string;
+  totalAu: number;
+  /**
+   * Total ÷ the active squad size (a constant across every week), not ÷ the
+   * number of players who happened to log something that week. Dividing by
+   * turnout would just move the "well-attended week looks heavier" distortion
+   * from the numerator to the denominator — a week where only the five
+   * hardest trainers logged would still read as a uniquely heavy week.
+   */
+  perPlayerAu: number;
+  /** Distinct players who logged anything this week — informational, not the perPlayerAu divisor. */
+  players: number;
+  /** Distinct calendar days with any load logged. */
+  days: number;
+  estimatedAu: number;
+  /** estimatedAu ÷ totalAu, as a 0–1 fraction. 0 when totalAu is 0. */
+  estimatedShare: number;
+  /**
+   * True for a week cut short by `end` — at most the last entry in a series
+   * can be true. A partial week is real progress worth showing, not worth
+   * comparing: `weekOnWeekPerPlayerPct` is null on a partial week, and it
+   * should never be used as either side of any other week's comparison.
+   */
+  isPartial: boolean;
+  /** vs the immediately preceding (always-complete) week's perPlayerAu. Null for the first week, a partial week, or when the preceding week was 0. */
+  weekOnWeekPerPlayerPct: number | null;
+}
+
+/**
+ * One entry per non-overlapping calendar week (Monday–Sunday) from `start`
+ * through `end`, inclusive — every week in range gets an entry, including a
+ * genuine zero for a week nobody logged anything. This is a deliberate
+ * reversal of `buildWeeklyTeamLoad`'s sparse, omit-empty-weeks behavior: a
+ * vanished week can hide a real gap (a team break should be visible on the
+ * chart, not silently absent from it), and a dense series is what makes an
+ * unbroken "oldest first" axis and an explicit partial trailing week
+ * possible at all.
+ *
+ * `squadSize` is the active roster count used as the constant `perPlayerAu`
+ * divisor — pass the count of active players, not `players.length` filtered
+ * by anything week-specific.
+ */
+export function buildSquadWeeklyLoad(
+  rows: LoadRow[],
+  start: Date,
+  end: Date,
+  squadSize: number,
+): SquadWeekLoad[] {
+  const out: SquadWeekLoad[] = [];
+  let previousPerPlayerAu: number | null = null;
+
+  const firstMonday = weekStart(isoOfDate(start));
+  for (
+    let weekStartDate = new Date(firstMonday + "T00:00:00");
+    weekStartDate <= end;
+    weekStartDate = new Date(weekStartDate.getFullYear(), weekStartDate.getMonth(), weekStartDate.getDate() + 7)
+  ) {
+    const fullWeekEnd = new Date(weekStartDate.getFullYear(), weekStartDate.getMonth(), weekStartDate.getDate() + 6);
+    const isPartial = fullWeekEnd > end;
+    const weekEndDate = isPartial ? end : fullWeekEnd;
+    const weekStartIso = isoOfDate(weekStartDate);
+    const weekEndIso = isoOfDate(weekEndDate);
+
+    const weekRows = rows.filter((r) => r.date != null && r.date >= weekStartIso && r.date <= weekEndIso);
+    const totalAu = weekRows.reduce((s, r) => s + r.load_au, 0);
+    const estimatedAu = weekRows.reduce((s, r) => (r.estimated ? s + r.load_au : s), 0);
+    const players = new Set(weekRows.map((r) => r.player_id)).size;
+    const days = new Set(weekRows.map((r) => r.date)).size;
+    const perPlayerAu = squadSize > 0 ? totalAu / squadSize : 0;
+
+    const weekOnWeekPerPlayerPct = !isPartial && previousPerPlayerAu !== null && previousPerPlayerAu > 0
+      ? ((perPlayerAu - previousPerPlayerAu) / previousPerPlayerAu) * 100
+      : null;
+
+    out.push({
+      weekStart: weekStartIso,
+      weekEnd: weekEndIso,
+      label: weekLabel(weekStartIso),
+      totalAu: Math.round(totalAu),
+      perPlayerAu: Math.round(perPlayerAu),
+      players,
+      days,
+      estimatedAu: Math.round(estimatedAu),
+      estimatedShare: totalAu > 0 ? estimatedAu / totalAu : 0,
+      isPartial,
+      weekOnWeekPerPlayerPct,
+    });
+    previousPerPlayerAu = perPlayerAu;
+  }
+
+  return out;
+}
+
+/**
+ * One fixed "usual range" band for the weekly-load chart — computed once
+ * from the most recent (up to `USUAL_RANGE_MAX_WEEKS`) *complete* weeks
+ * strictly before the series' final entry, and drawn as a constant shaded
+ * region across the whole chart. Deliberately not a rolling, week-by-week
+ * band: a single reference region is what "a shaded usual-range band"
+ * (singular) describes, and is far simpler to read than a ribbon that
+ * reshapes underneath every point.
+ *
+ * Null below `Z_SCORE_MIN_WEEKS` (8) of preceding complete weeks — the
+ * explicit "not enough history yet" state from `usualRangeFor`, propagated
+ * up: a chart with fewer than 8 prior weeks shows a bare trend line, no band.
+ */
+export function computeSquadUsualLoadRange(weekly: SquadWeekLoad[]): UsualRange | null {
+  if (weekly.length < 2) return null;
+  const current = weekly[weekly.length - 1];
+  const history = weekly
+    .slice(0, weekly.length - 1)
+    .slice(-USUAL_RANGE_MAX_WEEKS)
+    .map((w) => w.perPlayerAu);
+  if (history.length < Z_SCORE_MIN_WEEKS) return null;
+  return usualRangeFor(computeZScore(current.perPlayerAu, history));
+}
+
+// ── Load to watch ─────────────────────────────────────────────────────────────
+/** Ordered worst-first: Spike, then Elevated, then Low. Low Base and Building are never watch-list material — there's no trustworthy ratio to act on yet. */
+const WATCH_TIER: Partial<Record<AcwrResult["status"], number>> = { spike: 0, elevated: 1, low: 2 };
+
+export interface LoadToWatchRow {
+  player: Player;
+  status: AcwrResult["status"];
+  /** (acwr − 1) × 100 — how far above/below the player's own usual load this reads, e.g. 65 for "65% above usual". Null when acwr itself is null. */
+  pctVsUsual: number | null;
+  acwr: number | null;
+  weeklyAu: number;
+  weekOnWeekPct: number | null;
+}
+
+/**
+ * Every active player whose current ratio sits meaningfully outside their
+ * own usual range — too high (Spike, Elevated) or too low (Low). A player
+ * well under their usual load is as worth a coach's attention as one running
+ * hot (returning too cautiously from injury, quietly disengaging, an
+ * attendance problem), so this deliberately isn't a "risk" list scoped to
+ * overload alone.
+ *
+ * Computed from `all` (each player's full history) rather than a windowed
+ * slice, and over every active player rather than only those who logged
+ * something recently — a player who has gone quiet is exactly the case a
+ * "Low" watch entry exists to catch, and they would otherwise be invisible
+ * to any calculation that only looks at players with recent rows.
+ */
+export function buildLoadToWatch(
+  all: LoadRow[],
+  players: Player[],
+  anchor: Date,
+  teamSessionDates: string[],
+): LoadToWatchRow[] {
+  const allByPlayer = new Map<string, LoadRow[]>();
+  for (const r of all) {
+    const list = allByPlayer.get(r.player_id);
+    if (list) list.push(r);
+    else allByPlayer.set(r.player_id, [r]);
+  }
+
+  const rows: LoadToWatchRow[] = [];
+  for (const player of players) {
+    const acwr = computeAcwr(collapseLoadByDay(allByPlayer.get(player.id) ?? []), anchor, CHRONIC_LOAD_FLOOR, teamSessionDates);
+    if (WATCH_TIER[acwr.status] === undefined) continue;
+    rows.push({
+      player,
+      status: acwr.status,
+      pctVsUsual: acwr.acwr !== null ? (acwr.acwr - 1) * 100 : null,
+      acwr: acwr.acwr,
+      weeklyAu: Math.round(acwr.acute),
+      weekOnWeekPct: acwr.weekOnWeekPct,
+    });
+  }
+
+  return rows.sort((a, b) => {
+    const tierDiff = WATCH_TIER[a.status]! - WATCH_TIER[b.status]!;
+    if (tierDiff !== 0) return tierDiff;
+    // Worst-first inside a tier: furthest below 1.0 for Low, furthest above for Spike/Elevated.
+    return a.status === "low" ? (a.acwr ?? 0) - (b.acwr ?? 0) : (b.acwr ?? 0) - (a.acwr ?? 0);
+  });
+}
+
+export function interpretLoadToWatch(rows: LoadToWatchRow[]): string {
+  if (rows.length === 0) return "Nobody is outside their usual load range right now.";
+  const counts = { spike: 0, elevated: 0, low: 0 } as Record<"spike" | "elevated" | "low", number>;
+  for (const r of rows) counts[r.status as "spike" | "elevated" | "low"]++;
+  const parts = [
+    counts.spike > 0 ? plural(counts.spike, "spiking") : null,
+    counts.elevated > 0 ? plural(counts.elevated, "elevated") : null,
+    counts.low > 0 ? `${plural(counts.low, "player")} well below usual` : null,
+  ].filter((p): p is string => p !== null);
+  return `${plural(rows.length, "player")} outside their usual range: ${parts.join(", ")}.`;
+}
+
+// ── Squad table ───────────────────────────────────────────────────────────────
+export interface SquadTableRow {
+  player: Player;
+  weeklyAu: number;
+  weekOnWeekPct: number | null;
+  status: AcwrResult["status"];
+  /** Rated-session rows (not match rows) logged in the display window. */
+  sessionsLogged: number;
+  /** Share of the window's total load that was estimated rather than rated, 0–1. 0 when the player logged nothing. */
+  estimatedShare: number;
+  /** Up to the last 12 complete weeks ending at `anchor`, oldest first — a sparkline shape, not a flagged metric here. */
+  monotonySparkline: { weekStart: string; monotony: number | null }[];
+}
+
+/**
+ * Every active player, one row each, for the sortable squad table replacing
+ * the deleted scatter — status and weekly figures from the *full* history
+ * (same reasoning as `buildLoadToWatch`: a quiet player is a real row, not
+ * an absence), while sessionsLogged/estimatedShare are scoped to `windowed`,
+ * the currently-selected display window.
+ */
+export function buildSquadTable(
+  windowed: LoadRow[],
+  all: LoadRow[],
+  players: Player[],
+  anchor: Date,
+  teamSessionDates: string[],
+): SquadTableRow[] {
+  const allByPlayer = new Map<string, LoadRow[]>();
+  for (const r of all) {
+    const list = allByPlayer.get(r.player_id);
+    if (list) list.push(r);
+    else allByPlayer.set(r.player_id, [r]);
+  }
+  const windowedByPlayer = new Map<string, LoadRow[]>();
+  for (const r of windowed) {
+    const list = windowedByPlayer.get(r.player_id);
+    if (list) list.push(r);
+    else windowedByPlayer.set(r.player_id, [r]);
+  }
+
+  // 12 clean Monday-aligned weeks ending exactly at `anchor` (always a Sunday
+  // — see pinnedWeeklyAnchor) — no partial trailing week in the sparkline.
+  const sparklineStart = new Date(anchor.getFullYear(), anchor.getMonth(), anchor.getDate() - (12 * 7 - 1));
+
+  return players.map((player) => {
+    const full = allByPlayer.get(player.id) ?? [];
+    const windowedRows = windowedByPlayer.get(player.id) ?? [];
+    const acwr = computeAcwr(collapseLoadByDay(full), anchor, CHRONIC_LOAD_FLOOR, teamSessionDates);
+    const totalAu = windowedRows.reduce((s, r) => s + r.load_au, 0);
+    const estimatedAu = windowedRows.reduce((s, r) => (r.estimated ? s + r.load_au : s), 0);
+    const monotonyWeeks: WeeklyMonotonyStrain[] = computeWeeklyMonotonyStrain(full, sparklineStart, anchor);
+
+    return {
+      player,
+      weeklyAu: Math.round(acwr.acute),
+      weekOnWeekPct: acwr.weekOnWeekPct,
+      status: acwr.status,
+      sessionsLogged: windowedRows.filter((r) => r.source === "session").length,
+      estimatedShare: totalAu > 0 ? estimatedAu / totalAu : 0,
+      monotonySparkline: monotonyWeeks.map((w) => ({ weekStart: w.weekStart, monotony: w.monotony })),
+    };
+  });
+}
+
+export function interpretSquadTable(rows: SquadTableRow[]): string {
+  if (rows.length === 0) return "No active players.";
+  const loggedThisWeek = rows.filter((r) => r.weeklyAu > 0).length;
+  return `${loggedThisWeek} of ${plural(rows.length, "player")} logged load this week.`;
+}
+
+export function interpretSquadWeeklyLoad(weekly: SquadWeekLoad[]): string {
+  if (weekly.length === 0) return "No load logged in this window.";
+  const latest = weekly[weekly.length - 1];
+  if (latest.isPartial) {
+    return `${latest.perPlayerAu.toLocaleString()} AU per player so far this week (in progress).`;
+  }
+  if (latest.weekOnWeekPerPlayerPct === null) {
+    return `${latest.perPlayerAu.toLocaleString()} AU per player this week.`;
+  }
+  const pct = Math.round(latest.weekOnWeekPerPlayerPct);
+  return Math.abs(pct) < 10
+    ? `${latest.perPlayerAu.toLocaleString()} AU per player this week, level with last week.`
+    : `${latest.perPlayerAu.toLocaleString()} AU per player this week, ${Math.abs(pct)}% ${pct > 0 ? "up on" : "down on"} last week.`;
+}
+
+// ── Data quality ──────────────────────────────────────────────────────────────
+export interface DataQualityPanel {
+  sessionsWithNoRpe: number;
+  /** Non-Lecture sessions in the window — the same scope computeSessionCompleteness uses. */
+  totalSessions: number;
+  /** 0–100, rounded. 0 when there's no load in the window at all. */
+  estimatedSharePct: number;
+}
+
+export function buildDataQualityPanel(
+  sessions: TrainingSession[],
+  attendance: { session_id: string; player_id: string; status: string }[],
+  rpe: { session_id: string; player_id: string }[],
+  windowedLoadRows: LoadRow[],
+  start: Date,
+  end: Date,
+): DataQualityPanel {
+  const startIso = isoOfDate(start);
+  const endIso = isoOfDate(end);
+  const windowedSessions = sessions.filter((s) => s.date >= startIso && s.date <= endIso);
+  const completeness = computeSessionCompleteness(windowedSessions, attendance, rpe);
+  const totalAu = windowedLoadRows.reduce((s, r) => s + r.load_au, 0);
+  const estimatedAu = windowedLoadRows.reduce((s, r) => (r.estimated ? s + r.load_au : s), 0);
+
+  return {
+    sessionsWithNoRpe: completeness.filter((c) => c.rpeMissingEntirely).length,
+    totalSessions: completeness.length,
+    estimatedSharePct: totalAu > 0 ? Math.round((estimatedAu / totalAu) * 100) : 0,
+  };
+}
+
+export function interpretDataQuality(panel: DataQualityPanel): string {
+  if (panel.totalSessions === 0) return "No sessions in this window yet.";
+  return panel.sessionsWithNoRpe === 0
+    ? `Every session has at least one RPE logged, and ${panel.estimatedSharePct}% of squad load this period is estimated rather than rated.`
+    : `${panel.sessionsWithNoRpe} of ${plural(panel.totalSessions, "session")} have no RPE logged from anyone, and ${panel.estimatedSharePct}% of squad load this period is estimated rather than rated.`;
 }

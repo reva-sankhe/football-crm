@@ -692,6 +692,34 @@ export const ACWR_CONFIG: Record<AcwrResult["status"], { label: string; color: s
   building: { label: "Building Baseline", color: "#94a3b8",   desc: "A complete 28-day workload history is needed before this ratio is classified." },
 };
 
+/**
+ * The most recently completed Sunday on or before `referenceDate` — Sunday
+ * being the last day of the team's fixed Wed/Fri/Sun training week.
+ *
+ * Every ACWR anchor in the app should be built from this rather than a raw
+ * "now": a plain `new Date()` anchor means a player's status can change
+ * purely because a coach opened the page on a different day of the week —
+ * a training day silently rolling out of the trailing 7-day window with
+ * nothing having actually changed. Pinning to the same Sunday all week means
+ * Monday through Saturday all read the identical, just-completed week, and
+ * the number only moves once, at the real weekly boundary.
+ *
+ * `referenceDate` is deliberately not always "today" — see `buildPlayerReport`,
+ * which pins relative to a report's own selected range or last session date
+ * rather than the literal present, so a report about the past doesn't anchor
+ * to an unrelated today.
+ *
+ * If `referenceDate` itself is a Sunday, it snaps to that same day — a
+ * deliberate simplification that treats that day's session as already
+ * logged, rather than distinguishing a Sunday-morning check (before that
+ * evening's session) from a Sunday-night one.
+ */
+export function pinnedWeeklyAnchor(referenceDate: Date = new Date()): Date {
+  const d = new Date(referenceDate.getFullYear(), referenceDate.getMonth(), referenceDate.getDate());
+  d.setDate(d.getDate() - d.getDay());
+  return d;
+}
+
 export function workloadRatioWindows(anchor?: Date): WorkloadRatioWindows {
   const supplied = anchor ?? new Date();
   const end = new Date(supplied.getFullYear(), supplied.getMonth(), supplied.getDate());
@@ -1198,15 +1226,22 @@ export function buildPlayerReport(
   // An all-time report anchors to the last session on record rather than today,
   // so a report printed weeks after the last session doesn't read 0.00 for the
   // whole squad. The printed "as at" date keeps that honest either way.
+  //
+  // Either reference point is then pinned to its own most-recent-Sunday (see
+  // pinnedWeeklyAnchor) rather than used raw — a report for a specific range
+  // should read the same regardless of which day inside that range it was
+  // generated on, same reasoning as every other ACWR anchor in the app.
   const lastSessionDate = data.sessions.reduce<string | null>(
     (max, s) => (s.date && (max === null || s.date > max) ? s.date : max),
     null,
   );
-  const anchor = range
-    ? new Date(range.to + "T00:00:00")
-    : lastSessionDate
-      ? new Date(lastSessionDate + "T00:00:00")
-      : undefined;
+  const anchor = pinnedWeeklyAnchor(
+    range
+      ? new Date(range.to + "T00:00:00")
+      : lastSessionDate
+        ? new Date(lastSessionDate + "T00:00:00")
+        : new Date(),
+  );
   // Per day, matching the profile. Totals are the same either way; the unit isn't.
   const acwr = computeAcwr(collapseLoadByDay(playerLoad), anchor, CHRONIC_LOAD_FLOOR, teamSessionDatesFrom(data.sessions));
   const ratioWindows = workloadRatioWindows(anchor);

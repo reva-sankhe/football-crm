@@ -12,6 +12,9 @@ import {
 import {
   attendancePctColor, collapseMatchDays, countsAsAttended, formatDateShort, isoDaysAgo, matchDayAttendance,
 } from "@/lib/attendance";
+import {
+  Tooltip as InfoTooltip, TooltipContent as InfoTooltipContent, TooltipTrigger as InfoTooltipTrigger,
+} from "@/components/ui/tooltip";
 
 /**
  * How far back the load chart and workload ratio look. The ratio needs 28 days;
@@ -19,7 +22,7 @@ import {
  */
 const LOAD_WINDOW_DAYS = 35;
 import {
-  ACWR_CONFIG, MATCH_RPE, buildLoadRows, collapseLoadByDay, computeAcwr, isMatchSession, teamSessionDatesFrom,
+  ACWR_CONFIG, MATCH_RPE, buildLoadRows, collapseLoadByDay, computeAcwr, isMatchSession, pinnedWeeklyAnchor, teamSessionDatesFrom,
   teamBandFor,
 } from "@/lib/report";
 import { ChartSkeleton, Skeleton } from "@/components/Skeleton";
@@ -218,7 +221,7 @@ export default function PlayerDetail() {
   // Shared with the printable report so workload figures cannot disagree.
   const {
     acwr, acute: acuteLoad, weekOnWeekPct, baselineWeeklyAvg, historyDays, status: acwrStatus,
-  } = computeAcwr(dailyLoad, undefined, undefined, teamSessionDatesFrom(allSessions));
+  } = computeAcwr(dailyLoad, pinnedWeeklyAnchor(), undefined, teamSessionDatesFrom(allSessions));
   const acwrCfg = ACWR_CONFIG[acwrStatus];
 
   // ── Attendance ────────────────────────────────────────────────────────────
@@ -533,19 +536,29 @@ export default function PlayerDetail() {
               <div className="flex items-start justify-between mb-2">
                 <div>
                   <div className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground mb-1">Workload Ratio</div>
-                  <div className="text-3xl font-bold font-time leading-none" style={{ color: acwrCfg.color }}>
-                    {acwr !== null ? acwr.toFixed(2) : "—"}
-                  </div>
+                  <InfoTooltip>
+                    <InfoTooltipTrigger asChild>
+                      <div
+                        className="text-3xl font-bold font-time leading-none cursor-help w-fit"
+                        style={{ color: acwrCfg.color }}
+                      >
+                        {acwr !== null ? acwr.toFixed(2) : "—"}
+                      </div>
+                    </InfoTooltipTrigger>
+                    <InfoTooltipContent>
+                      Ratio {acwr !== null ? acwr.toFixed(2) : "—"} = last 7 days ÷ prior 3-week average
+                      ({Math.round(baselineWeeklyAvg)} AU)
+                    </InfoTooltipContent>
+                  </InfoTooltip>
                   <div className="text-xs font-medium mt-1" style={{ color: acwrCfg.color }}>{acwrCfg.label}</div>
                 </div>
                 <div className="text-right text-[11px] text-muted-foreground space-y-1">
                   <div>
                     Last 7 days <span className="text-foreground font-time font-bold">{Math.round(acuteLoad)}</span>
                     {weekOnWeekPct != null && (
-                      <span className="font-time"> ({weekOnWeekPct >= 0 ? "+" : ""}{Math.round(weekOnWeekPct)}% wk/wk)</span>
+                      <span className="font-time"> ({weekOnWeekPct >= 0 ? "+" : ""}{Math.round(weekOnWeekPct)}% vs previous week)</span>
                     )}
                   </div>
-                  <div>Prior 3-wk avg <span className="text-foreground font-time font-bold">{Math.round(baselineWeeklyAvg)}</span></div>
                 </div>
               </div>
               <p className="text-xs text-muted-foreground mb-3">

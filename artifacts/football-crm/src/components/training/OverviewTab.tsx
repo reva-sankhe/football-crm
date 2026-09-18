@@ -10,7 +10,7 @@ import { useToast } from "@/hooks/use-toast";
 import { MiniTable, OverviewCard, tooltipStyle } from "@/components/OverviewCard";
 import { HIGHLIGHT, ink, posColor, type Mode } from "@/lib/viz";
 import { fetchAllAttendanceStats, fetchAllMatchStats, fetchAllRPEWithSessions, fetchPlayers, fetchTrainingSessions } from "@/lib/queries";
-import { ACWR_CONFIG, buildLoadRows, type LoadRow } from "@/lib/report";
+import { ACWR_CONFIG, buildLoadRows, pinnedWeeklyAnchor, type LoadRow } from "@/lib/report";
 import {
   buildPlayerLoadDistribution, buildWeeklyTeamLoad, interpretLoadDistribution,
   interpretWeeklyLoad, withinWeeks, type PlayerLoadLine,
@@ -82,11 +82,11 @@ export function OverviewTab() {
 
   useEffect(() => { load(); }, [load]);
 
-  const windowed = useMemo(() => withinWeeks(rows, weeks), [rows, weeks]);
+  const windowed = useMemo(() => withinWeeks(rows, weeks, pinnedWeeklyAnchor()), [rows, weeks]);
   const weekly = useMemo(() => buildWeeklyTeamLoad(windowed), [windowed]);
   const distribution = useMemo(
     // The ratio reads full history: a display window cannot truncate its baseline.
-    () => buildPlayerLoadDistribution(windowed, rows, players, new Date(), sessions),
+    () => buildPlayerLoadDistribution(windowed, rows, players, pinnedWeeklyAnchor(), sessions),
     [windowed, rows, players, sessions],
   );
 
