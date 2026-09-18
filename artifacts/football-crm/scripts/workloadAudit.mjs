@@ -88,7 +88,7 @@ async function fetchAllRows(supabase, table, select) {
 
 try {
   const report = await vite.ssrLoadModule("/src/lib/report.ts");
-  const { buildLoadRows, collapseLoadByDay, computeAcwr, teamSessionDatesFrom, CHRONIC_LOAD_FLOOR, ACWR_CONFIG } = report;
+  const { buildLoadRows, collapseLoadByDay, computeAcwr, computeEwmaAcwrStatus, teamSessionDatesFrom, CHRONIC_LOAD_FLOOR, ACWR_CONFIG } = report;
 
   const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
@@ -183,6 +183,12 @@ try {
     const seasonTotalAu = seasonRows.reduce((s, r) => s + r.load_au, 0);
     const seasonEstimatedAu = seasonRows.filter((r) => r.estimated).reduce((s, r) => s + r.load_au, 0);
 
+    // ── This week, both ratios side by side — the rolling version is the one
+    // coaches actually see; EWMA is tracked here purely so the two can keep
+    // being compared week over week while the switch is on hold. ──────────
+    const rollingNow = computeAcwr(onRowsAll, now, CHRONIC_LOAD_FLOOR, teamSessionDates);
+    const ewmaNow = computeEwmaAcwrStatus(onRowsAll, now, CHRONIC_LOAD_FLOOR, teamSessionDates);
+
     seasonReport.push({
       player: player.name,
       statusChangeWeeks,
@@ -190,6 +196,8 @@ try {
       seasonTotalAu: Math.round(seasonTotalAu),
       seasonEstimatedAu: Math.round(seasonEstimatedAu),
       seasonSharePct: seasonTotalAu > 0 ? Math.round((seasonEstimatedAu / seasonTotalAu) * 100) : 0,
+      rollingNow,
+      ewmaNow,
     });
   }
 
@@ -228,6 +236,22 @@ try {
     for (const p of seasonReport.slice().sort((a, b) => b.seasonSharePct - a.seasonSharePct)) {
       if (p.seasonTotalAu === 0) continue;
       console.log(`  ${p.player.padEnd(24)} ${p.seasonSharePct}% estimated  (${p.seasonEstimatedAu} of ${p.seasonTotalAu} AU)`);
+    }
+
+    // Rolling is the ratio the UI actually shows; EWMA is code-only for now
+    // (see report.ts computeEwmaAcwrStatus) — this section exists purely so
+    // the two can keep being compared week over week while that switch is on
+    // hold, without re-running the full-season ewmaComparisonAudit.mjs each time.
+    console.log(`\n── This week (${isoOfLocal(now)}): rolling ACWR (shown to coaches) vs EWMA ACWR (code-only) ──`);
+    const fmtResult = (r, ratioKey) => {
+      const val = r[ratioKey];
+      return `${ACWR_CONFIG[r.status].label} (${val === null ? "—" : val.toFixed(2)})`;
+    };
+    for (const p of seasonReport.slice().sort((a, b) => a.player.localeCompare(b.player))) {
+      const rollingLabel = fmtResult(p.rollingNow, "acwr");
+      const ewmaLabel = fmtResult(p.ewmaNow, "ewmaAcwr");
+      const flag = p.rollingNow.status !== p.ewmaNow.status ? "  ← differ" : "";
+      console.log(`  ${p.player.padEnd(24)} rolling: ${rollingLabel.padEnd(20)} ewma: ${ewmaLabel.padEnd(20)}${flag}`);
     }
   }
 

@@ -86,6 +86,26 @@ try {
   assert.equal(stillBuilding.strain.zScore, null);
   assert.ok(stillBuilding.weeklyLoad.zScore !== null, "weeklyLoad is unaffected by acwr/strain being unavailable");
 
+  // ── usualRangeFor: the explicit "not enough history yet" band state ────────
+  const { usualRangeFor, USUAL_RANGE_SD } = report;
+
+  const belowMin = usualRangeFor(short); // 5 weeks — below Z_SCORE_MIN_WEEKS
+  assert.equal(belowMin, null, "fewer than Z_SCORE_MIN_WEEKS weeks: no band at all, not a band from too few points");
+
+  const atMinRange = usualRangeFor(atMin); // exactly 8 weeks
+  assert.ok(atMinRange !== null, "exactly Z_SCORE_MIN_WEEKS weeks is enough for a real band");
+  approxEqual(atMinRange.low, atMin.mean - USUAL_RANGE_SD * atMin.sd);
+  approxEqual(atMinRange.high, atMin.mean + USUAL_RANGE_SD * atMin.sd);
+  assert.ok(atMinRange.low < atMin.mean && atMin.mean < atMinRange.high, "the band straddles the mean");
+
+  const flatRange = usualRangeFor(flat); // sd=0 flat history, but weeksUsed=10 >= min
+  assert.ok(flatRange !== null, "sd=0 still has enough weeks for a (zero-width) band — that's a real state, not a missing one");
+  approxEqual(flatRange.low, 100);
+  approxEqual(flatRange.high, 100);
+
+  const noHistoryRange = usualRangeFor(noHistory);
+  assert.equal(noHistoryRange, null, "zero prior weeks is obviously below the minimum");
+
   console.log("Z-score checks passed.");
 } finally {
   await vite.close();

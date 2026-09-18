@@ -1039,6 +1039,33 @@ export function computeWorkloadZScores(
   };
 }
 
+/** Width of a chart's shaded "usual range" band, in SDs either side of the mean. */
+export const USUAL_RANGE_SD = 1.5;
+
+export interface UsualRange {
+  low: number;
+  high: number;
+}
+
+/**
+ * The shaded "usual range" band for a weekly-load (or other metric) trend
+ * chart, derived from a `ZScoreResult`'s own mean/sd — so a chart's band and
+ * its "outside the band" read are always backed by the exact same window,
+ * never two slightly different history calculations.
+ *
+ * Null when `weeksUsed` hasn't reached `Z_SCORE_MIN_WEEKS` — the explicit
+ * "not enough history yet" state: a caller should render the bare trend
+ * line with no band at all in that case, not a band built from too few
+ * points (or, worse, from zero points) to mean anything.
+ */
+export function usualRangeFor(zScoreResult: ZScoreResult): UsualRange | null {
+  if (zScoreResult.weeksUsed < Z_SCORE_MIN_WEEKS) return null;
+  return {
+    low: zScoreResult.mean - USUAL_RANGE_SD * zScoreResult.sd,
+    high: zScoreResult.mean + USUAL_RANGE_SD * zScoreResult.sd,
+  };
+}
+
 // ── Report builder ────────────────────────────────────────────────────────────
 export function buildPlayerReport(
   player: Player,
