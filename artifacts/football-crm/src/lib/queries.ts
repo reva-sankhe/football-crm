@@ -396,15 +396,24 @@ export async function autoMarkPresentIfMissing(sessionId: string, playerIds: str
 }
 
 // ── Analytics: All RPE with session + player info ─────────────────────────────
+/**
+ * Every RPE entry with session + player info — backs Dashboard, PlayerReports,
+ * and OverviewTab. Paged like fetchAllAttendanceStats: session_rpe is written
+ * at close to the same cadence as session_attendance, so it can outgrow 1000
+ * rows the same way that table already has.
+ */
 export async function fetchAllRPEWithSessions(): Promise<
   (SessionRPE & { sessions: TrainingSession; players: Pick<Player, "id" | "name" | "team" | "primary_position" | "age_range"> })[]
 > {
-  const { data, error } = await supabase
-    .from("session_rpe")
-    .select("*, sessions(*), players(id, name, team, primary_position, age_range)")
-    .order("created_at", { ascending: true });
-  if (error) throw error;
-  return data as (SessionRPE & { sessions: TrainingSession; players: Pick<Player, "id" | "name" | "team" | "primary_position" | "age_range"> })[];
+  return fetchAllRows<SessionRPE & { sessions: TrainingSession; players: Pick<Player, "id" | "name" | "team" | "primary_position" | "age_range"> }>(
+    (from, to) =>
+      supabase
+        .from("session_rpe")
+        .select("*, sessions(*), players(id, name, team, primary_position, age_range)")
+        .order("created_at", { ascending: true })
+        .order("id", { ascending: true })
+        .range(from, to),
+  );
 }
 
 // ── Analytics: All attendance with player info ────────────────────────────────

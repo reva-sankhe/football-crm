@@ -36,6 +36,17 @@ async function fetchAllRows(supabase, table, select) {
     out.push(...(data ?? []));
     if (!data || data.length < PAGE_SIZE) break;
   }
+  // Belt-and-suspenders against the exact bug this paging exists to avoid:
+  // if paging itself ever under-reads (a bad tiebreak, a row mutated mid-scan),
+  // this catches it instead of silently shipping a short report.
+  const { count, error: countError } = await supabase.from(table).select("*", { count: "exact", head: true });
+  if (countError) return { data: null, error: countError };
+  if (count !== out.length) {
+    return {
+      data: null,
+      error: { message: `Row count mismatch on ${table}: fetched ${out.length} rows but count query reports ${count}.` },
+    };
+  }
   return { data: out, error: null };
 }
 
