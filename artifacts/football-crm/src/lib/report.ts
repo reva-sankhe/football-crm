@@ -892,6 +892,82 @@ export function computeEwmaAcwr(rows: LoadRow[], anchor?: Date): EwmaAcwrResult 
   return { ewmaAcute, ewmaChronic, ewmaAcwr, historyDays, hasBaseline, asAt };
 }
 
+export interface EwmaAcwrStatusResult extends EwmaAcwrResult {
+  status: AcwrResult["status"];
+}
+
+/**
+ * EWMA ACWR classified with the exact same rules `computeAcwr` uses for the
+ * rolling ratio: identical numeric bands (<0.8 low, <1.3 typical, ≤1.5
+ * elevated, else spike), the identical `CHRONIC_LOAD_FLOOR` demotion of a
+ * Spike to Low Base, and the identical team-break "building" override
+ * (`findTeamBreakResumeDate` evaluated over the same acute/baseline windows
+ * from `workloadRatioWindows`) — a coach reading "Spike" or "Building" means
+ * the same thing regardless of which ratio produced it. This is not a
+ * parallel reimplementation of those rules; it applies them to this ratio's
+ * own numbers.
+ *
+ * `acute` (this week's AU) and `weekOnWeekPct` are deliberately not
+ * reproduced here — they don't change with this switch, and stay sourced
+ * from `computeAcwr`'s own unmodified result, exactly as before.
+ *
+ * One real unit difference to account for: `ewmaChronic` is a smoothed
+ * *daily* load, where `CHRONIC_LOAD_FLOOR` is a *weekly* figure — so the
+ * floor check compares against `ewmaChronic * 7` (the implied weekly
+ * equivalent), not the raw daily EWMA value directly.
+ *
+ * A second individual (not team-wide) reset also has to be replicated:
+ * `computeAcwr`'s own `hasBaseline` requires real load somewhere in the
+ * *trailing 21-day baseline window*, not just 28 days of history existing
+ * somewhere in the past — a player who logged nothing for the last several
+ * weeks (stopped attending, dropped from the squad, long injury) fails that
+ * even with months of older data. EWMA's chronic/acute values don't have an
+ * equivalent built in — they just keep decaying toward zero — so left alone
+ * they'd keep reporting a real-looking "Low" ratio for a player who has
+ * simply gone quiet, long after the rolling ratio has correctly given up
+ * and said "Building" (not enough *recent* data). This block detects that
+ * same condition (zero load anywhere in the identical baseline window) and
+ * folds it into the same forced-building path as the team break.
+ */
+export function computeEwmaAcwrStatus(
+  rows: LoadRow[],
+  anchor?: Date,
+  floor: number = CHRONIC_LOAD_FLOOR,
+  teamSessionDates: string[] = [],
+): EwmaAcwrStatusResult {
+  const ewma = computeEwmaAcwr(rows, anchor);
+  const { end, acuteStart, baselineStart, baselineEnd } = workloadRatioWindows(anchor);
+
+  const ratioStatus: AcwrResult["status"] =
+    ewma.ewmaAcwr === null ? "building"
+    : ewma.ewmaAcwr < 0.8 ? "low"
+    : ewma.ewmaAcwr < 1.3 ? "typical"
+    : ewma.ewmaAcwr <= 1.5 ? "elevated"
+    : "spike";
+  const withFloor: AcwrResult["status"] =
+    ratioStatus === "spike" && ewma.ewmaChronic * 7 < floor ? "low_base" : ratioStatus;
+
+  const resumeDate = findTeamBreakResumeDate(teamSessionDates, end, GAP_RESET_DAYS);
+  const inTeamBreakRebuild = resumeDate !== null && baselineStart < resumeDate;
+  const acuteWeekIsTeamDead = teamSessionDates.length > 0 && !teamSessionDates.some((iso) => {
+    const d = toLocalDate(iso);
+    return d >= acuteStart && d <= end;
+  });
+  const baselineWindowHasNoLoad = !rows.some((r) => {
+    if (r.date == null || r.load_au <= 0) return false;
+    const at = new Date(r.date + "T00:00:00");
+    return at >= baselineStart && at <= baselineEnd;
+  });
+  const forcedBuilding = inTeamBreakRebuild || acuteWeekIsTeamDead || baselineWindowHasNoLoad;
+
+  return {
+    ...ewma,
+    ewmaAcwr: forcedBuilding ? null : ewma.ewmaAcwr,
+    hasBaseline: forcedBuilding ? false : ewma.hasBaseline,
+    status: forcedBuilding ? "building" : withFloor,
+  };
+}
+
 // ── Z-scores against a player's own recent history ──────────────────────────────
 /**
  * At least this many prior weeks are required before a z-score is considered
