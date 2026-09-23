@@ -8,14 +8,11 @@ import { fetchInjuryHistory } from "@/lib/queries";
 import { MiniTable, OverviewCard } from "@/components/OverviewCard";
 import type { InjuryStage, InjuryStageName, InjuryWithStatus, Player } from "@/lib/types";
 
-/** A resolved injury stays on the chart, greyed, this long after the player is back. */
-const RESOLVED_VISIBLE_DAYS = 30;
-
 interface Row {
   player: Player;
   injury: InjuryWithStatus;
-  /** null once resolved. */
-  stage: InjuryStageName | null;
+  /** Never match fit: an available player isn't on this chart. */
+  stage: InjuryStageName;
   start: string;
   /** When it stopped them. After `start` if they played through it first. */
   out: string;
@@ -31,9 +28,12 @@ interface Row {
  * stretch played through before the injury stopped them is a hairline: the
  * injury existed, but no days were lost to it.
  *
- * Stage is carried by colour *and* by the word beside each name: amber and the
- * resolved grey sit under 3:1 on the light surface, so the label and the table
- * view are what make it readable, not the hue.
+ * Only players not yet match fit: once an injury is resolved the player is
+ * available, and they drop off.
+ *
+ * Stage is carried by colour *and* by the word beside each name: amber sits
+ * under 3:1 on the light surface, so the label and the table view are what
+ * make it readable, not the hue.
  */
 export function AvailabilityTimeline({ players }: { players: Player[] }) {
   const { theme } = useTheme();
@@ -99,12 +99,12 @@ export function AvailabilityTimeline({ players }: { players: Player[] }) {
       : `${open.length} player${open.length === 1 ? "" : "s"} not match fit.${
           next ? ` Next expected back: ${next.player.name.split(" ")[0]}, ${shortDate(next.injury.expected_return_on!)}.` : ""}`;
 
-  const colorFor = (r: Row) => r.stage == null ? INK.muted : r.stage === "out" ? STATUS.critical : STATUS.warning;
+  const colorFor = (r: Row) => r.stage === "out" ? STATUS.critical : STATUS.warning;
 
   return (
     <OverviewCard
       title="Availability"
-      subtitle={`Injured players, from the injury to the expected return · resolved in the last ${RESOLVED_VISIBLE_DAYS} days in grey`}
+      subtitle="Players not yet match fit, from the injury to the expected return"
       interpretation={interpretation}
       table={
         <MiniTable
@@ -112,9 +112,9 @@ export function AvailabilityTimeline({ players }: { players: Player[] }) {
           rows={rows.map((r) => [
             r.player.name,
             areaLabel(r.injury),
-            r.stage ? STAGE_CFG[r.stage].label : "Resolved",
+            STAGE_CFG[r.stage].label,
             shortDate(r.out),
-            r.stage ? (r.injury.expected_return_on ? shortDate(r.injury.expected_return_on) : "—") : `back ${shortDate(r.injury.returned_on!)}`,
+            r.injury.expected_return_on ? shortDate(r.injury.expected_return_on) : "—",
             String(r.daysOut),
           ])}
         />
@@ -125,14 +125,13 @@ export function AvailabilityTimeline({ players }: { players: Player[] }) {
       ) : injuries === null ? (
         <div className="h-32 bg-muted/30 rounded-xl animate-pulse" />
       ) : rows.length === 0 || !axis ? (
-        <p className="text-sm text-muted-foreground py-8 text-center">No injuries in the last {RESOLVED_VISIBLE_DAYS} days</p>
+        <p className="text-sm text-muted-foreground py-8 text-center">Everyone is available</p>
       ) : (
         <div ref={wrapRef} className="relative" data-testid="chart-availability-timeline">
           {/* Legend: every state in use, named — the colour is never on its own */}
           <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-muted-foreground mb-3">
             {rows.some((r) => r.stage === "out") && <Swatch color={STATUS.critical}>Out</Swatch>}
             {rows.some((r) => r.stage && r.stage !== "out") && <Swatch color={STATUS.warning}>Modified / full training</Swatch>}
-            {rows.some((r) => !r.stage) && <Swatch color={INK.muted}>Resolved</Swatch>}
             <span className="flex items-center gap-1.5">
               <span className="inline-block w-px h-3" style={{ background: HIGHLIGHT }} /> Today
             </span>
@@ -168,7 +167,7 @@ export function AvailabilityTimeline({ players }: { players: Player[] }) {
                       {r.player.name}
                     </Link>
                     <div className="text-[10px] text-muted-foreground truncate">
-                      {r.stage ? STAGE_CFG[r.stage].label : "Resolved"} · {areaLabel(r.injury)}
+                      {STAGE_CFG[r.stage].label} · {areaLabel(r.injury)}
                     </div>
                   </div>
                   <div
@@ -224,11 +223,9 @@ export function AvailabilityTimeline({ players }: { players: Player[] }) {
               <div className="font-semibold text-foreground mb-1">{hover.row.player.name}</div>
               <TipLine label="Injury">{areaLabel(hover.row.injury)}</TipLine>
               <TipLine label="Side">{sideLabel(hover.row.injury)}</TipLine>
-              <TipLine label={hover.row.stage ? "Days out so far" : "Days out"}>{hover.row.daysOut}</TipLine>
-              <TipLine label={hover.row.stage ? "Expected back" : "Back"}>
-                {hover.row.stage
-                  ? hover.row.injury.expected_return_on ? longDate(hover.row.injury.expected_return_on) : "Not set"
-                  : longDate(hover.row.injury.returned_on!)}
+              <TipLine label="Days out so far">{hover.row.daysOut}</TipLine>
+              <TipLine label="Expected back">
+                {hover.row.injury.expected_return_on ? longDate(hover.row.injury.expected_return_on) : "Not set"}
               </TipLine>
             </div>
           )}
@@ -239,10 +236,9 @@ export function AvailabilityTimeline({ players }: { players: Player[] }) {
 }
 
 /**
- * One row per player. An open injury wins over a resolved one; among several
- * open, the worst stage (then the latest return) — the one that decides when
- * they're back. Open rows by expected return, soonest first (none set: last);
- * recently resolved ones after them, greyed.
+ * One row per player not yet match fit. With several open injuries, the worst
+ * stage (then the latest return) — the one that decides when they're back.
+ * Sorted by expected return, soonest first; none set goes last.
  */
 function buildRows(injuries: InjuryWithStatus[], stages: InjuryStage[], players: Player[], today: string): Row[] {
   const stagesOf = new Map<string, InjuryStage[]>();
@@ -251,39 +247,29 @@ function buildRows(injuries: InjuryWithStatus[], stages: InjuryStage[], players:
   const rank: Record<InjuryStageName, number> = { out: 3, modified: 2, full_training: 1, match_fit: 0 };
   const best = new Map<string, InjuryWithStatus>();
   for (const i of injuries) {
+    if (i.status !== "open" || !i.current_stage) continue;
     const keep = best.get(i.player_id);
-    const recent = i.status === "resolved" && i.returned_on != null && daysBetween(i.returned_on, today) <= RESOLVED_VISIBLE_DAYS;
-    if (i.status !== "open" && !recent) continue;
-    if (!keep) { best.set(i.player_id, i); continue; }
-    const score = (x: InjuryWithStatus) => [
-      x.status === "open" ? 1 : 0,
-      x.current_stage ? rank[x.current_stage] : 0,
-      x.expected_return_on ?? x.returned_on ?? "",
-    ] as const;
-    const [a0, a1, a2] = score(i), [b0, b1, b2] = score(keep);
-    if (a0 > b0 || (a0 === b0 && (a1 > b1 || (a1 === b1 && a2 > b2)))) best.set(i.player_id, i);
+    const better = !keep
+      || rank[i.current_stage] > rank[keep.current_stage!]
+      || (rank[i.current_stage] === rank[keep.current_stage!] && (i.expected_return_on ?? "") > (keep.expected_return_on ?? ""));
+    if (better) best.set(i.player_id, i);
   }
 
   const rows: Row[] = [];
   for (const i of best.values()) {
     const player = byId.get(i.player_id);
     if (!player) continue;
-    const open = i.status === "open";
-    const end = open
-      ? (i.expected_return_on && i.expected_return_on > today ? i.expected_return_on : today)
-      : i.returned_on!;
     rows.push({
       player, injury: i,
-      stage: open ? i.current_stage : null,
+      stage: i.current_stage!,
       start: i.occurred_on,
       out: withdrewOn(stagesOf.get(i.id) ?? []) ?? i.occurred_on,
-      end,
+      // An expected return already passed, or none set: the bar stops at today
+      end: i.expected_return_on && i.expected_return_on > today ? i.expected_return_on : today,
       daysOut: daysLost(i, stagesOf.get(i.id) ?? [], today),
     });
   }
   return rows.sort((a, b) => {
-    if (!!a.stage !== !!b.stage) return a.stage ? -1 : 1;
-    if (!a.stage) return b.injury.returned_on!.localeCompare(a.injury.returned_on!);
     const ea = a.injury.expected_return_on, eb = b.injury.expected_return_on;
     if (!ea || !eb) return ea ? -1 : eb ? 1 : a.player.name.localeCompare(b.player.name);
     return ea.localeCompare(eb) || a.player.name.localeCompare(b.player.name);
