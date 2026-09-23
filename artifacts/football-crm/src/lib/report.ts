@@ -1,7 +1,7 @@
 import {
   collapseMatchDays, countsAsAttended, matchDayAttendance, type MatchDayAttendance,
 } from "./attendance";
-import { STATUS, ordinal, type Mode } from "./viz";
+import { WORKLOAD_ACCENT, WORKLOAD_NEUTRAL, ordinal, type Mode } from "./viz";
 import { sumStats, type Totals, type TournamentFinish } from "./tournaments";
 import { getBroncoTier, type BroncoTier } from "./types";
 import type {
@@ -683,13 +683,18 @@ function findTeamBreakResumeDate(teamSessionDates: string[], anchor: Date, gapDa
 
 // Boundaries are exact and intentionally asymmetric at 1.3 vs 1.5: Typical
 // runs [0.8, 1.3), Elevated [1.3, 1.5] — see computeAcwr below.
+//
+// Every state but Spike wears WORKLOAD_NEUTRAL, and the label does the work of
+// telling them apart — see that constant for why a good/warning/bad ramp was
+// the wrong shape for this metric. `color` is for the *mark* beside a label
+// (a dot, a band segment), never for the label's own text.
 export const ACWR_CONFIG: Record<AcwrResult["status"], { label: string; color: string; desc: string }> = {
-  low:      { label: "Low",            color: "#94a3b8",      desc: "Recent workload is lower than the player's previous three-week average." },
-  typical:  { label: "Typical",        color: STATUS.good,    desc: "Recent workload is broadly in line with the player's previous three weeks." },
-  elevated: { label: "Elevated",       color: STATUS.warning, desc: "Recent workload is above the player's previous three-week average — worth monitoring alongside recovery and upcoming sessions." },
-  spike:    { label: "Spike",          color: STATUS.critical,desc: "Recent workload is well above the player's previous three-week average — worth a closer look at workload, recovery, and upcoming sessions." },
-  low_base: { label: "Low Base",       color: "#94a3b8",      desc: "The player's own three-week average is too low for this ratio to be a meaningful signal yet." },
-  building: { label: "Building Baseline", color: "#94a3b8",   desc: "A complete 28-day workload history is needed before this ratio is classified." },
+  low:      { label: "Low",            color: WORKLOAD_NEUTRAL, desc: "Recent workload is lower than the player's previous three-week average." },
+  typical:  { label: "Typical",        color: WORKLOAD_NEUTRAL, desc: "Recent workload is broadly in line with the player's previous three weeks." },
+  elevated: { label: "Elevated",       color: WORKLOAD_NEUTRAL, desc: "Recent workload is above the player's previous three-week average — worth monitoring alongside recovery and upcoming sessions." },
+  spike:    { label: "Spike",          color: WORKLOAD_ACCENT,  desc: "Recent workload is well above the player's previous three-week average — worth a closer look at workload, recovery, and upcoming sessions." },
+  low_base: { label: "Low Base",       color: WORKLOAD_NEUTRAL, desc: "The player's own three-week average is too low for this ratio to be a meaningful signal yet." },
+  building: { label: "Building Baseline", color: WORKLOAD_NEUTRAL, desc: "A complete 28-day workload history is needed before this ratio is classified." },
 };
 
 /**
@@ -1003,6 +1008,14 @@ export function computeEwmaAcwrStatus(
  * getting lucky.
  */
 export const Z_SCORE_MIN_WEEKS = 8;
+
+/**
+ * Relative tolerance below which a standard deviation counts as zero — see
+ * `computeZScore`. 1e-9 sits far above float noise from summing a dozen
+ * values (~1e-16 relative) and far below any spread a real training week
+ * could produce.
+ */
+export const SD_EPSILON = 1e-9;
 /** At most this many of the most recent prior weeks are used as the baseline — older weeks don't get to keep influencing "recent". */
 export const Z_SCORE_MAX_WEEKS = 12;
 
@@ -1024,9 +1037,18 @@ export interface ZScoreResult {
  *
  * Population SD, matching `computeWeeklyMonotonyStrain`'s choice, for the
  * same reason: `priorWeeks` is the complete window being described, not a
- * sample standing in for a larger one. `sd === 0` (every prior week
- * identical) returns a null `zScore` — an undefined ratio, not an infinite
- * one — the same rule used for monotony and the EWMA ACWR.
+ * sample standing in for a larger one. A window with no real spread returns a
+ * null `zScore` — an undefined ratio, not an infinite one — the same rule
+ * used for monotony and the EWMA ACWR.
+ *
+ * "No real spread" is deliberately not `sd === 0`. This function is fed
+ * derived floats as well as whole AU figures: twelve weeks of an identical
+ * training routine produce twelve monotony values that agree to fifteen
+ * decimal places and differ in the sixteenth, giving an sd of ~1e-16 that is
+ * numerically positive and physically meaningless. Dividing by it yielded
+ * z-scores of order 1e15, which then sailed past every "is this outside the
+ * usual range" test downstream. `SD_EPSILON` is relative to the window's own
+ * magnitude, so it holds equally for monotony (~1) and strain (~1e4).
  */
 export function computeZScore(current: number, priorWeeks: number[]): ZScoreResult {
   const window = priorWeeks.slice(Math.max(0, priorWeeks.length - Z_SCORE_MAX_WEEKS));
@@ -1034,7 +1056,11 @@ export function computeZScore(current: number, priorWeeks: number[]): ZScoreResu
   const mean = n > 0 ? window.reduce((s, v) => s + v, 0) / n : 0;
   const variance = n > 0 ? window.reduce((s, v) => s + (v - mean) ** 2, 0) / n : 0;
   const sd = Math.sqrt(variance);
-  const zScore = n >= Z_SCORE_MIN_WEEKS && sd > 0 ? (current - mean) / sd : null;
+  // Scale from the largest magnitude present, not the mean alone: a window
+  // centred on zero (say −5, +5) has a mean of 0 but genuine spread.
+  const scale = window.reduce((m, v) => Math.max(m, Math.abs(v)), Math.abs(mean));
+  const hasSpread = sd > scale * SD_EPSILON;
+  const zScore = n >= Z_SCORE_MIN_WEEKS && hasSpread ? (current - mean) / sd : null;
   return { zScore, mean, sd, weeksUsed: n };
 }
 

@@ -34,12 +34,19 @@ function Empty({ children }: { children: React.ReactNode }) {
   return <p className="text-[10px] text-slate-400 italic py-1">{children}</p>;
 }
 
-function Stat({ label, value, valueNote, sub, color }: {
+function Stat({ label, value, valueNote, sub, subMark, color }: {
   label: string;
   value: string | number;
   /** Sits inline after the value, small — e.g. the month a test was taken. */
   valueNote?: string;
   sub?: string;
+  /**
+   * A small dot in this colour before `sub`. For a status whose colour is
+   * reserved rather than continuous (workload), the mark carries the colour
+   * and `sub` stays legible grey — a neutral status tinting the whole figure
+   * would just read as a washed-out number in print.
+   */
+  subMark?: string;
   color?: string;
 }) {
   return (
@@ -49,7 +56,18 @@ function Stat({ label, value, valueNote, sub, color }: {
         <span className="text-xl font-bold leading-tight" style={{ color: color ?? RINK.primary }}>{value}</span>
         {valueNote && <span className="text-[9px] text-slate-500">{valueNote}</span>}
       </div>
-      {sub && <div className="text-[9px] text-slate-500 leading-tight">{sub}</div>}
+      {sub && (
+        <div className="text-[9px] text-slate-500 leading-tight flex items-center gap-1">
+          {subMark && (
+            <span
+              className="inline-block w-1.5 h-1.5 rounded-full shrink-0"
+              style={{ background: subMark }}
+              aria-hidden="true"
+            />
+          )}
+          {sub}
+        </div>
+      )}
     </div>
   );
 }
@@ -319,7 +337,7 @@ export function ReportPage({ report, generatedAt }: { report: PlayerReport; gene
               label="Workload ratio"
               value={load.acwr !== null ? load.acwr.toFixed(2) : "—"}
               sub={acwrCfg.label}
-              color={acwrCfg.color}
+              subMark={acwrCfg.color}
             />
             <Stat label="Acute (7d)" value={`${Math.round(load.acute)} AU`} />
             <Stat label="Prior 3-wk avg" value={`${Math.round(load.baselineWeeklyAvg)} AU`} />

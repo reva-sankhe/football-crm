@@ -12,6 +12,7 @@
     "test:workload-ratio": "node scripts/workloadRatio.test.mjs",
     "test:weekly-load": "node scripts/weeklyLoad.test.mjs",
     "test:monotony-strain": "node scripts/monotonyStrain.test.mjs",
+    "test:player-load": "node scripts/playerLoad.test.mjs",
     "test:ewma-acwr": "node scripts/ewmaAcwr.test.mjs",
     "test:ewma-acwr-status": "node scripts/ewmaAcwrStatus.test.mjs",
     "test:z-score": "node scripts/zScore.test.mjs",

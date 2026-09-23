@@ -143,3 +143,26 @@ export function ink(mode: Mode): Ink {
 
 /** The one highlight hue — links, buttons, active states, single-series lines. */
 export const HIGHLIGHT = "#6366f1";
+
+// ── Workload status ───────────────────────────────────────────────────────────
+/**
+ * Workload status is deliberately NOT a good/warning/bad ramp.
+ *
+ * A green "Typical" and an amber "Elevated" read as a verdict on the player —
+ * but a workload ratio is a description of the last seven days, not a grade,
+ * and an elevated week during a deliberate build is exactly what should be
+ * happening. Colouring all four states taught the eye to scan for red and
+ * feel reassured by green, which is precisely the reading the ratio does not
+ * support.
+ *
+ * So every state wears the same neutral, and the label alone tells them
+ * apart — `WORKLOAD_ACCENT` is spent on Spike and nothing else, which is what
+ * makes it mean "look at this one" when it does appear.
+ *
+ * Both are fixed rather than themed, like `STATUS`: they are validated
+ * against both surfaces (#ffffff and #12161f) and are always carried by a
+ * mark beside a label, never by coloured text alone.
+ */
+export const WORKLOAD_NEUTRAL = "#94a3b8";
+/** The single reserved accent, spent only on Spike. Re-uses the validated critical step rather than introducing a new hue. */
+export const WORKLOAD_ACCENT = STATUS.critical;

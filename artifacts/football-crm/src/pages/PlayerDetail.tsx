@@ -19,14 +19,62 @@ import {
 } from "@/components/ui/tooltip";
 
 /**
- * How far back the load chart and workload ratio look. The ratio needs 28 days;
- * the extra week gives the player profile a small visual run-up.
+ * The span the Load Trend chart actually plots. The workload ratio needs 28
+ * days; the extra week gives the player profile a small visual run-up.
  */
 const LOAD_WINDOW_DAYS = 35;
+
+/**
+ * How much of the player's own history sits *behind* the plotted window, to
+ * say what "usual" means for them. Eight weeks is `Z_SCORE_MIN_WEEKS` — the
+ * fewest prior weeks the shared z-score helpers will score against — so this
+ * is the smallest baseline that produces a usual-session range at all.
+ *
+ * Deliberately preceding the plotted window rather than overlapping it (the
+ * squad chart's band, `computeSquadUsualLoadRange`, overlaps by design): on a
+ * daily chart the band is the yardstick the plotted days are being measured
+ * against, so the days being judged should not also be setting the mark.
+ */
+const USUAL_RANGE_BASELINE_DAYS = 56;
+
+/**
+ * Everything the page fetches: the plotted window plus its baseline. 91 days
+ * is also exactly 13 weeks, which is what the week-to-week variation card
+ * needs — twelve complete prior weeks (`Z_SCORE_MAX_WEEKS`) plus the current
+ * one — so one fetch serves both.
+ */
+const LOAD_HISTORY_DAYS = LOAD_WINDOW_DAYS + USUAL_RANGE_BASELINE_DAYS;
+
+/**
+ * Above this share of estimated load, the figure stops being a footnote on the
+ * status card and becomes a line of its own. Past half, the numbers beside it
+ * are mostly fills rather than ratings, which changes how much weight a coach
+ * should put on them — that is not something to learn from small grey text.
+ */
+const MOSTLY_ESTIMATED = 0.5;
+
+/**
+ * The turnout window on the status card: how far back "sessions logged" counts.
+ * Three weeks is the shortest span that still holds several of a Wed/Fri/Sun
+ * schedule's sessions, so one missed week moves the number visibly.
+ */
+const RECENT_SESSION_DAYS = 21;
+
+/**
+ * The fewest training-session days required before a usual-session range is
+ * drawn at all. `usualRangeFor` enforces `Z_SCORE_MIN_WEEKS` (8) on whatever
+ * series it is handed, but here the series is *days*, not weeks, and eight
+ * days is far too thin a base to call anything usual. On a Wed/Fri/Sun week
+ * the 56-day baseline holds roughly 24 session days, so a player who has been
+ * training normally clears this comfortably; one who has not gets no band,
+ * which is the honest answer.
+ */
+const USUAL_SESSION_MIN_DAYS = 10;
 import {
-  ACWR_CONFIG, MATCH_RPE, buildLoadRows, collapseLoadByDay, computeAcwr, isMatchSession, pinnedWeeklyAnchor, teamSessionDatesFrom,
-  teamBandFor,
+  ACWR_CONFIG, MATCH_RPE, buildLoadRows, collapseLoadByDay, computeAcwr, isMatchSession,
+  pinnedWeeklyAnchor, teamSessionDatesFrom, teamBandFor, workloadRatioWindows,
 } from "@/lib/report";
+import { computeUsualSessionRange } from "@/lib/playerLoad";
 import { ChartSkeleton, Skeleton } from "@/components/Skeleton";
 import { EmptyState } from "@/components/EmptyState";
 import { PlayerTournamentStats } from "@/components/tournaments/PlayerTournamentStats";
@@ -38,13 +86,13 @@ import type {
   Player, TestResult, SessionRPE, TrainingSession, SessionAttendance, InjuryStage, InjuryWithStatus,
 } from "@/lib/types";
 import {
-  LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
+  LineChart, Line, XAxis, YAxis, CartesianGrid, ReferenceLine, Tooltip, ResponsiveContainer,
 } from "recharts";
 import { ArrowLeft, ChevronDown, Edit, Save, X, Timer, Dumbbell } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useTheme } from "@/context/ThemeContext";
 import { useAuth } from "@/context/AuthContext";
-import { HIGHLIGHT, ink, series, type Mode } from "@/lib/viz";
+import { HIGHLIGHT, WORKLOAD_ACCENT, WORKLOAD_NEUTRAL, ink, series, type Mode } from "@/lib/viz";
 
 const PRIMARY_POSITIONS = ["Goalkeeper", "Defender", "Midfielder", "Forward"];
 const SECONDARY_POSITIONS: Record<string, string[]> = {
@@ -53,6 +101,28 @@ const SECONDARY_POSITIONS: Record<string, string[]> = {
   Midfielder: ["Right Wing", "Left Wing", "CDM", "CM"],
   Forward:    ["Striker", "CAM"],
 };
+
+/**
+ * " (12 days ago)" beside a date, or "" when it was today or yesterday — the
+ * date alone already reads clearly for those. This is the half of the
+ * last-session line a coach actually scans: "14 Aug" needs mental arithmetic
+ * before it means "he has not trained in three weeks".
+ */
+function daysSinceLabel(iso: string): string {
+  const then = new Date(iso + "T00:00:00");
+  const today = new Date();
+  const days = Math.round(
+    (new Date(today.getFullYear(), today.getMonth(), today.getDate()).getTime() - then.getTime()) / 86_400_000,
+  );
+  if (days <= 0) return " (today)";
+  if (days === 1) return " (yesterday)";
+  return ` (${days} days ago)`;
+}
+
+/** A 0–1 share as a whole percent, or an em dash when there was no load to measure. */
+function pctOrDash(share: number | null): string {
+  return share === null ? "—" : `${Math.round(share * 100)}%`;
+}
 
 /** "Mar 26" — the month a test was taken, for the snapshot sub-line. */
 function monthYear(iso: string | null | undefined): string | null {
@@ -104,7 +174,7 @@ export default function PlayerDetail() {
           fetchPlayer(id!),
           fetchResultsByPlayer(id!),
           fetchAllResults(),
-          fetchPlayerRecentSessions(id!, LOAD_WINDOW_DAYS),
+          fetchPlayerRecentSessions(id!, LOAD_HISTORY_DAYS),
           fetchAttendanceByPlayer(id!),
           fetchTrainingSessions(),
           fetchMatchStatsByPlayer(id!),
@@ -202,20 +272,32 @@ export default function PlayerDetail() {
   // Rated sessions and match minutes in one list. Matches use a player RPE when
   // available, otherwise the row is explicitly marked as an RPE 7 estimate.
   // Windowed here as well as in the query: match stats are fetched in full for
-  // the tournament history above, and without this the chart's axis would
-  // stretch back to the player's first ever fixture.
-  const loadRows = useMemo(() => {
-    const since = isoDaysAgo(LOAD_WINDOW_DAYS);
+  // the tournament history above, and without this the baseline would stretch
+  // back to the player's first ever fixture.
+  //
+  // Two spans, deliberately. `historyRows` is everything fetched — what
+  // "usual for this player" is measured against. `loadRows` is only the slice
+  // the Load Trend chart draws.
+  const historyRows = useMemo(() => {
+    const since = isoDaysAgo(LOAD_HISTORY_DAYS);
     return buildLoadRows(recentLoad, matchStats, playerAttendance, allSessions)
       .filter((r) => r.date != null && r.date >= since);
   }, [recentLoad, matchStats, playerAttendance, allSessions]);
 
+  const loadRows = useMemo(() => {
+    const since = isoDaysAgo(LOAD_WINDOW_DAYS);
+    return historyRows.filter((r) => (r.date as string) >= since);
+  }, [historyRows]);
+
   /**
-   * What the chart plots and the workload ratio reads: one entry per day, so a tournament day
-   * is a single hard day rather than five points stacked on one date. `loadRows`
-   * stays per fixture — the counts below still say how many matches there were.
+   * What the chart plots: one entry per day, so a tournament day is a single
+   * hard day rather than five points stacked on one date. `loadRows` stays per
+   * fixture — the counts below still say how many matches there were.
    */
   const dailyLoad = useMemo(() => collapseLoadByDay(loadRows), [loadRows]);
+
+  /** The same collapse over the full history — what the workload ratio reads. */
+  const dailyHistory = useMemo(() => collapseLoadByDay(historyRows), [historyRows]);
 
   const loadChartData = [...dailyLoad]
     .sort((a, b) => (a.date ?? "").localeCompare(b.date ?? ""))
@@ -246,15 +328,112 @@ export default function PlayerDetail() {
   // Shared with the printable report so workload figures cannot disagree.
   const {
     acwr, acute: acuteLoad, weekOnWeekPct, baselineWeeklyAvg, historyDays, status: acwrStatus,
-  } = computeAcwr(dailyLoad, pinnedWeeklyAnchor(), undefined, teamSessionDatesFrom(allSessions));
+  } = computeAcwr(dailyHistory, pinnedWeeklyAnchor(), undefined, teamSessionDatesFrom(allSessions));
   const acwrCfg = ACWR_CONFIG[acwrStatus];
+  const isSpike = acwrStatus === "spike";
 
-  // ── Attendance ────────────────────────────────────────────────────────────
+  /**
+   * The headline's plain-language half: how far above or below this player's
+   * own usual load the last seven days ran. `(ratio − 1) × 100` — the same
+   * `pctVsUsual` the squad page's flagged chips already show, so the two
+   * surfaces phrase the identical number the identical way.
+   */
+  const pctVsUsual = acwr !== null ? (acwr - 1) * 100 : null;
+
+  /**
+   * Estimated share split across the two halves of the ratio, because "20%
+   * estimated" overall hides which side of the comparison is soft. A spike
+   * driven by a well-rated week against a mostly-filled-in baseline is a
+   * different claim from one where this week is the guesswork — and the
+   * single blended figure reads the same either way.
+   *
+   * The windows are `workloadRatioWindows`' own, off the same pinned anchor
+   * the ratio uses, so these two numbers describe exactly the periods the
+   * ratio divides rather than approximations of them.
+   */
+  const estimatedSplit = useMemo(() => {
+    const { acuteStart, baselineStart, baselineEnd, end } = workloadRatioWindows(pinnedWeeklyAnchor());
+    const iso = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+    const shareBetween = (fromIso: string, toIso: string) => {
+      const inWindow = historyRows.filter((r) => r.date != null && r.date >= fromIso && r.date <= toIso);
+      const total = inWindow.reduce((sum, r) => sum + r.load_au, 0);
+      if (total <= 0) return null;
+      return inWindow.reduce((sum, r) => (r.estimated ? sum + r.load_au : sum), 0) / total;
+    };
+    return {
+      acute: shareBetween(iso(acuteStart), iso(end)),
+      baseline: shareBetween(iso(baselineStart), iso(baselineEnd)),
+    };
+  }, [historyRows]);
+
+  /** True when either side of the ratio is mostly fills — see MOSTLY_ESTIMATED. */
+  const mostlyEstimated =
+    (estimatedSplit.acute !== null && estimatedSplit.acute > MOSTLY_ESTIMATED) ||
+    (estimatedSplit.baseline !== null && estimatedSplit.baseline > MOSTLY_ESTIMATED);
+
+  /** The Load Trend band — usual session day, from the history behind the plotted window. */
+  const usualSessionRange = useMemo(
+    () => computeUsualSessionRange(historyRows, isoDaysAgo(LOAD_WINDOW_DAYS), USUAL_SESSION_MIN_DAYS),
+    [historyRows],
+  );
+
+  /**
+   * Turnout alongside the load figures, so a light week can be told from an
+   * absent player. Without these, "18% below usual" reads the same whether he
+   * trained three times and went easy or did not turn up at all — and those
+   * call for opposite responses from a coach.
+   *
+   * Three weeks rather than the ratio's four: it is the shortest window that
+   * still contains several of a Wed/Fri/Sun schedule's sessions, so a single
+   * missed week moves it visibly.
+   */
+  /**
+   * Hoisted above the training-load figures because they read it too — the
+   * turnout line on the status card needs to know who actually turned up,
+   * not just who submitted an RPE.
+   */
   const attendedIds = useMemo(
     () => new Set(playerAttendance.filter((a) => countsAsAttended(a.status)).map((a) => a.session_id)),
     [playerAttendance],
   );
 
+  const recentSessionActivity = useMemo(() => {
+    const since = isoDaysAgo(RECENT_SESSION_DAYS);
+    const sessionDays = collapseLoadByDay(historyRows.filter((r) => r.source === "session"))
+      .filter((r) => r.date != null)
+      .sort((a, b) => (a.date as string).localeCompare(b.date as string));
+    // Any load row at all — session or match — is evidence of the last time
+    // this player actually did something, which is the question being asked.
+    const lastAnyDay = [...dailyHistory]
+      .filter((r) => r.date != null)
+      .sort((a, b) => (a.date as string).localeCompare(b.date as string))
+      .pop();
+
+    // Attended and logged are different failures. A player who turned up to
+    // six sessions and rated two has an RPE-submission problem; one who
+    // attended two of six has an availability problem. Held apart because
+    // the load figures above are built only from the rated ones.
+    const trainingInWindow = allSessions.filter((s) => !isMatchSession(s) && s.date >= since);
+    const attendedInWindow = trainingInWindow.filter((s) => attendedIds.has(s.id)).length;
+
+    // Match minutes, not match count: 90 minutes across three appearances is
+    // a different three weeks from 15.
+    const matchMinutes = matchStats.reduce((sum, m) => {
+      const date = m.matches?.sessions?.date;
+      return date && date >= since ? sum + (m.minutes_played ?? 0) : sum;
+    }, 0);
+
+    return {
+      sessionsInWindow: sessionDays.filter((r) => (r.date as string) >= since).length,
+      attendedInWindow,
+      trainingHeldInWindow: trainingInWindow.length,
+      matchMinutes,
+      lastSessionDate: sessionDays.length > 0 ? (sessionDays[sessionDays.length - 1].date as string) : null,
+      lastAnyDate: lastAnyDay?.date ?? null,
+    };
+  }, [historyRows, dailyHistory, allSessions, attendedIds, matchStats]);
+
+  // ── Attendance ────────────────────────────────────────────────────────────
   // One entry per training session, but only one per match day — the same units
   // the Attendance page marks in. Picking the session this player was marked on
   // keeps their own record intact when a day has several fixtures.
@@ -570,49 +749,151 @@ export default function PlayerDetail() {
         <section className="space-y-2">
           <SectionLabel>Training Load</SectionLabel>
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 items-stretch">
-            {/* Workload ratio */}
+            {/* Workload status — the status word leads, the ratio lives in the tooltip */}
             <div className="bg-card border border-border rounded-2xl p-5 flex flex-col">
-              <div className="flex items-start justify-between mb-2">
-                <div>
-                  <div className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground mb-1">Workload Ratio</div>
+              <div className="flex items-start justify-between gap-4 mb-2">
+                <div className="min-w-0">
+                  <div className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground mb-1">Workload Status</div>
                   <InfoTooltip>
                     <InfoTooltipTrigger asChild>
-                      <div
-                        className="text-3xl font-bold font-time leading-none cursor-help w-fit"
-                        style={{ color: acwrCfg.color }}
-                      >
-                        {acwr !== null ? acwr.toFixed(2) : "—"}
+                      {/* Text wears foreground ink; the mark beside it carries the
+                          status colour, and only Spike is ever anything but neutral. */}
+                      <div className="flex items-center gap-2 cursor-help w-fit">
+                        <span
+                          className="w-2.5 h-2.5 rounded-full shrink-0"
+                          style={{ background: acwrCfg.color }}
+                          aria-hidden="true"
+                        />
+                        <span className="text-3xl font-bold leading-none text-foreground" data-testid="text-workload-status">
+                          {acwrCfg.label}
+                        </span>
                       </div>
                     </InfoTooltipTrigger>
                     <InfoTooltipContent>
-                      Ratio {acwr !== null ? acwr.toFixed(2) : "—"} = last 7 days ÷ prior 3-week average
+                      Ratio {acwr !== null ? acwr.toFixed(2) : "—"} = last 7 days
+                      ({Math.round(acuteLoad)} AU) ÷ prior 3-week average
                       ({Math.round(baselineWeeklyAvg)} AU)
                     </InfoTooltipContent>
                   </InfoTooltip>
-                  <div className="text-xs font-medium mt-1" style={{ color: acwrCfg.color }}>{acwrCfg.label}</div>
-                </div>
-                <div className="text-right text-[11px] text-muted-foreground space-y-1">
-                  <div>
-                    Last 7 days <span className="text-foreground font-time font-bold">{Math.round(acuteLoad)}</span>
-                    {weekOnWeekPct != null && (
-                      <span className="font-time"> ({weekOnWeekPct >= 0 ? "+" : ""}{Math.round(weekOnWeekPct)}% vs previous week)</span>
-                    )}
+                  <div className="text-sm text-muted-foreground mt-1.5" data-testid="text-load-vs-usual">
+                    {pctVsUsual === null
+                      ? acwrStatus === "building"
+                        ? `${historyDays} of 28 days of history so far`
+                        : "Not enough history to compare"
+                      : Math.abs(Math.round(pctVsUsual)) === 0
+                        ? "Level with usual"
+                        : `${Math.abs(Math.round(pctVsUsual))}% ${pctVsUsual > 0 ? "above" : "below"} usual`}
                   </div>
                 </div>
+                <div className="text-right text-[11px] text-muted-foreground space-y-1 shrink-0">
+                  <div>
+                    Last 7 days <span className="text-foreground font-time font-bold">{Math.round(acuteLoad)}</span> AU
+                  </div>
+                  {weekOnWeekPct != null && (
+                    <div>
+                      vs prev week{" "}
+                      <span className="text-foreground font-time font-bold">
+                        {weekOnWeekPct >= 0 ? "+" : ""}{Math.round(weekOnWeekPct)}%
+                      </span>
+                    </div>
+                  )}
+                  {!mostlyEstimated && (estimatedSplit.acute !== null || estimatedSplit.baseline !== null) && (
+                    <div data-testid="text-load-estimated">
+                      Estimated{" "}
+                      <span className="text-foreground font-time font-bold">{pctOrDash(estimatedSplit.acute)}</span>
+                      {" / "}
+                      <span className="text-foreground font-time font-bold">{pctOrDash(estimatedSplit.baseline)}</span>
+                      <span className="block text-[10px]">7d / baseline</span>
+                    </div>
+                  )}
+                </div>
               </div>
+
+              {/* Past MOSTLY_ESTIMATED this is the first thing worth knowing
+                  about every other number on the card, so it gets its own
+                  line. Prominence is weight and position, not colour — the
+                  one accent stays reserved for Spike. */}
+              {mostlyEstimated && (
+                <div
+                  className="rounded-lg border border-border bg-muted px-3 py-2 mb-3"
+                  data-testid="text-load-estimated"
+                >
+                  <div className="flex flex-wrap items-baseline gap-x-4 gap-y-0.5">
+                    <span className="text-xs text-foreground font-semibold">Mostly estimated load</span>
+                    <span className="text-[11px] text-muted-foreground">
+                      last 7 days{" "}
+                      <span className="text-foreground font-time font-bold text-sm">{pctOrDash(estimatedSplit.acute)}</span>
+                      {" · 3-week baseline "}
+                      <span className="text-foreground font-time font-bold text-sm">{pctOrDash(estimatedSplit.baseline)}</span>
+                    </span>
+                  </div>
+                  <div className="text-[11px] text-muted-foreground mt-0.5">
+                    Filled in from team medians or an RPE {MATCH_RPE} match estimate, not rated by the player —
+                    the side of the comparison with the higher figure is the softer one.
+                  </div>
+                </div>
+              )}
+
+              {/* Turnout, so a light week can be told from an absent player. */}
+              <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1 text-[11px] text-muted-foreground mb-3">
+                <span data-testid="text-sessions-recent">
+                  Last 3 weeks:{" "}
+                  <span className="text-foreground font-time font-bold">{recentSessionActivity.attendedInWindow}</span>
+                  {" of "}
+                  <span className="font-time">{recentSessionActivity.trainingHeldInWindow}</span>
+                  {" attended · "}
+                  <span className="text-foreground font-time font-bold">{recentSessionActivity.sessionsInWindow}</span>
+                  {" rated"}
+                </span>
+                {recentSessionActivity.matchMinutes > 0 && (
+                  <span data-testid="text-match-minutes">
+                    <span className="text-foreground font-time font-bold">{recentSessionActivity.matchMinutes}</span>
+                    {" match min"}
+                  </span>
+                )}
+                <span data-testid="text-last-session">
+                  {recentSessionActivity.lastSessionDate
+                    ? <>Last session <span className="text-foreground font-medium">{formatDateShort(recentSessionActivity.lastSessionDate)}</span>{daysSinceLabel(recentSessionActivity.lastSessionDate)}</>
+                    : recentSessionActivity.lastAnyDate
+                      ? <>No rated session in {LOAD_HISTORY_DAYS} days · last played <span className="text-foreground font-medium">{formatDateShort(recentSessionActivity.lastAnyDate)}</span></>
+                      : "No sessions logged"}
+                </span>
+              </div>
+
               <p className="text-xs text-muted-foreground mb-3">
                 {acwrStatus === "building"
                   ? `${acwrCfg.desc} ${historyDays} of 28 calendar days of workload history are currently available.`
-                  : `${acwrCfg.desc} This is a workload monitoring signal, not an injury prediction.`}
+                  : acwrCfg.desc}
               </p>
-              <div className="flex h-1.5 rounded-full overflow-hidden gap-px mt-auto">
-                <div className="w-[25%] bg-slate-400/40" title="< 0.8 Low" />
-                <div className="w-[25%] bg-status-good" title="0.8–1.3 Typical" />
-                <div className="w-[20%] bg-status-warn" title="1.3–1.5 Elevated" />
-                <div className="w-[30%] bg-status-bad" title="> 1.5 Spike" />
-              </div>
-              <div className="flex justify-between text-[10px] text-muted-foreground mt-1">
-                <span>0.8</span><span>1.3</span><span>1.5+</span>
+
+              {/* Neutral scale with one accent segment for Spike, plus a marker
+                  for where this player sits. The strip no longer implies that
+                  the left-hand bands are "good" and the right-hand ones "bad". */}
+              <div className="mt-auto">
+                <div className="relative h-1.5">
+                  <div className="flex h-1.5 rounded-full overflow-hidden gap-px">
+                    <div className="w-[25%]" style={{ background: `${WORKLOAD_NEUTRAL}40` }} title="< 0.8 Low" />
+                    <div className="w-[25%]" style={{ background: `${WORKLOAD_NEUTRAL}66` }} title="0.8–1.3 Typical" />
+                    <div className="w-[20%]" style={{ background: `${WORKLOAD_NEUTRAL}99` }} title="1.3–1.5 Elevated" />
+                    <div className="w-[30%]" style={{ background: `${WORKLOAD_ACCENT}59` }} title="> 1.5 Spike" />
+                  </div>
+                  {acwr !== null && (
+                    <div
+                      className="absolute -top-1 w-0.5 h-3.5 rounded-full text-foreground"
+                      style={{
+                        // The strip spans ratio 0–2.0, which is what puts the
+                        // 0.8 / 1.3 / 1.5 stops at the segment widths above.
+                        left: `${Math.min(Math.max(acwr / 2, 0), 1) * 100}%`,
+                        background: isSpike ? WORKLOAD_ACCENT : "currentColor",
+                      }}
+                      title={`Ratio ${acwr.toFixed(2)}`}
+                      data-testid="marker-workload-ratio"
+                    />
+                  )}
+                </div>
+                <div className="flex justify-between text-[10px] text-muted-foreground mt-1">
+                  <span>0.8</span><span>1.3</span><span>1.5+</span>
+                </div>
               </div>
             </div>
 
@@ -631,9 +912,21 @@ export default function PlayerDetail() {
                     <span className="flex items-center gap-1">
                       <span className="w-3 border-t border-dashed" style={{ borderColor: chartAxis }} /> Avg
                     </span>
+                    {usualSessionRange && (
+                      <span
+                        className="flex items-center gap-1"
+                        title={`Middle half of this player's session days before the window: ${Math.round(usualSessionRange.low)}–${Math.round(usualSessionRange.high)} AU`}
+                      >
+                        <span className="w-3 border-t" style={{ borderColor: chartAxis, opacity: 0.45, borderStyle: "dashed" }} />
+                        Usual session {Math.round(usualSessionRange.low)}–{Math.round(usualSessionRange.high)}
+                      </span>
+                    )}
                     {matchLoadCount > 0 && (
                       <span className="flex items-center gap-1">
-                        <span className="w-2 h-2 rounded-full" style={{ background: MATCH_INK }} />
+                        <span
+                          className="w-2 h-2 rotate-45 border-[1.5px]"
+                          style={{ borderColor: MATCH_INK, background: INK.surface }}
+                        />
                         Match{estimatedMatchLoadCount > 0
                           ? ` (${estimatedMatchLoadCount} est. RPE ${MATCH_RPE})`
                           : " (player RPE)"}
@@ -655,6 +948,22 @@ export default function PlayerDetail() {
                       <CartesianGrid strokeDasharray="3 3" stroke={chartGrid} vertical={false} />
                       <XAxis dataKey="date" tick={{ fill: chartAxis, fontSize: 9 }} tickLine={false} interval="preserveStartEnd" minTickGap={24} />
                       <YAxis tick={{ fill: chartAxis, fontSize: 9 }} width={34} tickLine={false} axisLine={false} />
+                      {/* Two light dashed edges rather than a filled block: a
+                          shaded region reads as a band of the chart itself,
+                          competing with the plotted series instead of
+                          annotating it. Unlabelled in the plot — the legend
+                          names it, so nothing sits on top of the lines. */}
+                      {usualSessionRange && [usualSessionRange.low, usualSessionRange.high].map((y, i) => (
+                        <ReferenceLine
+                          key={i}
+                          y={Math.max(0, y)}
+                          stroke={chartAxis}
+                          strokeOpacity={0.45}
+                          strokeWidth={1}
+                          strokeDasharray="5 4"
+                          ifOverflow="hidden"
+                        />
+                      ))}
                       <Tooltip
                         contentStyle={{ background: chartTooltipBg, border: `1px solid ${chartTooltipBorder}`, borderRadius: 8 }}
                         labelStyle={{ color: chartLabel, fontSize: 12 }}
@@ -680,18 +989,25 @@ export default function PlayerDetail() {
                           const { cx, cy, payload, index } = props as {
                             cx: number; cy: number; payload: { source?: string }; index: number;
                           };
-                          const isMatch = payload?.source === "match";
-                          return (
-                            <circle
-                              key={index}
-                              cx={cx}
-                              cy={cy}
-                              r={isMatch ? 3.5 : 2.5}
-                              fill={isMatch ? MATCH_INK : HIGHLIGHT}
-                              stroke={isMatch ? INK.surface : "none"}
-                              strokeWidth={isMatch ? 1.5 : 0}
-                            />
-                          );
+                          // A match is a different kind of day, not a heavier
+                          // session, and the usual-session band does not apply
+                          // to it — so it gets a different shape, not just a
+                          // different colour. A hollow diamond survives a
+                          // greyscale print and colour-blind vision, where two
+                          // circles differing only in hue do not.
+                          if (payload?.source === "match") {
+                            const r = 4;
+                            return (
+                              <path
+                                key={index}
+                                d={`M${cx},${cy - r} L${cx + r},${cy} L${cx},${cy + r} L${cx - r},${cy} Z`}
+                                fill={INK.surface}
+                                stroke={MATCH_INK}
+                                strokeWidth={1.75}
+                              />
+                            );
+                          }
+                          return <circle key={index} cx={cx} cy={cy} r={2.5} fill={HIGHLIGHT} />;
                         }}
                       />
                       <Line type="monotone" dataKey="rollingAvg" stroke={chartAxis} strokeWidth={1.5} strokeDasharray="4 2" dot={false} />
@@ -701,6 +1017,17 @@ export default function PlayerDetail() {
               </div>
             )}
           </div>
+
+          {/* The caveats, once, under the section — not inside the status card,
+              where a sentence about what the number is not was competing with
+              the number itself. Mirrors the squad Overview's footnote. */}
+          <p className="text-[11px] text-muted-foreground pt-1">
+            Load is rated sessions plus match minutes. Match minutes use the player's RPE when logged, or a
+            clearly marked RPE {MATCH_RPE} estimate when it is missing. The workload ratio compares the latest
+            7 days with the prior 3-week average and needs 28 calendar days of history; it is a monitoring
+            signal, not an injury prediction.
+            {usualSessionRange && " The usual session range is this player's own training-session days over the weeks before the chart's window — matches are excluded from it."}
+          </p>
         </section>
       )}
 

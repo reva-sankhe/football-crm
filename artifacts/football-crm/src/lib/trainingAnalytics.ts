@@ -23,20 +23,20 @@ import type { Player, TrainingSession } from "./types";
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 const round1 = (n: number) => Math.round(n * 10) / 10;
 
-/** The Monday of the week a date falls in, as ISO. Weeks start Monday here. */
-function weekStart(iso: string): string {
+/** The Monday of the week a date falls in, as ISO. Weeks start Monday here. Shared with lib/playerLoad.ts so both weekly views tile on the same boundary. */
+export function weekStart(iso: string): string {
   const d = new Date(iso + "T00:00:00");
   const offset = (d.getDay() + 6) % 7; // Sunday(0) → 6, Monday(1) → 0
   d.setDate(d.getDate() - offset);
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
-function weekLabel(iso: string): string {
+export function weekLabel(iso: string): string {
   const d = new Date(iso + "T00:00:00");
   return d.toLocaleDateString("en-GB", { day: "numeric", month: "short" });
 }
 
-function isoOfDate(d: Date): string {
+export function isoOfDate(d: Date): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 

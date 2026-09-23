@@ -346,9 +346,12 @@ function FlaggedPlayerChip({ row }: { row: LoadToWatchRow }) {
       className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg border border-border text-[11px] hover:border-indigo-500/40 transition-colors"
       title={`Ratio ${row.acwr?.toFixed(2) ?? "—"}`}
     >
-      <span className="w-2 h-2 rounded-full" style={{ background: cfg.color }} />
+      {/* The dot carries the status colour; the label stays readable ink.
+          Every status but Spike is the same neutral, so the word is what
+          tells Elevated from Spike — see WORKLOAD_NEUTRAL. */}
+      <span className="w-2 h-2 rounded-full shrink-0" style={{ background: cfg.color }} aria-hidden="true" />
       <span className="text-foreground font-medium">{row.player.name}</span>
-      <span className="font-time" style={{ color: cfg.color }}>
+      <span className="font-time text-muted-foreground">
         {cfg.label}
         {row.pctVsUsual != null && (
           <>, {Math.abs(Math.round(row.pctVsUsual))}% {row.pctVsUsual >= 0 ? "above" : "below"} usual</>
