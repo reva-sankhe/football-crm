@@ -11,7 +11,10 @@ import { OverviewCard, tooltipStyle } from "@/components/OverviewCard";
 import { HIGHLIGHT, ink, type Mode } from "@/lib/viz";
 import {
   fetchAllAttendanceStats, fetchAllMatchStats, fetchAllRPEWithSessions, fetchPlayers, fetchTrainingSessions,
+  fetchInjuryHistory,
 } from "@/lib/queries";
+import { todayISO } from "@/lib/attendance";
+import { NO_INJURIES, buildAvailability, type Availability } from "@/lib/injuries";
 import { ACWR_CONFIG, buildLoadRows, pinnedWeeklyAnchor, teamSessionDatesFrom, type LoadRow } from "@/lib/report";
 import {
   buildLoadToWatch, buildSquadWeeklyLoad, computeSquadUsualLoadRange,
@@ -60,17 +63,20 @@ export function OverviewTab() {
   const [sessions, setSessions] = useState<TrainingSession[]>([]);
   const [loading, setLoading] = useState(true);
   const [weeks, setWeeks] = useState<number | null>(16);
+  const [availability, setAvailability] = useState<Availability>(NO_INJURIES);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [ps, rpe, matchStats, attendance, sessionsData] = await Promise.all([
+      const [ps, rpe, matchStats, attendance, sessionsData, injuryHistory] = await Promise.all([
         fetchPlayers(),
         fetchAllRPEWithSessions(),
         fetchAllMatchStats(),
         fetchAllAttendanceStats(),
         fetchTrainingSessions(),
+        fetchInjuryHistory(),
       ]);
+      setAvailability(buildAvailability(injuryHistory.injuries, injuryHistory.stages));
       // Squad-wide totals and the per-player list are active-roster only — a
       // player marked inactive drops out of team load figures entirely, not
       // just the alert engine.
@@ -119,10 +125,13 @@ export function OverviewTab() {
   );
   const usualRange = useMemo(() => computeSquadUsualLoadRange(weeklySquad), [weeklySquad]);
 
-  const loadToWatch = useMemo(
-    () => buildLoadToWatch(rows, players, statusAnchor, teamSessionDates),
-    [rows, players, statusAnchor, teamSessionDates],
-  );
+  // A player who is out has no workload to manage — the injury is the story,
+  // and it's on their profile. They rejoin the watch list once back training.
+  const loadToWatch = useMemo(() => {
+    const today = todayISO();
+    const training = players.filter((p) => availability.on(p.id, today)?.stage !== "out");
+    return buildLoadToWatch(rows, training, statusAnchor, teamSessionDates);
+  }, [rows, players, statusAnchor, teamSessionDates, availability]);
 
   // ── Stat cards ───────────────────────────────────────────────────────────
   const latestWeek: SquadWeekLoad | undefined = weeklySquad[weeklySquad.length - 1];

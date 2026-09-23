@@ -3,11 +3,13 @@ import { RefreshCw } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import {
   fetchAttendanceSummaryForSessions,
+  fetchInjuryHistory,
   fetchPlayers,
   fetchTrainingSessions,
   fetchTrainingSessionsPage,
 } from "@/lib/queries";
 import { collapseMatchDays } from "@/lib/attendance";
+import { NO_INJURIES, buildAvailability, type Availability } from "@/lib/injuries";
 import { getErrorMessage } from "@/lib/utils";
 import type { Player, TrainingSession } from "@/lib/types";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -22,6 +24,19 @@ type SummaryMap = Record<string, { total: number; present: number }>;
 
 export default function Attendance() {
   const { toast } = useToast();
+
+  // Who was injured when — both tabs show a missed session inside an injury as
+  // Injured and excuse it. Refetched whenever either tab records an injury.
+  const [availability, setAvailability] = useState<Availability>(NO_INJURIES);
+  const refreshAvailability = useCallback(async () => {
+    try {
+      const { injuries, stages } = await fetchInjuryHistory();
+      setAvailability(buildAvailability(injuries, stages));
+    } catch (err) {
+      toast({ title: "Couldn't load injuries", description: getErrorMessage(err), variant: "destructive" });
+    }
+  }, [toast]);
+  useEffect(() => { refreshAvailability(); }, [refreshAvailability]);
 
   // ── Mark tab — paginated, newest first. A full unpaginated fetch got
   // slower as sessions piled up; this loads fast and the strip's arrow pulls
@@ -221,6 +236,8 @@ export default function Attendance() {
               session={activeSession}
               matchesOnDay={activeSessionId ? matchesOnDay[activeSessionId] : undefined}
               players={players}
+              availability={availability}
+              onInjuryRecorded={refreshAvailability}
               onDirtyChange={setDirty}
               onSaved={handleSaved}
             />
@@ -236,6 +253,8 @@ export default function Attendance() {
                 sessions={overviewSessions}
                 matchesOnDay={overviewMatchesOnDay}
                 players={players}
+                availability={availability}
+                onInjuryRecorded={refreshAvailability}
                 refreshKey={refreshKey}
                 onJumpToSession={handleJumpToSession}
               />

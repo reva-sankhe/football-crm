@@ -865,6 +865,20 @@ export async function fetchInjuriesForPlayer(playerId: string): Promise<InjuryWi
   return (data ?? []) as InjuryWithStatus[];
 }
 
+/**
+ * Every injury and every stage, for deriving who was out on any date. Paged
+ * like the other whole-table reads, though both stay small for a single squad.
+ */
+export async function fetchInjuryHistory(): Promise<{ injuries: InjuryWithStatus[]; stages: InjuryStage[] }> {
+  const [injuries, stages] = await Promise.all([
+    fetchAllRows<InjuryWithStatus>((from, to) =>
+      supabase.from("v_injury_status").select("*").order("occurred_on").order("id").range(from, to)),
+    fetchAllRows<InjuryStage>((from, to) =>
+      supabase.from("injury_stages").select("*").order("effective_on").order("id").range(from, to)),
+  ]);
+  return { injuries, stages };
+}
+
 /** Every injury not yet match fit, squad-wide. Small by nature — no paging. */
 export async function fetchOpenInjuries(): Promise<InjuryWithStatus[]> {
   const { data, error } = await supabase
@@ -942,6 +956,49 @@ export async function undoLastInjuryStage(injuryId: string): Promise<void> {
   if (!latest) return;
   const { error } = await supabase.from("injury_stages").delete().eq("id", latest.id);
   if (error) throw error;
+}
+
+/** The fields editable after entry. The rest describes the moment it happened. */
+export async function updateInjury(
+  id: string,
+  updates: Partial<Pick<Injury, "expected_return_on" | "reviewed_on" | "notes">>,
+): Promise<void> {
+  const { error } = await supabase.from("injuries").update(updates).eq("id", id);
+  if (error) throw error;
+}
+
+/**
+ * What one player has done since a date — their own RPE ratings and match
+ * appearances — for the closing prompts on their profile.
+ */
+export async function fetchPlayerActivitySince(playerId: string, since: string): Promise<{
+  rated: { player_id: string; date: string; estimated: boolean }[];
+  played: { player_id: string; date: string; minutes: number }[];
+}> {
+  const [rpe, stats] = await Promise.all([
+    supabase.from("session_rpe").select("player_id, estimated, sessions!inner(date)")
+      .eq("player_id", playerId).gte("sessions.date", since),
+    supabase.from("match_player_stats").select("player_id, minutes_played, matches!inner(sessions!inner(date))")
+      .eq("player_id", playerId).gte("matches.sessions.date", since),
+  ]);
+  if (rpe.error) throw rpe.error;
+  if (stats.error) throw stats.error;
+  type RpeRow = { player_id: string; estimated: boolean; sessions: { date: string } };
+  type StatRow = { player_id: string; minutes_played: number; matches: { sessions: { date: string } } };
+  return {
+    rated: ((rpe.data ?? []) as unknown as RpeRow[]).map((r) => ({ player_id: r.player_id, date: r.sessions.date, estimated: r.estimated })),
+    played: ((stats.data ?? []) as unknown as StatRow[]).map((r) => ({ player_id: r.player_id, date: r.matches.sessions.date, minutes: r.minutes_played })),
+  };
+}
+
+/** Injuries recorded as a recurrence of this one — which pins its match fit in place. */
+export async function countRecurrencesOf(injuryId: string): Promise<number> {
+  const { count, error } = await supabase
+    .from("injuries")
+    .select("id", { count: "exact", head: true })
+    .eq("recurrence_of", injuryId);
+  if (error) throw error;
+  return count ?? 0;
 }
 
 export async function deleteInjury(id: string): Promise<void> {

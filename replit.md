@@ -314,11 +314,51 @@ A team management CRM for Bombay Gymkhana Women's Football — tracks players, s
   on. `stageInsertProblem`/`undoProblem` in `lib/injuries.ts` mirror the rules so a form can
   explain a refusal before it round-trips.
 - **Three entry points, one set of fields** (`components/injuries/InjuryFields.tsx`): the
-  match grid's Injury toggle (`MatchInjuryPanel`, saved by the page's one Save), Mark
-  Attendance's "Injured…" pick, and Dashboard → Report injury (the last two go through
-  `ReportInjuryDialog`). A player who is already out is asked whether this is the same
+  match grid's Injury toggle (`MatchInjuryPanel`, saved by the page's one Save), and
+  `ReportInjuryDialog` everywhere else — the "Injured…" pick on the Mark tab and the matrix,
+  and Report injury on the Dashboard, the Players toolbar and the player page. Both dialogs
+  are portalled to `document.body`: opened inside a card, the card's styling otherwise
+  becomes the containing block for `fixed` and clips them. A player who is already out is asked whether this is the same
   injury before a new one is created. Match-grid rows flagged before injuries existed
   (`injured` with no `injury_id`) are read-only until the injury migration converts them.
+
+- **Availability is derived from injuries, never stored.** `buildAvailability` in
+  `lib/injuries.ts` answers "where did this player stand on this date" from the stage
+  histories — the worst stage across their injuries in effect, or null once match fit.
+  Attendance, alerts, lineups and the player page all ask it, so none can disagree about who
+  was out when.
+- **One rule excuses absences: `isExcusedAbsence` in `lib/attendance.ts`.** A session missed
+  while **out** or on **modified** training leaves the denominator; from **full training** on,
+  a player is expected to turn up and a missed session counts again. A legacy `Injured`
+  attendance mark is excused too, record or not. Attending always counts. Every percentage —
+  player profile, printed report, attendance matrix, Dashboard alert and team average — goes
+  through `tallyAttendance` (or `matchDayAttendance`'s `excusedDay`), which also reports how
+  many were excused so a shrunken denominator is never silent. A month excused entirely has
+  no percentage (null), not 0%.
+- **"Injured" is shown, not marked.** The Mark tab and the matrix display a missed session
+  inside an out/modified window as Injured; choosing Injured opens the report form and saves
+  the row as **Absent** — so deleting a mistaken injury can't leave a stray Injured mark, the
+  way the pre-injury-table rows did. The enum value stays until the migration converts those.
+- **Load alerts skip players who are out** (Dashboard alerts and the Training Overview watch
+  list): there's no workload to manage. From modified training on they return, labelled
+  "returning from injury" on the Dashboard — the rise from a baseline built while out is the
+  return-to-play spike worth seeing, so it's labelled rather than hidden.
+- **Lineups warn, never block.** `AvailabilityBadge` sits beside injured players in the squad
+  picker (sorted last, as of today) and the match grid (as of the match date, ignoring
+  injuries picked up that day).
+- **Open injuries are closed by prompts, not by coaches keeping a daily status.**
+  `closingPrompt` asks one question per open injury when there's something to go on: minutes
+  in a match while not match fit, a rated session while out, a passed expected return, or 14
+  days with no stage change or "still out" answer — unless an expected return is still ahead,
+  which is what stops a long injury (an ACL) nagging. Only evidence after the latest answer
+  counts; backfilled RPE isn't evidence. Prompts show on the Dashboard's Availability panel
+  and the player page, and marking an out player Present asks "back?" on the Mark tab.
+  `InjuryDialog` answers them — and is also where a stage is undone.
+- **The legacy injury migration is a reviewed plan, not a heuristic.**
+  `npm run audit:injury-migration` (`scripts/injuryMigrationDryRun.mjs`) prints what
+  converting the 13 Injured attendance rows and 8 match-grid notes would write and which
+  absences each proposed injury would newly excuse. Judgement calls are named `DECISIONS`
+  with `answer: null` until the coaches reply; there is deliberately no apply step yet.
 
 ## Roadmap
 

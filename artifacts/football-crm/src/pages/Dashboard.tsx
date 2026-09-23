@@ -3,8 +3,14 @@ import { MetricCardSkeleton } from "@/components/Skeleton";
 import {
   fetchLatestSessionResults, fetchPlayers, fetchAllRPEWithSessions,
   fetchAllAttendanceStats, fetchAllResults, fetchTrainingSessions, fetchAllMatchStats,
-  type PlayerMatchStat,
+  fetchInjuryHistory, type PlayerMatchStat,
 } from "@/lib/queries";
+import { NO_INJURIES, buildAvailability, buildEvidence, closingPrompts, type Availability } from "@/lib/injuries";
+import { isExcusedAbsence, todayISO } from "@/lib/attendance";
+import { ClosingPrompts } from "@/components/injuries/ClosingPrompts";
+import { AvailabilityBadge } from "@/components/injuries/AvailabilityBadge";
+import type { InjuryStage, InjuryWithStatus } from "@/lib/types";
+import { Link } from "wouter";
 import {
   computeAlerts, CAT_CFG, SEV_COLOR,
   type AlertItem, type AlertSeverity, type AlertCategory,
@@ -33,17 +39,22 @@ export default function Dashboard() {
   const [allResults,       setAllResults]        = useState<ResultRow[]>([]);
   const [trainingSessions, setTrainingSessions]  = useState<TrainingSession[]>([]);
   const [matchStats,       setMatchStats]        = useState<PlayerMatchStat[]>([]);
+  const [availability,     setAvailability]      = useState<Availability>(NO_INJURIES);
+  const [injuryHistory,    setInjuryHistory]     = useState<{ injuries: InjuryWithStatus[]; stages: InjuryStage[] }>({ injuries: [], stages: [] });
   const [loading,          setLoading]           = useState(true);
   const [expanded,         setExpanded]          = useState<Set<AlertCategory>>(new Set(["workload", "recovery", "attendance", "fitness"]));
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [ps, latest, rpe, att, results, sessions, mStats] = await Promise.all([
+      const [ps, latest, rpe, att, results, sessions, mStats, injuryHistory] = await Promise.all([
         fetchPlayers(), fetchLatestSessionResults(),
         fetchAllRPEWithSessions(), fetchAllAttendanceStats(),
         fetchAllResults(), fetchTrainingSessions(), fetchAllMatchStats(),
+        fetchInjuryHistory(),
       ]);
+      setAvailability(buildAvailability(injuryHistory.injuries, injuryHistory.stages));
+      setInjuryHistory(injuryHistory);
       setPlayers(ps);
       setLatestData(latest);
       setRpeData(rpe as RPERow[]);
@@ -66,9 +77,23 @@ export default function Dashboard() {
   // ── Alert engine ── extracted to lib/alerts.ts, shared with the dashboard
   // rebuild and any other page that needs the same squad-wide flags.
   const alerts = useMemo(
-    () => computeAlerts({ players, rpeData, attendanceData, allResults, trainingSessions, matchStats }),
-    [players, rpeData, attendanceData, allResults, trainingSessions, matchStats],
+    () => computeAlerts({ players, rpeData, attendanceData, allResults, trainingSessions, matchStats, availability }),
+    [players, rpeData, attendanceData, allResults, trainingSessions, matchStats, availability],
   );
+
+  // ── Availability ──────────────────────────────────────────────────────────
+  const today = todayISO();
+  const unavailable = useMemo(() => {
+    const m = availability.unavailableOn(today);
+    return players.filter((p) => p.is_active && m.has(p.id)).map((p) => ({ player: p, a: m.get(p.id)! }));
+  }, [availability, players, today]);
+  const prompts = useMemo(() => {
+    const evidence = buildEvidence(
+      rpeData.map((r) => ({ player_id: r.player_id, date: r.sessions?.date, estimated: r.estimated })),
+      matchStats.map((m) => ({ player_id: m.player_id, date: m.matches?.sessions?.date, minutes: m.minutes_played })),
+    );
+    return closingPrompts(injuryHistory.injuries, injuryHistory.stages, evidence, today);
+  }, [injuryHistory, rpeData, matchStats, today]);
 
   // ── Monthly attendance % ──────────────────────────────────────────────────
   const monthlyAttPct = useMemo(() => {
@@ -77,10 +102,13 @@ export default function Dashboard() {
     const me  = new Date(now.getFullYear(), now.getMonth() + 1, 0).toISOString().slice(0, 10);
     const logged  = trainingSessions.filter((s) => (s.date ?? "") >= ms && (s.date ?? "") <= me && attendanceData.some((a) => a.session_id === s.id));
     if (!logged.length) return null;
-    const relevant = attendanceData.filter((a) => logged.some((s) => s.id === a.session_id));
+    const dateOf = new Map(logged.map((s) => [s.id, s.date]));
+    // Absences excused for injury leave the team average, as they do each player's
+    const relevant = attendanceData.filter((a) => dateOf.has(a.session_id)
+      && !isExcusedAbsence(a.status, availability, a.player_id, dateOf.get(a.session_id)!));
     const present  = relevant.filter((a) => a.status === "Present" || a.status === "Late").length;
     return relevant.length > 0 ? Math.round((present / relevant.length) * 100) : null;
-  }, [attendanceData, trainingSessions]);
+  }, [attendanceData, trainingSessions, availability]);
 
   // ── Upcoming sessions ─────────────────────────────────────────────────────
   const upcoming = useMemo(() => {
@@ -189,6 +217,28 @@ export default function Dashboard() {
           </>
         )}
       </div>
+
+      {/* Availability — who is injured, and which injuries need an answer */}
+      {!loading && (unavailable.length > 0 || prompts.length > 0) && (
+        <div className="bg-card border border-border rounded-2xl overflow-hidden" data-testid="panel-availability">
+          <div className="px-5 py-3.5 border-b border-border flex items-center justify-between gap-2">
+            <span className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">Availability</span>
+            <span className="text-[11px] text-muted-foreground">
+              {unavailable.length} not match fit{prompts.length > 0 && ` · ${prompts.length} to update`}
+            </span>
+          </div>
+          <ClosingPrompts prompts={prompts} players={players} onChanged={load} />
+          {unavailable.length > 0 && (
+            <div className={cn("px-5 py-3 flex flex-wrap gap-2", prompts.length > 0 && "border-t border-border")}>
+              {unavailable.map(({ player, a }) => (
+                <Link key={player.id} href={`/players/${player.id}`} className="flex items-center gap-1.5 text-sm text-foreground hover:text-indigo-400 transition-colors">
+                  {player.name} <AvailabilityBadge availability={a} />
+                </Link>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Alert accordion */}
       {!loading && (

@@ -302,3 +302,224 @@ export function injuryRowFromDraft(
     notes: d.notes.trim() || null,
   };
 }
+
+// ── Availability ──────────────────────────────────────────────────────────────
+/** Not-yet-fit stages, worst first. Match fit means available, so it has no rank. */
+const STAGE_RANK: Record<InjuryStageName, number> = { out: 3, modified: 2, full_training: 1, match_fit: 0 };
+
+/**
+ * Stages that excuse an absence. A player cleared for full training is
+ * expected to turn up, so from then on a missed session counts again.
+ */
+export function stageExcusesAbsence(stage: InjuryStageName | null): boolean {
+  return stage === "out" || stage === "modified";
+}
+
+/** The stage one injury had reached on `date`; null before it began or once match fit. */
+export function stageOfInjuryOn(
+  injury: Pick<Injury, "occurred_on">,
+  stages: InjuryStage[],
+  date: string,
+): InjuryStageName | null {
+  if (date < injury.occurred_on) return null;
+  let current: InjuryStage | null = null;
+  for (const s of stages) {
+    if (s.effective_on <= date && (!current || s.effective_on > current.effective_on)) current = s;
+  }
+  return current && current.stage !== "match_fit" ? current.stage : null;
+}
+
+export interface PlayerAvailability {
+  /** The worst stage across the injuries in effect. */
+  stage: InjuryStageName;
+  /** Those injuries, worst first. */
+  injuries: InjuryWithStatus[];
+}
+
+export interface Availability {
+  /** Where a player stood on a date, or null if nothing was keeping them out. */
+  on(playerId: string, date: string): PlayerAvailability | null;
+  /** Every player not yet match fit on `date`. */
+  unavailableOn(date: string): Map<string, PlayerAvailability>;
+}
+
+/**
+ * Availability derived from injuries and their stage histories — never
+ * stored. One answer for every screen: attendance, alerts, lineups and the
+ * player page all ask this, so none can disagree about who was out when.
+ */
+export function buildAvailability(injuries: InjuryWithStatus[], stages: InjuryStage[]): Availability {
+  const stagesByInjury = new Map<string, InjuryStage[]>();
+  for (const s of stages) {
+    const list = stagesByInjury.get(s.injury_id);
+    if (list) list.push(s);
+    else stagesByInjury.set(s.injury_id, [s]);
+  }
+  const byPlayer = new Map<string, InjuryWithStatus[]>();
+  for (const i of injuries) {
+    const list = byPlayer.get(i.player_id);
+    if (list) list.push(i);
+    else byPlayer.set(i.player_id, [i]);
+  }
+
+  const on = (playerId: string, date: string): PlayerAvailability | null => {
+    const hits: { injury: InjuryWithStatus; stage: InjuryStageName }[] = [];
+    for (const injury of byPlayer.get(playerId) ?? []) {
+      const stage = stageOfInjuryOn(injury, stagesByInjury.get(injury.id) ?? [], date);
+      if (stage) hits.push({ injury, stage });
+    }
+    if (hits.length === 0) return null;
+    hits.sort((a, b) => STAGE_RANK[b.stage] - STAGE_RANK[a.stage] || b.injury.occurred_on.localeCompare(a.injury.occurred_on));
+    return { stage: hits[0].stage, injuries: hits.map((h) => h.injury) };
+  };
+
+  return {
+    on,
+    unavailableOn(date) {
+      const out = new Map<string, PlayerAvailability>();
+      for (const playerId of byPlayer.keys()) {
+        const a = on(playerId, date);
+        if (a) out.set(playerId, a);
+      }
+      return out;
+    },
+  };
+}
+
+/** An availability with nobody injured — for callers whose injury data hasn't loaded. */
+export const NO_INJURIES: Availability = buildAvailability([], []);
+
+/** "Out · Knee (left)" — the short line lineups and rosters show. */
+export function availabilityLabel(a: PlayerAvailability): string {
+  return `${STAGE_CFG[a.stage].short} · ${a.injuries.map(injuryLabel).join(", ")}`;
+}
+
+// ── Closing prompts ───────────────────────────────────────────────────────────
+/**
+ * Coaches don't keep a daily status, so an open injury is closed by asking at
+ * the moments there's something to go on — never by closing it automatically.
+ */
+export const STALE_PROMPT_DAYS = 14;
+
+export type ClosingPromptKind = "played" | "trained" | "expected" | "stale";
+
+export interface ClosingPrompt {
+  kind: ClosingPromptKind;
+  injury: InjuryWithStatus;
+  /** Where the player stands now. */
+  stage: InjuryStageName;
+  /** The stage and date to pre-fill; the coach can change either. */
+  suggestStage: InjuryStageName;
+  suggestDate: string;
+  message: string;
+}
+
+/** What the player has done that says something about their injury. */
+export interface ActivityEvidence {
+  /** Dates of sessions the player rated themselves — backfilled estimates excluded. */
+  ratedDates: string[];
+  /** Match appearances with minutes on the pitch. */
+  played: { date: string; minutes: number }[];
+}
+
+/**
+ * The one question worth asking about an open injury today, or null. First
+ * match wins:
+ *
+ * 1. **played** — minutes in a match while not match fit: were they fit?
+ * 2. **trained** — rated a session while out: back in modified training?
+ * 3. **expected** — the expected return date has passed.
+ * 4. **stale** — no stage change or "still out" answer for STALE_PROMPT_DAYS,
+ *    and no expected return still ahead. An expected return in the future is
+ *    what keeps a long injury (an ACL) from asking every fortnight.
+ *
+ * Evidence only counts after the latest stage change or "still out" answer —
+ * whatever came before it has already been answered.
+ */
+export function closingPrompt(
+  injury: InjuryWithStatus,
+  stages: InjuryStage[],
+  evidence: ActivityEvidence,
+  today: string,
+): ClosingPrompt | null {
+  if (injury.status !== "open") return null;
+  const stage = currentStage(stages);
+  if (!stage || stage === "match_fit") return null;
+  const sorted = byDate(stages);
+  const lastChange = sorted[sorted.length - 1].effective_on;
+  const answeredOn = [lastChange, injury.reviewed_on ?? ""].sort().pop()!;
+  const base = { injury, stage };
+
+  const played = evidence.played
+    .filter((p) => p.minutes > 0 && p.date > answeredOn && p.date <= today)
+    .sort((a, b) => a.date.localeCompare(b.date))[0];
+  if (played) {
+    return {
+      ...base, kind: "played", suggestStage: "match_fit", suggestDate: played.date,
+      message: `Played ${played.minutes}′ on ${shortDate(played.date)} while ${STAGE_CFG[stage].label.toLowerCase()} — match fit from then?`,
+    };
+  }
+
+  if (stage === "out") {
+    const trained = evidence.ratedDates.filter((d) => d > answeredOn && d <= today).sort()[0];
+    if (trained) {
+      return {
+        ...base, kind: "trained", suggestStage: "modified", suggestDate: trained,
+        message: `Rated a session on ${shortDate(trained)} while out — back in modified training?`,
+      };
+    }
+  }
+
+  const next = STAGE_ORDER[STAGE_ORDER.indexOf(stage) + 1];
+  const expected = injury.expected_return_on;
+  if (expected && expected <= today && !(injury.reviewed_on && injury.reviewed_on >= expected)) {
+    return {
+      ...base, kind: "expected", suggestStage: next, suggestDate: today,
+      message: `Expected back ${shortDate(expected)} — where do they stand?`,
+    };
+  }
+
+  if (daysBetween(answeredOn, today) >= STALE_PROMPT_DAYS && !(expected && expected > today)) {
+    return {
+      ...base, kind: "stale", suggestStage: next, suggestDate: today,
+      message: `No update for ${daysBetween(answeredOn, today)} days — still ${STAGE_CFG[stage].label.toLowerCase()}?`,
+    };
+  }
+  return null;
+}
+
+/** Every open injury's prompt, most recent injury first. */
+export function closingPrompts(
+  injuries: InjuryWithStatus[],
+  stages: InjuryStage[],
+  evidenceFor: (playerId: string) => ActivityEvidence,
+  today: string,
+): ClosingPrompt[] {
+  const stagesByInjury = new Map<string, InjuryStage[]>();
+  for (const s of stages) (stagesByInjury.get(s.injury_id) ?? stagesByInjury.set(s.injury_id, []).get(s.injury_id)!).push(s);
+  return injuries
+    .filter((i) => i.status === "open")
+    .map((i) => closingPrompt(i, stagesByInjury.get(i.id) ?? [], evidenceFor(i.player_id), today))
+    .filter((p): p is ClosingPrompt => p !== null)
+    .sort((a, b) => b.injury.occurred_on.localeCompare(a.injury.occurred_on));
+}
+
+function shortDate(iso: string): string {
+  return new Date(iso + "T00:00:00").toLocaleDateString("en-GB", { day: "numeric", month: "short" });
+}
+
+/**
+ * Per-player evidence from raw rows: sessions a player rated themselves, and
+ * match minutes. An estimated RPE row is a backfill, not the player saying
+ * they trained, so it isn't evidence.
+ */
+export function buildEvidence(
+  rated: { player_id: string; date: string | null | undefined; estimated?: boolean }[],
+  played: { player_id: string; date: string | null | undefined; minutes: number | null }[],
+): (playerId: string) => ActivityEvidence {
+  const map = new Map<string, ActivityEvidence>();
+  const get = (pid: string) => map.get(pid) ?? map.set(pid, { ratedDates: [], played: [] }).get(pid)!;
+  for (const r of rated) if (r.date && !r.estimated) get(r.player_id).ratedDates.push(r.date);
+  for (const p of played) if (p.date && (p.minutes ?? 0) > 0) get(p.player_id).played.push({ date: p.date, minutes: p.minutes! });
+  return (pid) => map.get(pid) ?? { ratedDates: [], played: [] };
+}

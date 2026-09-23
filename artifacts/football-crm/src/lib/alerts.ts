@@ -1,5 +1,7 @@
 import { buildLoadRows, collapseLoadByDay, computeAcwr, teamSessionDatesFrom } from "./report";
 import { formatBronco } from "./utils";
+import { countsAsAttended, isExcusedAbsence, tallyAttendance } from "./attendance";
+import { NO_INJURIES, STAGE_CFG, availabilityLabel, type Availability } from "./injuries";
 import { STATUS } from "./viz";
 import type { Player, TestResult, TrainingSession, SessionRPE, SessionAttendance } from "./types";
 import type { PlayerMatchStat } from "./queries";
@@ -75,8 +77,14 @@ export interface ComputeAlertsInput {
   allResults: AlertResultRow[];
   trainingSessions: TrainingSession[];
   matchStats: PlayerMatchStat[];
+  /** Who was injured when. Omitted, nobody is treated as injured. */
+  availability?: Availability;
   /** Defaults to the real current time; tests pass a fixed date. */
   now?: Date;
+}
+
+function localIso(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
 const BENCHMARK_DAYS_OVERDUE = 60;
@@ -89,9 +97,11 @@ const BENCHMARK_DAYS_OVERDUE = 60;
 export const SPIKE_PRIORITY_THRESHOLD = 2.0;
 
 export function computeAlerts({
-  players, rpeData, attendanceData, allResults, trainingSessions, matchStats, now = new Date(),
+  players, rpeData, attendanceData, allResults, trainingSessions, matchStats,
+  availability = NO_INJURIES, now = new Date(),
 }: ComputeAlertsInput): AlertItem[] {
   const items: AlertItem[] = [];
+  const today = localIso(now);
   const activePlayers = players.filter((p) => p.is_active);
   const teamSessionDates = teamSessionDatesFrom(trainingSessions);
 
@@ -121,6 +131,17 @@ export function computeAlerts({
     const rows = rpeByPlayer.get(pid) ?? [];
     if (rows.length === 0 && !statsByPlayer.has(pid) && !attByPlayer.has(pid)) continue;
 
+    // A player who is out isn't training, so there is no workload to manage —
+    // the injury is the whole story. Once they are back in some form, the
+    // alerts return, labelled: the jump from a near-zero baseline is exactly
+    // the return-to-play spike worth watching.
+    const injured = availability.on(pid, today);
+    if (injured?.stage === "out") continue;
+    const returning = injured
+      ? ` Returning from injury (${availabilityLabel(injured)}) — a rise from the low baseline built while out is expected; ramp it deliberately.`
+      : "";
+    const returningHeadline = injured ? ` · returning from injury (${STAGE_CFG[injured.stage].label.toLowerCase()})` : "";
+
     // ── Workload ratio ────────────────────────────────────────────────────
     // The same function the profile and the report use, so the three can't
     // report different numbers for the same player.
@@ -141,16 +162,16 @@ export function computeAlerts({
         severity: isPriority ? "danger" : "warning",
         category: "workload",
         player,
-        headline: `Workload ratio ${acwr.toFixed(2)} — Spike${isPriority ? ", priority" : ""}`,
-        detail: `Last 7 days: ${Math.round(acute)} AU. Prior 3-week average: ${Math.round(baselineWeeklyAvg)} AU per week. Worth a closer look at recent workload, recovery, and upcoming sessions.`,
+        headline: `Workload ratio ${acwr.toFixed(2)} — Spike${isPriority ? ", priority" : ""}${returningHeadline}`,
+        detail: `Last 7 days: ${Math.round(acute)} AU. Prior 3-week average: ${Math.round(baselineWeeklyAvg)} AU per week. Worth a closer look at recent workload, recovery, and upcoming sessions.${returning}`,
         action: isPriority
           ? "Check in with the player before the next session and review the schedule for the next few days. This workload ratio is a monitoring prompt, not an injury prediction."
           : "Keep an eye on this over the next few sessions — no need to act immediately, but worth watching if it continues to climb.",
       });
     } else if (acwr !== null && status === "elevated") {
       items.push({ id: `acwr-${pid}`, severity: "warning", category: "workload", player,
-        headline: `Workload ratio ${acwr.toFixed(2)} — Elevated`,
-        detail: `Last 7 days: ${Math.round(acute)} AU. Prior 3-week average: ${Math.round(baselineWeeklyAvg)} AU per week.`,
+        headline: `Workload ratio ${acwr.toFixed(2)} — Elevated${returningHeadline}`,
+        detail: `Last 7 days: ${Math.round(acute)} AU. Prior 3-week average: ${Math.round(baselineWeeklyAvg)} AU per week.${returning}`,
         action: "Review recovery and upcoming sessions before adding unplanned workload." });
     }
 
@@ -194,12 +215,21 @@ export function computeAlerts({
     for (const player of activePlayers) {
       const playerAtt = attendanceData.filter((a) => a.player_id === player.id && loggedMonthSessions.some((s) => s.id === a.session_id));
       if (!playerAtt.length) continue;
-      const attended = playerAtt.filter((a) => a.status === "Present" || a.status === "Late").length;
-      const pct = attended / loggedMonthSessions.length;
+      const statusOf = new Map(playerAtt.map((a) => [a.session_id, a.status]));
+      // The shared rule: sessions missed while injured leave the denominator
+      const tally = tallyAttendance(
+        loggedMonthSessions,
+        (s) => countsAsAttended(statusOf.get(s.id)),
+        (s) => isExcusedAbsence(statusOf.get(s.id), availability, player.id, s.date),
+      );
+      if (tally.pct === null) continue;
+      const { attended } = tally;
+      const pct = tally.pct / 100;
+      const excusedNote = tally.excused > 0 ? `, ${tally.excused} excused for injury` : "";
       if (pct < 0.75) {
         const isDanger = pct < 0.5;
         items.push({ id: `att-${player.id}`, severity: isDanger ? "danger" : "warning", category: "attendance", player,
-          headline: `${Math.round(pct * 100)}% attendance this month (${attended} of ${loggedMonthSessions.length} sessions)`,
+          headline: `${Math.round(pct * 100)}% attendance this month (${attended} of ${tally.total} sessions${excusedNote})`,
           detail: isDanger
             ? `This player has missed more than half of this month's logged sessions. At this level of absence they're falling behind on fitness, missing tactical and set-piece work, and it becomes difficult to justify match selection.`
             : `Below the 75% minimum. Missed sessions add up quickly — one or two more absences this month will make it very difficult to meet the threshold.`,

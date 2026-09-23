@@ -21,7 +21,8 @@
     "test:injuries": "node scripts/injuries.test.mjs",
     "audit:workload": "node scripts/workloadAudit.mjs",
     "audit:completeness": "node scripts/dataCompletenessAudit.mjs",
-    "audit:ewma-comparison": "node scripts/ewmaComparisonAudit.mjs"
+    "audit:ewma-comparison": "node scripts/ewmaComparisonAudit.mjs",
+    "audit:injury-migration": "node scripts/injuryMigrationDryRun.mjs"
   },
   "devDependencies": {
     "@hookform/resolvers": "^3.10.0",

@@ -7,15 +7,20 @@ import { useToast } from "@/hooks/use-toast";
 import { deleteSquad, setSquadPlayers, updateSquad } from "@/lib/queries";
 import { PosBadge } from "@/components/PosBadge";
 import { posSlot } from "@/lib/viz";
+import { todayISO } from "@/lib/attendance";
+import { NO_INJURIES, type Availability } from "@/lib/injuries";
+import { AvailabilityBadge } from "@/components/injuries/AvailabilityBadge";
 import type { Player, SquadWithPlayers } from "@/lib/types";
 
 interface SquadCardProps {
   squad: SquadWithPlayers;
   players: Player[];       // active roster
+  /** Who is injured now — badged, and sorted after the fit players when picking. */
+  availability?: Availability;
   onChanged: () => void;   // refetch after a write
 }
 
-export function SquadCard({ squad, players, onChanged }: SquadCardProps) {
+export function SquadCard({ squad, players, availability = NO_INJURIES, onChanged }: SquadCardProps) {
   const { theme } = useTheme();
   const isDark = theme === "dark";
   const { toast } = useToast();
@@ -43,11 +48,16 @@ export function SquadCard({ squad, players, onChanged }: SquadCardProps) {
 
   const overLimit = squad.size_limit != null && selected.size > squad.size_limit;
 
+  // Selection happens now, so it's today's availability that matters
+  const today = todayISO();
+  const unavailable = useMemo(() => availability.unavailableOn(today), [availability, today]);
+
   const visiblePlayers = useMemo(() => {
     const q = search.trim().toLowerCase();
-    if (!q) return players;
-    return players.filter((p) => p.name.toLowerCase().includes(q));
-  }, [players, search]);
+    const matching = q ? players.filter((p) => p.name.toLowerCase().includes(q)) : players;
+    // Injured players last, still selectable — a warning, not a block
+    return [...matching].sort((a, b) => Number(unavailable.has(a.id)) - Number(unavailable.has(b.id)));
+  }, [players, search, unavailable]);
 
   // Goalkeepers first, so the collapsed chips read as a squad shape
   const selectedPlayers = useMemo(
@@ -149,6 +159,7 @@ export function SquadCard({ squad, players, onChanged }: SquadCardProps) {
               {/* Transparent so the badge doesn't nest a pill inside this one */}
               <PosBadge pos={p.primary_position} className="bg-transparent px-0 h-auto text-muted-foreground" />
               {p.name}
+              {unavailable.get(p.id) && <AvailabilityBadge availability={unavailable.get(p.id)!} />}
             </span>
           ))}
         </div>
@@ -226,6 +237,7 @@ export function SquadCard({ squad, players, onChanged }: SquadCardProps) {
                   </div>
                   <PosBadge pos={p.primary_position} />
                   <span className="text-sm text-foreground truncate">{p.name}</span>
+                  {unavailable.get(p.id) && <AvailabilityBadge availability={unavailable.get(p.id)!} className="ml-auto" />}
                 </div>
               );
             })}

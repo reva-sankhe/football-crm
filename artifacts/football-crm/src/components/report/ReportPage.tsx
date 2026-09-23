@@ -170,13 +170,18 @@ export function ReportPage({ report, generatedAt }: { report: PlayerReport; gene
                       <td className="py-0.5 text-slate-600">
                         {new Date(m.month + "-01T00:00:00").toLocaleDateString("en-GB", { month: "long", year: "numeric" })}
                       </td>
-                      <td className="py-0.5 text-right text-slate-500">{m.attended}/{m.total}</td>
+                      <td className="py-0.5 text-right text-slate-500">
+                        {m.attended}/{m.total}
+                        {m.excused > 0 && <span className="text-slate-400"> · {m.excused} excused (injury)</span>}
+                      </td>
                       <td className="py-0.5 text-right font-bold w-10" style={{ color: attendancePctFill(m.pct) }}>{m.pct}%</td>
                     </tr>
                   ))}
                 </tbody>
               </table>
-              <p className="text-[9px] text-slate-400 mt-1">Dashed line marks the 75% minimum.</p>
+              <p className="text-[9px] text-slate-400 mt-1">
+                Dashed line marks the 75% minimum. Sessions missed while injured are left out.
+              </p>
             </div>
           </div>
         )}

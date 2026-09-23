@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { createPortal } from "react-dom";
 import { Link2, RefreshCw } from "lucide-react";
 import { cn, getErrorMessage, playerLabel } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
@@ -158,7 +159,9 @@ export function ReportInjuryDialog({
   const inputCls =
     "w-full bg-muted border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary";
 
-  return (
+  // Portalled: these open from inside cards whose styling would otherwise
+  // become the containing block for `fixed` and clip the dialog to the card.
+  return createPortal(
     <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4 bg-background/80 backdrop-blur-sm">
       <div className="w-full max-w-md bg-card border border-border rounded-2xl shadow-xl overflow-hidden max-h-[90vh] overflow-y-auto">
         <div className="flex items-center justify-between px-5 py-4 border-b border-border">
@@ -174,8 +177,10 @@ export function ReportInjuryDialog({
         </div>
 
         <form onSubmit={handleSubmit} className="px-5 py-4 space-y-4">
-          {!fixedPlayer && (
-            <div className="grid grid-cols-[minmax(0,1fr)_9.5rem] gap-3">
+          {/* Who, unless fixed by where it was opened; when, unless a session fixes it */}
+          {(!fixedPlayer || !session) && (
+            <div className={cn("grid gap-3", !fixedPlayer ? "grid-cols-[minmax(0,1fr)_9.5rem]" : "grid-cols-[9.5rem]")}>
+              {!fixedPlayer && (
               <div>
                 <label className="block text-xs text-muted-foreground mb-1">Player</label>
                 <select
@@ -189,6 +194,7 @@ export function ReportInjuryDialog({
                 </select>
                 {attempted && formProblems.player && <p className="text-[11px] text-status-bad mt-1">{formProblems.player}</p>}
               </div>
+              )}
               <div>
                 <label className="block text-xs text-muted-foreground mb-1">Date</label>
                 <input
@@ -252,7 +258,8 @@ export function ReportInjuryDialog({
           </div>
         </form>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
 

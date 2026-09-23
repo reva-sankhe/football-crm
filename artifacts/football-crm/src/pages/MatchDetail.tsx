@@ -16,7 +16,7 @@ import {
   fetchMatch,
   fetchMatchPlayerStats,
   fetchPenaltyKicks,
-  fetchOpenInjuries,
+  fetchInjuryHistory,
   fetchPlayers,
   fetchSquadsForTournament,
   fetchTournament,
@@ -35,8 +35,10 @@ import { StageBadge } from "@/components/Badges";
 import { ShootoutPanel } from "@/components/tournaments/ShootoutPanel";
 import { MatchInjuryPanel } from "@/components/injuries/MatchInjuryPanel";
 import {
-  emptyInjuryDraft, injuryDraftProblems, injuryLabel, injuryRowFromDraft, type InjuryDraft,
+  NO_INJURIES, buildAvailability, emptyInjuryDraft, injuryDraftProblems, injuryLabel, injuryRowFromDraft,
+  type Availability, type InjuryDraft,
 } from "@/lib/injuries";
+import { AvailabilityBadge } from "@/components/injuries/AvailabilityBadge";
 import { MatchFormModal } from "@/components/tournaments/MatchFormModal";
 import type {
   InjuryWithStatus, MatchPenaltyKickInput, MatchStatInput, MatchWithSession, Player,
@@ -142,6 +144,8 @@ export default function MatchDetail() {
   /** Full history per player, fetched when a new injury is started — for the recurrence picker. */
   const [histories, setHistories] = useState<Record<string, InjuryWithStatus[]>>({});
   const [injuryAttempted, setInjuryAttempted] = useState(false);
+  /** Who was injured on the match date — badged beside their name. */
+  const [availability, setAvailability] = useState<Availability>(NO_INJURIES);
 
   // Score is edited inline on the header
   const [goalsFor, setGoalsFor] = useState<string>("");
@@ -167,20 +171,19 @@ export default function MatchDetail() {
       // The squad defines who can appear; with no squad, fall back to the roster.
       // A standalone match belongs to no tournament, so it has no squads to load.
       // The tournament is still needed for the sub policy it may supply.
-      const [squadRows, allPlayers, stats, kickRows, tourn, openInjuries] = await Promise.all([
+      const [squadRows, allPlayers, stats, kickRows, tourn, injuryHistory] = await Promise.all([
         m.tournament_id ? fetchSquadsForTournament(m.tournament_id) : Promise.resolve([]),
         fetchPlayers(),
         fetchMatchPlayerStats(m.id),
         fetchPenaltyKicks(m.id),
         m.tournament_id ? fetchTournament(m.tournament_id) : Promise.resolve(null),
-        fetchOpenInjuries(),
+        fetchInjuryHistory(),
       ]);
-      // Rows can link to an injury that has since ended, which the open list lacks
-      const linkedIds = stats.map((s) => s.injury_id).filter((x): x is string => x != null);
-      const linkedInjuries = await fetchInjuriesByIds(linkedIds.filter((x) => !openInjuries.some((i) => i.id === x)));
+      // Every injury, not just open ones: a row can link to one that has since ended
       const byId: Record<string, InjuryWithStatus> = {};
-      for (const i of [...openInjuries, ...linkedInjuries]) byId[i.id] = i;
+      for (const i of injuryHistory.injuries) byId[i.id] = i;
       setInjuriesById(byId);
+      setAvailability(buildAvailability(injuryHistory.injuries, injuryHistory.stages));
       setInjuryDrafts({});
       setInjuryAttempted(false);
       setTournament(tourn);
@@ -655,11 +658,17 @@ export default function MatchDetail() {
               {roster.map((p) => {
                 const row = draft[p.id] ?? emptyStat(p.id);
                 const legacy = isLegacyInjury(row, injuryDrafts[p.id]) && saved[p.id]?.injured === true && saved[p.id]?.injury_id == null;
+                // Injured going into the match: one picked up in it (or anywhere
+                // that day) mustn't read as though they started it injured
+                const onDay = matchDate ? availability.on(p.id, matchDate) : null;
+                const carried = onDay?.injuries.filter((i) => i.occurred_on < matchDate) ?? [];
+                const injuredOnDay = onDay && carried.length > 0 ? { ...onDay, injuries: carried } : null;
                 return (
                   <div key={p.id} className={cn("px-4 py-2.5 sm:grid", rolling ? COLS_ROLLING_SM : COLS_LIMITED_SM, "sm:gap-2 sm:items-center flex flex-wrap gap-2")}>
                     <div className="flex items-center gap-2 min-w-0 w-full sm:w-auto">
                       <PosBadge pos={p.primary_position} />
                       <span className="text-sm text-foreground truncate">{p.name}</span>
+                      {injuredOnDay && <AvailabilityBadge availability={injuredOnDay} />}
                     </div>
 
                     {!rolling && (

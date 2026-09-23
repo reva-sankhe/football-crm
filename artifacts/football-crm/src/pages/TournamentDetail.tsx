@@ -9,6 +9,7 @@ import {
   createSquad,
   fetchLeagueOtherMatches,
   fetchMatchesForTournament,
+  fetchInjuryHistory,
   fetchPlayers,
   fetchSquadsForTournament,
   fetchTournament,
@@ -28,6 +29,7 @@ import { OtherResultsPanel } from "@/components/tournaments/OtherResultsPanel";
 import { FinishBadge } from "@/components/Badges";
 import { SectionLabel, StatTile } from "@/components/StatTile";
 import { AddButton } from "@/components/AddButton";
+import { NO_INJURIES, buildAvailability, type Availability } from "@/lib/injuries";
 import type {
   LeagueOtherMatchWithOpponents, MatchStage, MatchWithSession, Player, SquadWithPlayers, Tournament,
 } from "@/lib/types";
@@ -45,6 +47,7 @@ export default function TournamentDetail() {
   const [matches, setMatches] = useState<MatchWithSession[]>([]);
   const [otherMatches, setOtherMatches] = useState<LeagueOtherMatchWithOpponents[]>([]);
   const [players, setPlayers] = useState<Player[]>([]);
+  const [availability, setAvailability] = useState<Availability>(NO_INJURIES);
   const [loading, setLoading] = useState(true);
   const [showNewMatch, setShowNewMatch] = useState(false);
   /** The match being edited, or null — the same modal that creates them. */
@@ -57,7 +60,7 @@ export default function TournamentDetail() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [t, sq, ms, om, ps] = await Promise.all([
+      const [t, sq, ms, om, ps, injuryHistory] = await Promise.all([
         fetchTournament(id!),
         fetchSquadsForTournament(id!),
         fetchMatchesForTournament(id!),
@@ -65,7 +68,9 @@ export default function TournamentDetail() {
         // so an un-migrated DB degrades the standings table rather than the page.
         fetchLeagueOtherMatches(id!).catch(() => [] as LeagueOtherMatchWithOpponents[]),
         fetchPlayers(),
+        fetchInjuryHistory(),
       ]);
+      setAvailability(buildAvailability(injuryHistory.injuries, injuryHistory.stages));
       setTournament(t);
       setSquads(sq);
       setMatches(ms);
@@ -268,7 +273,7 @@ export default function TournamentDetail() {
         ) : (
           <div className="space-y-3">
             {visibleSquads.map((sq) => (
-              <SquadCard key={sq.id} squad={sq} players={players} onChanged={load} />
+              <SquadCard key={sq.id} squad={sq} players={players} availability={availability} onChanged={load} />
             ))}
           </div>
         )}

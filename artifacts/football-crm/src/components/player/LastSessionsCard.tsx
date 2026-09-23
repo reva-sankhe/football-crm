@@ -1,6 +1,7 @@
 import { useMemo } from "react";
 import { cn } from "@/lib/utils";
-import { countsAsAttended, formatDateLong } from "@/lib/attendance";
+import { countsAsAttended, formatDateLong, isExcusedAbsence } from "@/lib/attendance";
+import { NO_INJURIES, type Availability } from "@/lib/injuries";
 import type { AttendanceStatus, TrainingSession } from "@/lib/types";
 
 interface LastSessionsCardProps {
@@ -14,10 +15,15 @@ interface LastSessionsCardProps {
   matchesOnDay?: Record<string, number>;
   /** This player's attendance rows, keyed elsewhere by session_id. */
   attendance: { session_id: string; status: AttendanceStatus }[];
+  /** With the player's id: a session missed while injured reads as Injured, excused. */
+  availability?: Availability;
+  playerId?: string;
   count?: number;
 }
 
-export function LastSessionsCard({ sessions, matchesOnDay, attendance, count = 3 }: LastSessionsCardProps) {
+export function LastSessionsCard({
+  sessions, matchesOnDay, attendance, availability = NO_INJURIES, playerId, count = 3,
+}: LastSessionsCardProps) {
   const rows = useMemo(() => {
     const statusBySession = new Map(attendance.map((a) => [a.session_id, a.status]));
     return [...sessions]
@@ -39,8 +45,11 @@ export function LastSessionsCard({ sessions, matchesOnDay, attendance, count = 3
         </div>
       ) : (
         <div className="flex-1 flex flex-col gap-2">
-          {rows.map(({ session, status }) => {
-            const attended = countsAsAttended(status);
+          {rows.map(({ session, status: recorded }) => {
+            const attended = countsAsAttended(recorded);
+            // Excused, so it's not a failure — neither the red nor the green
+            const excused = playerId != null && isExcusedAbsence(recorded, availability, playerId, session.date);
+            const status = excused ? "Injured" : recorded;
             return (
               <div
                 key={session.id}
@@ -66,7 +75,9 @@ export function LastSessionsCard({ sessions, matchesOnDay, attendance, count = 3
                   <span
                     className={cn(
                       "px-2 py-0.5 rounded-full text-[11px] font-medium shrink-0",
-                      attended ? "bg-status-good text-status-good" : "bg-status-bad text-status-bad",
+                      attended ? "bg-status-good text-status-good"
+                        : excused ? "bg-status-warn text-status-warn"
+                        : "bg-status-bad text-status-bad",
                     )}
                   >
                     {status}

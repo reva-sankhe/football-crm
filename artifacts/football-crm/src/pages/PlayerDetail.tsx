@@ -4,14 +4,17 @@ import {
   fetchPlayer, fetchPlayers, fetchResultsByPlayer, updatePlayer, fetchAllResults,
   fetchPlayerRecentSessions,
   fetchAttendanceByPlayer, fetchTrainingSessions, fetchMatchStatsByPlayer,
-  fetchTournamentFinishes, type PlayerMatchStat,
+  fetchTournamentFinishes, fetchInjuryHistory, type PlayerMatchStat,
 } from "@/lib/queries";
 import {
   JERSEY_MAX, JERSEY_MIN, formatBronco, cn, isValidJersey, jerseyClash, playerLabel,
 } from "@/lib/utils";
 import {
-  attendancePctColor, collapseMatchDays, countsAsAttended, formatDateShort, isoDaysAgo, matchDayAttendance,
+  attendancePctColor, collapseMatchDays, countsAsAttended, formatDateShort, isExcusedAbsence, isoDaysAgo,
+  matchDayAttendance, tallyAttendance,
 } from "@/lib/attendance";
+import { buildAvailability } from "@/lib/injuries";
+import { InjuriesCard } from "@/components/player/InjuriesCard";
 import {
   Tooltip as InfoTooltip, TooltipContent as InfoTooltipContent, TooltipTrigger as InfoTooltipTrigger,
 } from "@/components/ui/tooltip";
@@ -32,7 +35,9 @@ import { sumStats, type TournamentFinish } from "@/lib/tournaments";
 import { SectionLabel, StatTile as SnapshotTile } from "@/components/StatTile";
 import { AttendanceCard } from "@/components/player/AttendanceCard";
 import { LastSessionsCard } from "@/components/player/LastSessionsCard";
-import type { Player, TestResult, SessionRPE, TrainingSession, SessionAttendance } from "@/lib/types";
+import type {
+  Player, TestResult, SessionRPE, TrainingSession, SessionAttendance, InjuryStage, InjuryWithStatus,
+} from "@/lib/types";
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
 } from "recharts";
@@ -138,6 +143,27 @@ export default function PlayerDetail() {
 
   useEffect(() => { load(); }, [load]);
 
+  // ── Injuries ──────────────────────────────────────────────────────────────
+  // Squad-wide history (it's small): the card shows this player's, and the
+  // attendance figures below excuse sessions missed while injured.
+  const [injuryHistory, setInjuryHistory] = useState<{ injuries: InjuryWithStatus[]; stages: InjuryStage[] }>({ injuries: [], stages: [] });
+  const loadInjuries = useCallback(async () => {
+    try {
+      setInjuryHistory(await fetchInjuryHistory());
+    } catch (err) {
+      toast({ title: "Couldn't load injuries", description: String(err), variant: "destructive" });
+    }
+  }, [toast]);
+  useEffect(() => { loadInjuries(); }, [loadInjuries]);
+  const availability = useMemo(
+    () => buildAvailability(injuryHistory.injuries, injuryHistory.stages),
+    [injuryHistory],
+  );
+  const playerInjuries = useMemo(
+    () => injuryHistory.injuries.filter((i) => i.player_id === id).sort((a, b) => b.occurred_on.localeCompare(a.occurred_on)),
+    [injuryHistory, id],
+  );
+
   const startEdit = () => { if (!player) return; setEditForm({ ...player }); setEditing(true); };
   const cancelEdit = () => setEditing(false);
   const saveEdit = async () => {
@@ -238,34 +264,47 @@ export default function PlayerDetail() {
     [allSessions, attendedIds],
   );
 
+  // Sessions missed while injured leave the denominator — the shared rule
+  // (isExcusedAbsence) the matrix, the printed report and the alerts apply too.
+  const statusOf = useMemo(
+    () => new Map(playerAttendance.map((a) => [a.session_id, a.status])),
+    [playerAttendance],
+  );
+  const matchDayStatus = useMemo(() => {
+    const m = new Map<string, SessionAttendance["status"]>();
+    for (const a of playerAttendance) if (a.sessions?.session_type === "Match") m.set(a.sessions.date, a.status);
+    return m;
+  }, [playerAttendance]);
+  const isExcused = useCallback(
+    (s: TrainingSession) => !!id && isExcusedAbsence(statusOf.get(s.id), availability, id, s.date),
+    [statusOf, availability, id],
+  );
+  const excusedMatchDay = (date: string) => !!id && isExcusedAbsence(matchDayStatus.get(date), availability, id, date);
+
   const monthlyAttendance = useMemo(() => {
     if (!attendanceUnits.sessions.length) return [];
-    const byMonth: Record<string, string[]> = {};
+    const byMonth: Record<string, TrainingSession[]> = {};
     for (const s of attendanceUnits.sessions) {
-      (byMonth[s.date.slice(0, 7)] ??= []).push(s.id);
+      (byMonth[s.date.slice(0, 7)] ??= []).push(s);
     }
     return Object.entries(byMonth)
-      .map(([month, ids]) => {
-        const attended = ids.filter((sid) => attendedIds.has(sid)).length;
-        return { month, total: ids.length, attended, pct: Math.round((attended / ids.length) * 100) };
-      })
+      .map(([month, units]) => ({ month, ...tallyAttendance(units, (s) => attendedIds.has(s.id), isExcused) }))
+      // A month spent entirely injured has no percentage to chart
+      .filter((m): m is typeof m & { pct: number } => m.pct !== null)
       .sort((a, b) => a.month.localeCompare(b.month));
-  }, [attendanceUnits, attendedIds]);
+  }, [attendanceUnits, attendedIds, isExcused]);
 
   // ── Snapshot ──────────────────────────────────────────────────────────────
   // The headline is this month's training turnout; match-day availability is a
   // separate question, so matches are excluded above and reported underneath.
-  const attendanceSlice = (ss: TrainingSession[]) => {
-    const a = ss.filter((s) => attendedIds.has(s.id)).length;
-    return { total: ss.length, attended: a, pct: ss.length > 0 ? Math.round((a / ss.length) * 100) : null };
-  };
+  const attendanceSlice = (ss: TrainingSession[]) => tallyAttendance(ss, (s) => attendedIds.has(s.id), isExcused);
 
   const thisMonth = new Date().toISOString().slice(0, 7);
   const monthLabel = new Date(thisMonth + "-01T00:00:00").toLocaleDateString("en-GB", { month: "short" });
   const monthSessions = allSessions.filter((s) => s.date.slice(0, 7) === thisMonth);
   const currentMonth = attendanceSlice(monthSessions.filter((s) => !isMatchSession(s)));
   // Matches are counted per day rather than per fixture — see matchDayAttendance
-  const matchAttendance = matchDayAttendance(monthSessions, (sid) => attendedIds.has(sid));
+  const matchAttendance = matchDayAttendance(monthSessions, (sid) => attendedIds.has(sid), excusedMatchDay);
 
   // Goals and appearances are labelled "this year", so they are scoped to it
   const thisYear = String(new Date().getFullYear());
@@ -427,12 +466,22 @@ export default function PlayerDetail() {
       {/* ── Availability ───────────────────────────────────────────────────── */}
       <section className="space-y-2">
         <SectionLabel>Availability</SectionLabel>
+        <InjuriesCard
+          player={player}
+          injuries={playerInjuries}
+          stages={injuryHistory.stages}
+          availability={availability}
+          sessions={allSessions}
+          onChanged={loadInjuries}
+        />
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 items-stretch">
           <AttendanceCard monthly={monthlyAttendance} />
           <LastSessionsCard
             sessions={attendanceUnits.sessions}
             matchesOnDay={attendanceUnits.matchesOnDay}
             attendance={playerAttendance}
+            availability={availability}
+            playerId={id}
           />
         </div>
       </section>

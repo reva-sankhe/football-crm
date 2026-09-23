@@ -14,9 +14,13 @@ import { useTheme } from "@/context/ThemeContext";
 import { useAuth } from "@/context/AuthContext";
 import { useToast } from "@/hooks/use-toast";
 import { bulkUpsertAttendance, fetchAttendanceBySession } from "@/lib/queries";
-import { ATTENDANCE_CFG, ATTENDANCE_STATUSES, resolveAutoMarked } from "@/lib/attendance";
-import { injuryLabel } from "@/lib/injuries";
+import {
+  ATTENDANCE_CFG, ATTENDANCE_STATUSES, formatDateShort, isExcusedAbsence, resolveAutoMarked,
+} from "@/lib/attendance";
+import { availabilityLabel, injuryLabel, type Availability } from "@/lib/injuries";
 import { ReportInjuryDialog } from "@/components/injuries/ReportInjuryDialog";
+import { InjuryDialog } from "@/components/injuries/InjuryDialog";
+import type { InjuryWithStatus } from "@/lib/types";
 import type { AttendanceStatus, Player, TrainingSession } from "@/lib/types";
 import {
   DropdownMenu,
@@ -65,6 +69,10 @@ interface MarkAttendanceProps {
   /** Matches played on this date, when the day had more than one. */
   matchesOnDay?: number;
   players: Player[];
+  /** Who was injured when — an absence inside an injury shows as Injured. */
+  availability: Availability;
+  /** After the report form records an injury, so `availability` can refetch. */
+  onInjuryRecorded: () => void;
   /** Reports draft-vs-saved state up so the page can guard navigation. */
   onDirtyChange: (dirty: boolean) => void;
   /** Called after a successful save so the strip counts refresh. */
@@ -75,6 +83,8 @@ export function MarkAttendance({
   session,
   matchesOnDay,
   players,
+  availability,
+  onInjuryRecorded,
   onDirtyChange,
   onSaved,
 }: MarkAttendanceProps) {
@@ -98,6 +108,8 @@ export function MarkAttendance({
   const [search, setSearch] = useState("");
   /** The player whose "Injured" pick is being reported. */
   const [reporting, setReporting] = useState<Player | null>(null);
+  /** An out player just marked present — the "back?" question about their injury. */
+  const [returning, setReturning] = useState<{ player: Player; injury: InjuryWithStatus } | null>(null);
 
   // ── Load attendance for the selected session ───────────────────────────────
   useEffect(() => {
@@ -149,11 +161,22 @@ export function MarkAttendance({
   }, [dirty]);
 
   // ── Derived ────────────────────────────────────────────────────────────────
+  /**
+   * Injured is derived, not marked: a player who isn't here while out or on
+   * modified training reads as Injured, whatever the row says underneath
+   * (Absent, or a legacy Injured). The same rule excuses it from their %.
+   */
+  const shownStatus = (playerId: string): AttendanceStatus => {
+    const status = draft[playerId] ?? "Absent";
+    return session && isExcusedAbsence(status, availability, playerId, session.date) ? "Injured" : status;
+  };
+
   const counts = useMemo(() => {
     const c: Record<AttendanceStatus, number> = { Present: 0, Absent: 0, Late: 0, Injured: 0 };
-    for (const p of players) c[draft[p.id] ?? "Absent"]++;
+    for (const p of players) c[shownStatus(p.id)]++;
     return c;
-  }, [draft, players]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [draft, players, availability, session?.date]);
 
   const visiblePlayers = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -185,9 +208,11 @@ export function MarkAttendance({
   };
 
   /**
-   * Injured is not set directly: it opens the report form, so every Injured
-   * mark is backed by an injury on record — a new one, or one the player is
-   * still out with. The mark itself still needs "Save attendance".
+   * Injured is not set directly: it opens the report form, so every injured
+   * absence is backed by an injury on record — a new one, or one the player
+   * is still out with. The row itself is saved as Absent; the injury is what
+   * makes it read as Injured, so deleting a mistaken injury can't leave a
+   * stray Injured mark behind. It still needs "Save attendance".
    */
   const pickStatus = (player: Player, status: AttendanceStatus) => {
     if (status === "Injured") setReporting(player);
@@ -344,7 +369,8 @@ export function MarkAttendance({
       ) : (
         <div className="grid gap-2 grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
           {visiblePlayers.map((player) => {
-            const status = draft[player.id] ?? "Absent";
+            const status = shownStatus(player.id);
+            const injuredNow = session ? availability.on(player.id, session.date) : null;
             const cfg = ATTENDANCE_CFG[status];
             const StatusIcon = cfg.icon;
             const isException = status === "Late" || status === "Injured";
@@ -396,7 +422,20 @@ export function MarkAttendance({
                   <div className="min-w-0 flex-1">
                     <div className="text-sm font-medium text-foreground truncate leading-tight">{player.name}</div>
                     {isException && (
-                      <div className="text-[11px] text-muted-foreground truncate mt-0.5">{cfg.label}</div>
+                      <div className="text-[11px] text-muted-foreground truncate mt-0.5">
+                        {status === "Injured" && injuredNow ? availabilityLabel(injuredNow) : cfg.label}
+                      </div>
+                    )}
+                    {/* Here while out: the moment to ask whether they're back */}
+                    {isAdmin && (isPresent || status === "Late") && injuredNow?.stage === "out" && (
+                      <button
+                        type="button"
+                        onClick={(e) => { e.stopPropagation(); setReturning({ player, injury: injuredNow.injuries[0] }); }}
+                        className="block text-[11px] text-status-warn hover:underline truncate mt-0.5 text-left"
+                        data-testid={`button-back-from-injury-${player.id}`}
+                      >
+                        {availabilityLabel(injuredNow)} — back?
+                      </button>
                     )}
                     {isAuto && (
                       <div
@@ -454,15 +493,30 @@ export function MarkAttendance({
           offerStillOut
           onClose={() => setReporting(null)}
           onRecorded={(result) => {
-            setStatus(reporting.id, "Injured");
-            if (result.kind === "existing") {
+            setStatus(reporting.id, "Absent");
+            if (result.kind === "created") onInjuryRecorded();
+            else {
               toast({
-                title: `${reporting.name} marked Injured`,
-                description: `${injuryLabel(result.injury)} — save attendance to keep it`,
+                title: `${reporting.name}: still out`,
+                description: `${injuryLabel(result.injury)} — an excused absence once attendance is saved`,
               });
             }
             setReporting(null);
           }}
+        />
+      )}
+
+      {returning && session && (
+        <InjuryDialog
+          injury={returning.injury}
+          player={returning.player}
+          prompt={{
+            suggestStage: "modified",
+            suggestDate: session.date,
+            message: `Marked present on ${formatDateShort(session.date)} while out — back in modified training?`,
+          }}
+          onClose={() => setReturning(null)}
+          onChanged={onInjuryRecorded}
         />
       )}
 

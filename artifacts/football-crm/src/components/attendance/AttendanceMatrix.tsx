@@ -13,7 +13,11 @@ import {
   attendancePctColor,
   countsAsAttended,
   formatDateLong,
+  isExcusedAbsence,
+  tallyAttendance,
 } from "@/lib/attendance";
+import { availabilityLabel, type Availability } from "@/lib/injuries";
+import { ReportInjuryDialog } from "@/components/injuries/ReportInjuryDialog";
 import { DateRangePicker, isoOf, type IsoRange } from "@/components/DateRangePicker";
 import { CountPill, IconButton, SearchInput, TOOLBAR_MENU, TOOLBAR_SELECT } from "@/components/Toolbar";
 import type { AttendanceStatus, Player, TrainingSession } from "@/lib/types";
@@ -63,9 +67,13 @@ type Grid = Record<string, Record<string, AttendanceStatus>>;
 
 interface PlayerStats {
   player: Player;
+  /** By the status shown — an absence while injured counts under Injured. */
   counts: Record<AttendanceStatus, number>;
   attended: number;
-  pct: number;
+  /** Sessions missed while injured, left out of `pct`. */
+  excused: number;
+  /** null when every session in range was excused. */
+  pct: number | null;
 }
 
 interface AttendanceMatrixProps {
@@ -73,12 +81,18 @@ interface AttendanceMatrixProps {
   /** Canonical session id → matches that day. Only set when a day had several. */
   matchesOnDay?: Record<string, number>;
   players: Player[];
+  /** Who was injured when: an absence inside an injury shows as Injured and is excused. */
+  availability: Availability;
+  /** After the report form records an injury, so `availability` can refetch. */
+  onInjuryRecorded: () => void;
   /** Bumped by the parent after a save/import to force a refetch. */
   refreshKey: number;
   onJumpToSession: (sessionId: string) => void;
 }
 
-export function AttendanceMatrix({ sessions, matchesOnDay, players, refreshKey, onJumpToSession }: AttendanceMatrixProps) {
+export function AttendanceMatrix({
+  sessions, matchesOnDay, players, availability, onInjuryRecorded, refreshKey, onJumpToSession,
+}: AttendanceMatrixProps) {
   const { theme } = useTheme();
   const isDark = theme === "dark";
   const { toast } = useToast();
@@ -92,6 +106,8 @@ export function AttendanceMatrix({ sessions, matchesOnDay, players, refreshKey, 
   const [grid, setGrid] = useState<Grid>({});
   const [loading, setLoading] = useState(true);
   const [openMenu, setOpenMenu] = useState<"sort" | "filters" | null>(null);
+  /** The cell whose "Injured…" pick is being reported. */
+  const [reporting, setReporting] = useState<{ player: Player; session: TrainingSession } | null>(null);
   const barRef = useRef<HTMLDivElement>(null);
 
   const inRange = (date: string, r: IsoRange | null) => !r || (date >= r.from && date <= r.to);
@@ -128,32 +144,44 @@ export function AttendanceMatrix({ sessions, matchesOnDay, players, refreshKey, 
   }, [scopedIds.join(","), refreshKey]);
 
   // ── Per-player stats ───────────────────────────────────────────────────────
+  const shownStatus = (playerId: string, s: TrainingSession): AttendanceStatus | undefined => {
+    const status = grid[playerId]?.[s.id];
+    return isExcusedAbsence(status, availability, playerId, s.date) ? "Injured" : status;
+  };
+
+  const tallyFor = (playerId: string) => tallyAttendance(
+    scopedSessions,
+    (s) => countsAsAttended(grid[playerId]?.[s.id]),
+    (s) => isExcusedAbsence(grid[playerId]?.[s.id], availability, playerId, s.date),
+  );
+
   const stats: PlayerStats[] = useMemo(() => {
     const rows = players.map((player) => {
       const counts: Record<AttendanceStatus, number> = { Present: 0, Absent: 0, Late: 0, Injured: 0 };
-      let attended = 0;
       for (const s of scopedSessions) {
-        const status = grid[player.id]?.[s.id];
+        const status = shownStatus(player.id, s);
         if (status) counts[status]++;
-        if (countsAsAttended(status)) attended++;
       }
-      const pct = scopedSessions.length > 0 ? Math.round((attended / scopedSessions.length) * 100) : 0;
-      return { player, counts, attended, pct };
+      const t = tallyFor(player.id);
+      return { player, counts, attended: t.attended, excused: t.excused, pct: t.pct };
     });
 
     const q = search.trim().toLowerCase();
     const filtered = rows.filter(
-      (r) => (!q || r.player.name.toLowerCase().includes(q)) && inBand(r.pct, pctBand),
+      (r) => (!q || r.player.name.toLowerCase().includes(q))
+        && (pctBand === "" || (r.pct !== null && inBand(r.pct, pctBand))),
     );
 
-    if (sortMode === "lowest") {
-      return filtered.sort((a, b) => a.pct - b.pct || a.player.name.localeCompare(b.player.name));
-    }
-    if (sortMode === "highest") {
-      return filtered.sort((a, b) => b.pct - a.pct || a.player.name.localeCompare(b.player.name));
-    }
+    // A player with nothing to score (injured throughout) sorts after everyone
+    const byPct = (dir: 1 | -1) => (a: PlayerStats, b: PlayerStats) =>
+      (a.pct === null ? 1 : 0) - (b.pct === null ? 1 : 0)
+      || dir * ((a.pct ?? 0) - (b.pct ?? 0))
+      || a.player.name.localeCompare(b.player.name);
+    if (sortMode === "lowest") return filtered.sort(byPct(1));
+    if (sortMode === "highest") return filtered.sort(byPct(-1));
     return filtered.sort((a, b) => a.player.name.localeCompare(b.player.name));
-  }, [players, scopedSessions, grid, sortMode, search, pctBand]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [players, scopedSessions, grid, sortMode, search, pctBand, availability]);
 
   // Dismiss whichever popover is open on an outside click or Escape
   useEffect(() => {
@@ -179,16 +207,23 @@ export function AttendanceMatrix({ sessions, matchesOnDay, players, refreshKey, 
       shouldn't move the headline number. */
   const teamPct = useMemo(() => {
     if (players.length === 0 || scopedSessions.length === 0) return null;
-    const total = players.reduce((sum, player) => {
-      const attended = scopedSessions.filter((s) => countsAsAttended(grid[player.id]?.[s.id])).length;
-      return sum + Math.round((attended / scopedSessions.length) * 100);
-    }, 0);
-    return Math.round(total / players.length);
-  }, [players, scopedSessions, grid]);
+    // Averaged over players who have a percentage — injured throughout, none
+    const pcts = players.map((p) => tallyFor(p.id).pct).filter((x): x is number => x !== null);
+    if (pcts.length === 0) return null;
+    return Math.round(pcts.reduce((a, b) => a + b, 0) / pcts.length);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [players, scopedSessions, grid, availability]);
 
   // ── Inline cell edit ───────────────────────────────────────────────────────
   const handleCellChange = async (playerId: string, sessionId: string, status: AttendanceStatus) => {
     if (!isAdmin) return;
+    // As on the Mark tab: an injury is reported, and the row saved as Absent
+    if (status === "Injured") {
+      const player = players.find((p) => p.id === playerId);
+      const session = scopedSessions.find((s) => s.id === sessionId);
+      if (player && session) setReporting({ player, session });
+      return;
+    }
     const prev = grid[playerId]?.[sessionId];
     setGrid((g) => ({ ...g, [playerId]: { ...g[playerId], [sessionId]: status } }));
     try {
@@ -370,7 +405,7 @@ export function AttendanceMatrix({ sessions, matchesOnDay, players, refreshKey, 
                   </tr>
                 </thead>
                 <tbody>
-                  {stats.map(({ player, counts, pct }) => (
+                  {stats.map(({ player, counts, pct, excused }) => (
                     <tr key={player.id} className="group">
                       <td className="sticky left-0 z-10 bg-card group-hover:bg-muted/40 border-b border-border/60 px-3 py-1.5 transition-colors">
                         <Link
@@ -381,19 +416,31 @@ export function AttendanceMatrix({ sessions, matchesOnDay, players, refreshKey, 
                         </Link>
                       </td>
                       <td className="sticky left-[180px] z-10 bg-card group-hover:bg-muted/40 border-b border-r border-border/60 px-2 py-1.5 text-right transition-colors">
-                        <span className={cn("text-sm font-bold font-time", attendancePctColor(pct))}>{pct}</span>
+                        {pct === null ? (
+                          <span className="text-sm text-muted-foreground" title="Every session in range was missed while injured">—</span>
+                        ) : (
+                          <span
+                            className={cn("text-sm font-bold font-time", attendancePctColor(pct))}
+                            title={excused > 0 ? `${excused} session${excused !== 1 ? "s" : ""} missed while injured left out` : undefined}
+                          >
+                            {pct}
+                          </span>
+                        )}
                       </td>
 
                       {scopedSessions.map((s) => {
-                        const status = grid[player.id]?.[s.id];
+                        const status = shownStatus(player.id, s);
                         const cfg = status ? ATTENDANCE_CFG[status] : null;
+                        const injured = status === "Injured" ? availability.on(player.id, s.date) : null;
+                        const cellTitle = `${player.name} · ${s.date} · ${
+                          injured ? `Injured — ${availabilityLabel(injured)}` : status ?? "not recorded"}`;
                         return (
                           <td key={s.id} className="border-b border-border/60 p-0.5 text-center">
                             {isAdmin ? (
                               <DropdownMenu>
                                 <DropdownMenuTrigger asChild>
                                   <button
-                                    title={`${player.name} · ${s.date} · ${status ?? "not recorded"}`}
+                                    title={cellTitle}
                                     className={cn(
                                       "w-7 h-7 rounded-md text-[11px] font-bold border transition-all hover:scale-110",
                                       cfg
@@ -415,7 +462,7 @@ export function AttendanceMatrix({ sessions, matchesOnDay, players, refreshKey, 
                                         className={cn("gap-2 text-xs", status === opt && "font-semibold")}
                                       >
                                         <Icon size={12} className={c.activeColor} />
-                                        {c.label}
+                                        {opt === "Injured" ? "Injured…" : c.label}
                                       </DropdownMenuItem>
                                     );
                                   })}
@@ -423,7 +470,7 @@ export function AttendanceMatrix({ sessions, matchesOnDay, players, refreshKey, 
                               </DropdownMenu>
                             ) : (
                               <span
-                                title={`${player.name} · ${s.date} · ${status ?? "not recorded"}`}
+                                title={cellTitle}
                                 className={cn(
                                   "inline-flex w-7 h-7 rounded-md text-[11px] font-bold border items-center justify-center",
                                   cfg
@@ -459,7 +506,7 @@ export function AttendanceMatrix({ sessions, matchesOnDay, players, refreshKey, 
 
           {/* ── Mobile: card list ───────────────────────────────────────────── */}
           <div className="lg:hidden space-y-2">
-            {stats.map(({ player, counts, attended, pct }) => (
+            {stats.map(({ player, counts, attended, excused, pct }) => (
               <Link
                 key={player.id}
                 href={`/players/${player.id}`}
@@ -469,10 +516,13 @@ export function AttendanceMatrix({ sessions, matchesOnDay, players, refreshKey, 
                   <div className="min-w-0">
                     <div className="text-sm font-medium text-foreground truncate">{player.name}</div>
                     <div className="text-[11px] text-muted-foreground">
-                      {attended} of {scopedSessions.length} sessions
+                      {attended} of {scopedSessions.length - excused} sessions
+                      {excused > 0 && ` · ${excused} excused (injury)`}
                     </div>
                   </div>
-                  <span className={cn("text-xl font-bold font-time shrink-0", attendancePctColor(pct))}>{pct}%</span>
+                  {pct === null
+                    ? <span className="text-xl text-muted-foreground shrink-0">—</span>
+                    : <span className={cn("text-xl font-bold font-time shrink-0", attendancePctColor(pct))}>{pct}%</span>}
                 </div>
                 <div className="flex gap-1.5 mt-2">
                   {ATTENDANCE_STATUSES.map((s) => {
@@ -497,6 +547,32 @@ export function AttendanceMatrix({ sessions, matchesOnDay, players, refreshKey, 
             ))}
           </div>
         </>
+      )}
+
+      {reporting && (
+        <ReportInjuryDialog
+          player={reporting.player}
+          session={reporting.session}
+          matchesOnDay={matchesOnDay?.[reporting.session.id]}
+          offerStillOut
+          onClose={() => setReporting(null)}
+          onRecorded={async (result) => {
+            const { player, session } = reporting;
+            setReporting(null);
+            // Saved as Absent; the injury is what makes it read as Injured
+            const prev = grid[player.id]?.[session.id];
+            if (prev !== "Absent") {
+              setGrid((g) => ({ ...g, [player.id]: { ...g[player.id], [session.id]: "Absent" } }));
+              try {
+                await upsertAttendance(session.id, player.id, "Absent");
+              } catch (err) {
+                toast({ title: "Failed to update", description: getErrorMessage(err), variant: "destructive" });
+              }
+            }
+            if (result.kind === "created") onInjuryRecorded();
+            else toast({ title: `${player.name}: still out`, description: "Recorded as an excused absence" });
+          }}
+        />
       )}
     </div>
   );
