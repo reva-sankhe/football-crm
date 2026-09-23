@@ -67,30 +67,40 @@ export function InjuriesCard({
 
   return (
     <div className="bg-card border border-border rounded-2xl overflow-hidden" data-testid="card-injuries">
-      {/* Key facts only, one row per injury keeping them out — the detail is
-          a click away in the history */}
+      {/* An alert, not a form: the stage, then why — the coach's note, or the
+          injury itself when there's no note. The facts sit small underneath. */}
       {now && (
         <div
           className={cn(
-            "px-5 py-3 border-b space-y-2",
+            "px-5 py-3 border-b space-y-2.5",
             now.stage === "out" ? "border-status-bad bg-status-bad" : "border-status-warn bg-status-warn",
           )}
+          role="status"
           data-testid="banner-availability"
         >
-          {now.injuries.map((i) => (
-            <dl key={i.id} className="grid grid-cols-2 sm:grid-cols-5 gap-x-4 gap-y-2 text-sm">
-              <Fact label="Body area">{i.category === "illness" ? "Illness" : i.body_area ?? "—"}</Fact>
-              <Fact label="Side">{i.side && i.side !== "n/a" ? i.side.charAt(0).toUpperCase() + i.side.slice(1) : "—"}</Fact>
-              <Fact label="Occurred">{formatDateYear(i.occurred_on)}</Fact>
-              <Fact label="Expected return">{i.expected_return_on ? formatDateYear(i.expected_return_on) : "—"}</Fact>
-              <Fact label="Stage">
-                <span className="inline-flex items-center gap-1.5">
-                  <Activity size={13} className={i.current_stage === "out" ? "text-status-bad" : "text-status-warn"} />
-                  {i.current_stage ? STAGE_CFG[i.current_stage].label : "—"}
-                </span>
-              </Fact>
-            </dl>
-          ))}
+          {now.injuries.map((i) => {
+            const stage = i.current_stage ?? now.stage;
+            const since = now.since[i.id] ?? i.occurred_on;
+            const why = i.notes?.trim() || injuryLabel(i);
+            return (
+              <div key={i.id} className="flex items-start gap-3 min-w-0">
+                <Activity size={16} className={cn("mt-0.5 shrink-0", stage === "out" ? "text-status-bad" : "text-status-warn")} />
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm text-foreground truncate" title={why}>
+                    <span className="font-semibold">{STAGE_CFG[stage].label}</span>
+                    <span className="text-foreground/80"> — {why}</span>
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    {[
+                      i.notes?.trim() ? injuryLabel(i) : null,
+                      `since ${formatDateYear(since)}`,
+                      i.expected_return_on ? `expected back ${formatDateYear(i.expected_return_on)}` : "no return date yet",
+                    ].filter(Boolean).join(" · ")}
+                  </p>
+                </div>
+              </div>
+            );
+          })}
         </div>
       )}
 
@@ -168,15 +178,6 @@ export function InjuriesCard({
           onRecorded={() => { setReporting(false); onChanged(); }}
         />
       )}
-    </div>
-  );
-}
-
-function Fact({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <div className="min-w-0">
-      <dt className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">{label}</dt>
-      <dd className="text-foreground font-medium truncate">{children}</dd>
     </div>
   );
 }
