@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Trash2 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
-import { createSquad, createTournament, deleteTournament, updateTournament } from "@/lib/queries";
+import { createSquad, createTournament, deleteTournament, restageTournamentMatches, updateTournament } from "@/lib/queries";
 import { CLUB_NAME, MATCH_FORMATS } from "@/lib/tournaments";
 import { DEFAULT_MATCH_MINS, DEFAULT_MAX_SUBS, DEFAULT_SUB_POLICY, SUB_POLICIES } from "@/lib/lineup";
 import { todayISO } from "@/lib/attendance";
@@ -64,6 +64,11 @@ export function TournamentFormModal({
       };
       if (editing) {
         await updateTournament(tournament.id, fields);
+        // Switching type moves the existing matches with it: every match in a
+        // league is a League match, and none in a knockout is
+        if (form.competition_type !== tournament.competition_type) {
+          await restageTournamentMatches(tournament.id, form.competition_type === "league" ? "league" : "knockout");
+        }
         toast({ title: "Tournament updated" });
       } else {
         const created = await createTournament({ ...fields, team: DEFAULT_TEAM, notes: null });

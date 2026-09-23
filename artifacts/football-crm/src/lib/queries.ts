@@ -543,6 +543,23 @@ export async function updateTournament(id: string, updates: Partial<Tournament>)
   return data as Tournament;
 }
 
+/**
+ * Re-stage a tournament's matches when it switches between league and
+ * knockout. A league has no stages to pick — every match is "League" — so a
+ * match added while it was a knockout would otherwise keep "Group Stage" with
+ * no way to change it, and sit outside the table.
+ */
+export async function restageTournamentMatches(
+  tournamentId: string,
+  to: "league" | "knockout",
+): Promise<void> {
+  const q = supabase.from("matches").update({ stage: to === "league" ? "League" : "Group Stage" }).eq("tournament_id", tournamentId);
+  const { error } = to === "league"
+    ? await q.neq("stage", "League")
+    : await q.eq("stage", "League");
+  if (error) throw error;
+}
+
 export async function deleteTournament(id: string): Promise<void> {
   // squads, matches and stats cascade; the underlying sessions rows survive
   const { error } = await supabase.from("tournaments").delete().eq("id", id);

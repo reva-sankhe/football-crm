@@ -122,7 +122,9 @@ export default function TournamentDetail() {
 
   const isLeague = tournament?.competition_type === "league";
   const standings = useMemo(
-    () => computeStandings(matches.filter((m) => m.stage === "League"), otherMatches),
+    // Every match of ours in a league counts — not only those staged "League".
+    // A match added before the tournament became a league keeps its old stage.
+    () => computeStandings(matches.filter((m) => m.stage !== "Friendly"), otherMatches),
     [matches, otherMatches],
   );
 
