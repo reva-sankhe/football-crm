@@ -144,7 +144,8 @@ export function undoProblem(stages: InjuryStage[], hasRecurrence: boolean): stri
 export type Severity = "slight" | "minimal" | "mild" | "moderate" | "severe";
 
 /**
- * Fuller et al. 2006, by days from the injury to match fit. The upper bound is
+ * Fuller et al. 2006, by days lost — from withdrawing from full participation
+ * to match fit (see `daysLost`). The upper bound is
  * inclusive; severe is anything beyond 28. Change a band here and the
  * sentence that reports it changes with it — nothing else holds a copy.
  */
@@ -171,24 +172,47 @@ export function daysBetween(a: string, b: string): number {
   return Math.round(ms / 86_400_000);
 }
 
-/** Days lost so far on an open injury, counted to `today` (local ISO date). */
-export function daysLostSoFar(injury: Pick<Injury, "occurred_on">, today: string): number {
-  return Math.max(0, daysBetween(injury.occurred_on, today));
+/**
+ * When the player stopped taking full part: the first stage before match fit.
+ * Usually the day of the injury, but not always — a player can carry one for
+ * weeks before it stops them (Ibreez's back: from 15 Aug, out 12 Sep). Null
+ * when they played on and lost no time.
+ */
+export function withdrewOn(stages: InjuryStage[]): string | null {
+  return byDate(stages).find((s) => s.stage !== "match_fit")?.effective_on ?? null;
+}
+
+/**
+ * Days lost, as Fuller counts them: from withdrawing to match fit — or to
+ * `today` while still open — not from `occurred_on`. Counting from the injury
+ * date would make a 19-day absence after weeks of playing through read as
+ * severe.
+ */
+export function daysLost(
+  injury: Pick<InjuryWithStatus, "returned_on">,
+  stages: InjuryStage[],
+  today: string,
+): number {
+  const from = withdrewOn(stages);
+  if (!from) return 0;
+  return Math.max(0, daysBetween(from, injury.returned_on ?? today));
 }
 
 /**
  * Severity as it can honestly be stated: final once resolved; while open, only
- * a floor — "at least mild" — since the injury may still run on.
+ * a floor — "at least mild" — since the injury may still run on. `stages` are
+ * this injury's own.
  */
 export function describeSeverity(
-  injury: Pick<InjuryWithStatus, "occurred_on" | "status" | "days_lost" | "migrated">,
+  injury: Pick<InjuryWithStatus, "status" | "returned_on" | "migrated">,
+  stages: InjuryStage[],
   today: string,
 ): string {
-  if (injury.status === "resolved" && injury.days_lost != null) {
-    const label = severityLabel(severityFor(injury.days_lost));
-    return `${label}${injury.migrated ? " (approx.)" : ""} · ${plural(injury.days_lost, "day")} lost`;
+  const days = daysLost(injury, stages, today);
+  if (injury.status === "resolved") {
+    const label = severityLabel(severityFor(days));
+    return `${label}${injury.migrated ? " (approx.)" : ""} · ${plural(days, "day")} lost`;
   }
-  const days = daysLostSoFar(injury, today);
   return `At least ${severityLabel(severityFor(days)).toLowerCase()} · ${plural(days, "day")} so far`;
 }
 
@@ -336,6 +360,8 @@ export interface PlayerAvailability {
   stage: InjuryStageName;
   /** Those injuries, worst first. */
   injuries: InjuryWithStatus[];
+  /** Injury id → the day it stopped them (see withdrewOn) — "out since", not "injured since". */
+  since: Record<string, string>;
 }
 
 export interface Availability {
@@ -343,6 +369,8 @@ export interface Availability {
   on(playerId: string, date: string): PlayerAvailability | null;
   /** Every player not yet match fit on `date`. */
   unavailableOn(date: string): Map<string, PlayerAvailability>;
+  /** When an injury stopped the player (see withdrewOn); null if they played on. */
+  withdrewOn(injuryId: string): string | null;
 }
 
 /**
@@ -372,7 +400,9 @@ export function buildAvailability(injuries: InjuryWithStatus[], stages: InjurySt
     }
     if (hits.length === 0) return null;
     hits.sort((a, b) => STAGE_RANK[b.stage] - STAGE_RANK[a.stage] || b.injury.occurred_on.localeCompare(a.injury.occurred_on));
-    return { stage: hits[0].stage, injuries: hits.map((h) => h.injury) };
+    const since: Record<string, string> = {};
+    for (const h of hits) since[h.injury.id] = withdrewOn(stagesByInjury.get(h.injury.id) ?? []) ?? h.injury.occurred_on;
+    return { stage: hits[0].stage, injuries: hits.map((h) => h.injury), since };
   };
 
   return {
@@ -385,6 +415,7 @@ export function buildAvailability(injuries: InjuryWithStatus[], stages: InjurySt
       }
       return out;
     },
+    withdrewOn: (injuryId) => withdrewOn(stagesByInjury.get(injuryId) ?? []),
   };
 }
 
@@ -405,22 +436,28 @@ export function availabilityLabel(a: PlayerAvailability): string {
  * It explains the figure and never changes it: an injured player is expected
  * to come and sit out, so a missed session counts like any other.
  */
-export function injuryAttendanceNote(injuries: InjuryWithStatus[], from: string, today: string): string {
+export function injuryAttendanceNote(
+  injuries: InjuryWithStatus[],
+  from: string,
+  today: string,
+  /** When each stopped the player; defaults to the injury date. */
+  outFrom: (i: InjuryWithStatus) => string = (i) => i.occurred_on,
+): string {
   const lower = (i: InjuryWithStatus) => {
     const label = injuryLabel(i);
     return label.charAt(0).toLowerCase() + label.slice(1);
   };
   return injuries
-    .filter((i) => i.occurred_on <= today && (i.returned_on == null || i.returned_on > from))
-    .sort((a, b) => a.occurred_on.localeCompare(b.occurred_on))
+    .filter((i) => outFrom(i) <= today && (i.returned_on == null || i.returned_on > from))
+    .sort((a, b) => outFrom(a).localeCompare(outFrom(b)))
     .map((i) => {
       if (i.returned_on != null && i.returned_on <= today) {
-        return `was out with ${lower(i)} ${formatDateShort(i.occurred_on)}–${formatDateShort(i.returned_on)}`;
+        return `was out with ${lower(i)} ${formatDateShort(outFrom(i))}–${formatDateShort(i.returned_on)}`;
       }
       const lead = i.current_stage === "modified" ? "on modified training with"
         : i.current_stage === "full_training" ? "back in full training after"
         : "out with";
-      return `${lead} ${lower(i)} since ${formatDateShort(i.occurred_on)}`;
+      return `${lead} ${lower(i)} since ${formatDateShort(outFrom(i))}`;
     })
     .join("; ");
 }

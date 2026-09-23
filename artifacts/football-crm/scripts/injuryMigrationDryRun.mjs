@@ -52,19 +52,21 @@ const DECISIONS = {
     answer: { key: "single", occurred: "2026-08-15", expectedReturn: "2026-10-01" },
   },
   atiriya: {
-    // Coaches, 23 Sep: "resolved, she is fine now" — true of both options, so still open
     question: "Atiriya — hand (12 Sep, off at 61', resolved). Were the 16 and 18 Sep absences because of it?",
     options: {
       yes: "Out 12 Sep, match fit 21 Sep (her next session)",
       no: "Played on — match fit 12 Sep",
     },
-    answer: null,
+    // Coaches, 23 Sep: it didn't keep her out; 16 and 18 Sep were unrelated
+    answer: "no",
   },
   mechanism: {
     question: "Contact or non-contact for Zarastyn (knee), Atiriya (hand), Ibreez (back)? (Hiba: contact.)",
     options: {},
-    // Partial: Hiba's came with her record. The rest are still with the coaches.
+    // Partial: Hiba's came with her record. The rest are saved empty and filled
+    // in later through the app — the migration doesn't wait for them.
     answer: { hiba: "contact" }, // zarastyn, atiriya, ibreez: "contact" | "non_contact"
+    optional: true,
   },
   hiba: {
     question: "Hiba — ACL: which knee, and an expected return date? (Her 6 Sep minutes are also blank.)",
@@ -152,6 +154,9 @@ const resolvedAt = (name, occurred, fallback = null) => firstActivityAfter(playe
     mechanismKey: "zarastyn", sources: rows.map((r) => `match ${matchById.get(r.match_id)?.stage} "${r.injury_note}" (${r.minutes_played}')`) };
   const z = DECISIONS.zarastyn.answer;
   if (z) { base.expectedReturn = z.expectedReturn ?? null; base.notes = z.notes; base.sideNote = "side not given"; }
+  // Two fixtures that day: which one isn't known, so no match link — the session if they share one
+  const sessionsOf = [...new Set(rows.map((r) => matchById.get(r.match_id)?.session_id))];
+  Object.assign(base, { statIds: rows.map((r) => r.id), attIds: [], sessionId: sessionsOf.length === 1 ? sessionsOf[0] : null, matchId: null });
   propose("zarastyn", { ...base, decision: "zarastyn", variants: {
     open: { stages: [["out", "2026-08-02"]] },
     returned: { stages: [["out", "2026-08-02"], ["match_fit", z?.returnedOn ?? "<date from coaches>"]] },
@@ -173,6 +178,8 @@ const resolvedAt = (name, occurred, fallback = null) => firstActivityAfter(playe
   const ans = DECISIONS.ibreez.answer;
   propose("ibreez-back", { player: "Ibreez", area: "Back", side: "n/a", context: null, onset: null, mechanismKey: "ibreez",
     occurred: ans.occurred, expectedReturn: ans.expectedReturn,
+    notes: "Played through: 30 Aug (35'), 6 Sep (15'), 12 Sep (69', subbed off). Out from 12 Sep.",
+    statIds: [...r30, ...r06, ...r12].map((r) => r.id), attIds: a16.map((a) => a.id), sessionId: null, matchId: null,
     sources: [...src(r30), ...src(r06), ...src(r12), ...a16.map(() => "attendance Injured 16 Sep")],
     stages: [["out", "2026-09-12"]] });
 }
@@ -185,7 +192,7 @@ const resolvedAt = (name, occurred, fallback = null) => firstActivityAfter(playe
   propose("hiba-acl", { player: "Hiba", occurred: "2026-09-06", area: "Knee", side: h?.side ?? null, context: "match",
     onset: "acute", mechanismKey: "hiba", notes: "ACL tear", expectedReturn: h?.expectedReturn ?? null,
     sources: rows.map((r) => `match "${r.injury_note}" (${r.minutes_played}' — minutes never entered)`),
-    stages: [["out", "2026-09-06"]], linkExisting: true });
+    stages: [["out", "2026-09-06"]], linkExisting: true, statIds: rows.map((r) => r.id), attIds: [] });
 }
 
 // Atiriya — hand, 12 Sep
@@ -193,6 +200,9 @@ const resolvedAt = (name, occurred, fallback = null) => firstActivityAfter(playe
   const rows = statRows("Atiriya", "2026-09-12");
   propose("atiriya-hand", { player: "Atiriya", occurred: "2026-09-12", area: "Wrist/hand", side: null, context: "match",
     onset: "acute", mechanismKey: "atiriya", decision: "atiriya",
+    statIds: rows.map((r) => r.id), attIds: [],
+    matchId: rows.length === 1 ? rows[0].match_id : null,
+    sessionId: rows.length === 1 ? matchById.get(rows[0].match_id)?.session_id ?? null : null,
     sources: rows.map((r) => `match "${r.injury_note}" (${r.minutes_played}')`),
     variants: {
       yes: { stages: [["out", "2026-09-12"], ["match_fit", resolvedAt("Atiriya", "2026-09-12")]] },
@@ -206,7 +216,8 @@ const DAY = 86_400_000;
 const days = (a, b) => Math.round((Date.parse(b) - Date.parse(a)) / DAY);
 const band = (d) => (d === 0 ? "slight" : d <= 3 ? "minimal" : d <= 7 ? "mild" : d <= 28 ? "moderate" : "severe");
 
-line(`Injury migration — DRY RUN, ${TODAY}. Nothing is written.`);
+const APPLY = process.argv.includes("--apply");
+line(`Injury migration — ${APPLY ? "APPLY" : "DRY RUN"}, ${TODAY}.${APPLY ? "" : " Nothing is written."}`);
 line(`Legacy records: ${legacyAttendance.length} Injured attendance rows, ${legacyStats.length} flagged match rows.`);
 if (existing.some((i) => i.migrated)) line(`!! ${existing.filter((i) => i.migrated).length} migrated injuries already exist — an apply would duplicate them.`);
 const unplanned = [
@@ -241,10 +252,12 @@ function describe(entry, stages) {
   const open = last[0] !== "match_fit";
   const returned = open ? null : last[1];
   const placeholder = returned?.startsWith("<");
-  const n = returned && !placeholder ? days(entry.occurred, returned) : null;
+  // Days lost run from withdrawing — the first stage before match fit — as the app counts them
+  const withdrew = stages.find(([st]) => st !== "match_fit")?.[1] ?? null;
+  const n = returned && !placeholder ? (withdrew ? days(withdrew, returned) : 0) : null;
   const lostTxt = n != null
     ? `${band(n)}, ${n} day${n === 1 ? "" : "s"}${entry.linkExisting ? "" : " (approx.)"}`
-    : open ? `open — ${days(entry.occurred, TODAY)} days so far${entry.expectedReturn ? `, ${days(entry.occurred, entry.expectedReturn)} at the expected return (${band(days(entry.occurred, entry.expectedReturn))})` : ""}`
+    : open ? `open — ${days(withdrew, TODAY)} days out so far${withdrew !== entry.occurred ? ` (out from ${withdrew}; played through before)` : ""}${entry.expectedReturn ? `, ${days(withdrew, entry.expectedReturn)} at the expected return (${band(days(withdrew, entry.expectedReturn))})` : ""}`
     : "severity once the date is given";
 
   // ── What gets written ──
@@ -277,7 +290,7 @@ function describe(entry, stages) {
     && (!stages[i + 1] || stages[i + 1][1].startsWith("<") || d < stages[i + 1][1]));
   const noted = [...sessions.filter((x) => x.date >= monthStart && x.date <= TODAY).map((x) => x.date), TODAY].some(inEffect);
   const label = `${entry.area === "Unspecified" ? "unspecified" : entry.area.toLowerCase()}${entry.side && entry.side !== "n/a" ? ` (${entry.side})` : ""}`;
-  if (open && noted) line(`                  attendance alert note (if an alert fires): "out with ${label} since ${short(entry.occurred)}"`);
+  if (open && noted) line(`                  attendance alert note (if an alert fires): "out with ${label} since ${short(withdrew)}"`);
   // An injury with no time lost is never "in effect", so it adds no note
   else if (noted && !placeholder) line(`                  attendance alert note (if an alert fires): "was out with ${label} ${short(entry.occurred)}–${short(returned)}"`);
   if (open) {
@@ -336,8 +349,85 @@ for (const e of plan) {
 line("Also on apply: each flagged match row above gets injury_id set, its note kept, and Ibreez's 16 Sep");
 line("Injured mark becomes Absent — no attendance % changes, since an Injured mark already counts as missed.");
 line();
-const MECHANISM_FOR = ["hiba", "zarastyn", "atiriya", "ibreez"];
-const isPending = ([k, d]) => d.answer == null || (k === "mechanism" && MECHANISM_FOR.some((p) => !d.answer[p]));
+const isPending = ([, d]) => d.answer == null && !d.optional;
 const pending = Object.entries(DECISIONS).filter(isPending);
 line(pending.length ? `Waiting on ${pending.length} decision(s) — no apply until all are answered:` : "All decisions answered.");
 for (const [k, d] of pending) line(`  [${k}] ${d.question}`);
+
+// ── Apply ────────────────────────────────────────────────────────────────────
+// `--apply` writes exactly what the report above describes. It refuses to
+// start unless every decision is answered and the live data still matches the
+// plan; if a write fails partway, it undoes what it wrote. There is no
+// transaction over the REST API, so the undo is explicit.
+if (APPLY) {
+  line();
+  const refuse = (why) => { line(`!! Not applied: ${why}`); process.exit(1); };
+  if (pending.length) refuse(`${pending.length} decision(s) unanswered.`);
+  if (existing.some((i) => i.migrated)) refuse("migrated injuries already exist — this has run before.");
+
+  // Re-read what will be touched: nothing may have changed since the plan was made
+  const statIds = plan.flatMap((e) => e.statIds ?? []);
+  const attIds = plan.flatMap((e) => e.attIds ?? []);
+  const { data: liveStats, error: e1 } = await db.from("match_player_stats").select("id, injured, injury_id").in("id", statIds);
+  const { data: liveAtt, error: e2 } = await db.from("session_attendance").select("id, status").in("id", attIds.length ? attIds : ["00000000-0000-0000-0000-000000000000"]);
+  if (e1 || e2) refuse((e1 ?? e2).message);
+  if (liveStats.length !== statIds.length || liveStats.some((r) => !r.injured || r.injury_id != null)) refuse("a match row has changed since the plan was made.");
+  if (liveAtt.length !== attIds.length || liveAtt.some((r) => r.status !== "Injured")) refuse("an attendance row has changed since the plan was made.");
+
+  const createdInjuries = [];
+  const linkedStats = [];
+  const changedAtt = [];
+  try {
+    for (const e of plan) {
+      const p = playerByName(e.player);
+      let injuryId;
+      if (e.linkExisting) {
+        const rec = existing.find((i) => !i.migrated && i.player_id === p.id && i.body_area === e.area && i.occurred_on === e.occurred);
+        if (!rec) throw new Error(`${e.player}: the existing record on ${e.occurred} is gone`);
+        injuryId = rec.id;
+        line(`• ${e.player}: linking to the existing record ${injuryId}`);
+      } else {
+        const chosen = e.variants ? e.variants[pick(DECISIONS[e.decision])] : null;
+        const stages = chosen ? chosen.stages : e.stages;
+        const row = {
+          player_id: p.id, occurred_on: e.occurred, category: "injury", body_area: e.area,
+          side: e.side, context: e.context, onset: e.onset,
+          mechanism: e.mechanismKey ? DECISIONS.mechanism.answer?.[e.mechanismKey] ?? null : null,
+          expected_return_on: stages[stages.length - 1][0] === "match_fit" ? null : e.expectedReturn ?? null,
+          notes: e.notes ?? null, session_id: e.sessionId ?? null, match_id: e.matchId ?? null, migrated: true,
+        };
+        const { data: inj, error } = await db.from("injuries").insert(row).select().single();
+        if (error) throw new Error(`${e.player}: ${error.message}`);
+        createdInjuries.push(inj.id);
+        injuryId = inj.id;
+        for (const [stage, effective_on] of stages) {
+          const { error: se } = await db.from("injury_stages").insert({ injury_id: inj.id, stage, effective_on });
+          if (se) throw new Error(`${e.player} stage ${stage} ${effective_on}: ${se.message}`);
+        }
+        line(`• ${e.player}: injury ${inj.id} + ${stages.map(([st, d]) => `${st} ${d}`).join(" → ")}`);
+      }
+      for (const id of e.statIds ?? []) {
+        const { error } = await db.from("match_player_stats").update({ injury_id: injuryId }).eq("id", id).is("injury_id", null);
+        if (error) throw new Error(`${e.player} match row ${id}: ${error.message}`);
+        linkedStats.push(id);
+      }
+      for (const id of e.attIds ?? []) {
+        const { error } = await db.from("session_attendance").update({ status: "Absent" }).eq("id", id).eq("status", "Injured");
+        if (error) throw new Error(`${e.player} attendance ${id}: ${error.message}`);
+        changedAtt.push(id);
+      }
+      if ((e.statIds ?? []).length || (e.attIds ?? []).length) {
+        line(`    linked ${(e.statIds ?? []).length} match row(s)${(e.attIds ?? []).length ? `, ${(e.attIds ?? []).length} Injured mark(s) → Absent` : ""}`);
+      }
+    }
+  } catch (err) {
+    line(`!! ${err.message} — undoing`);
+    if (linkedStats.length) await db.from("match_player_stats").update({ injury_id: null }).in("id", linkedStats);
+    if (changedAtt.length) await db.from("session_attendance").update({ status: "Injured" }).in("id", changedAtt);
+    if (createdInjuries.length) await db.from("injuries").delete().in("id", createdInjuries);
+    line("Undone. Nothing was left half-written.");
+    process.exit(1);
+  }
+  line();
+  line(`Applied: ${createdInjuries.length} injuries created, ${linkedStats.length} match rows linked, ${changedAtt.length} attendance marks → Absent.`);
+}

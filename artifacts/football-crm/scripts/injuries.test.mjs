@@ -38,20 +38,33 @@ try {
   assert.equal(inj.daysBetween("2026-02-27", "2026-03-02"), 3, "crosses a month end");
   assert.equal(inj.daysBetween("2026-10-24", "2026-10-26"), 2, "DST-free: counted on UTC dates");
 
+  // Days lost run from withdrawing (the first stage before match fit), not occurred_on
+  const outFit = (out, fit) => [stage("out", out), ...(fit ? [stage("match_fit", fit)] : [])];
   assert.equal(
-    inj.describeSeverity(injury({ status: "resolved", days_lost: 8 }), "2026-09-23"),
+    inj.describeSeverity(injury({ occurred_on: "2026-08-01", status: "resolved", returned_on: "2026-08-09" }), outFit("2026-08-01", "2026-08-09"), "2026-09-23"),
     "Moderate · 8 days lost",
   );
   assert.equal(
-    inj.describeSeverity(injury({ status: "resolved", days_lost: 0, migrated: true }), "2026-09-23"),
+    inj.describeSeverity(injury({ occurred_on: "2026-09-12", status: "resolved", returned_on: "2026-09-12", migrated: true }),
+      [stage("match_fit", "2026-09-12")], "2026-09-23"),
     "Slight (approx.) · 0 days lost",
-    "a migrated injury's dates are inferred, and it says so",
+    "played on (Atiriya's hand): no withdrawal, no days lost — and a migrated injury says it's approximate",
   );
   assert.equal(
-    inj.describeSeverity(injury({ occurred_on: "2026-09-06" }), "2026-09-23"),
+    inj.describeSeverity(injury({ occurred_on: "2026-09-06" }), outFit("2026-09-06"), "2026-09-23"),
     "At least moderate · 17 days so far",
-    "an open injury only has a floor",
+    "out on the day of the injury (Hiba, Zarastyn): identical to counting from occurred_on",
   );
+  // Ibreez: back from 15 Aug, played through, out from the 12 Sep substitution, back 1 Oct
+  const ibreez = injury({ occurred_on: "2026-08-15", body_area: "Back", side: "n/a" });
+  assert.equal(inj.withdrewOn(outFit("2026-09-12")), "2026-09-12");
+  assert.equal(inj.daysLost(ibreez, outFit("2026-09-12"), "2026-09-23"), 11, "open: withdrawal to today");
+  assert.equal(inj.daysLost({ ...ibreez, returned_on: "2026-10-01" }, outFit("2026-09-12", "2026-10-01"), "2026-10-05"), 19,
+    "19 days out — moderate, not the 47 counted from 15 Aug");
+  assert.equal(inj.severityFor(19), "moderate");
+  assert.equal(inj.withdrewOn([stage("match_fit", "2026-09-12")]), null, "played on: never withdrew");
+  assert.equal(inj.withdrewOn([stage("modified", "2026-09-03"), stage("match_fit", "2026-09-10")]), "2026-09-03",
+    "an injury that starts at modified training is already time-loss");
 
   // ── Stage history ─────────────────────────────────────────────────────────
   const history = [stage("modified", "2026-09-09"), stage("out", "2026-09-06")];
@@ -189,6 +202,9 @@ try {
   const ill = injury({ id: "i", category: "illness", body_area: null, side: null, mechanism: null, onset: null, occurred_on: "2026-09-18" });
   assert.equal(inj.injuryAttendanceNote([zKnee, ill], "2026-09-01", "2026-09-23"),
     "out with knee (right) since 2 Aug; out with illness since 18 Sept");
+  const ibBack = injury({ id: "ib", body_area: "Back", side: "n/a", occurred_on: "2026-08-15" });
+  assert.equal(inj.injuryAttendanceNote([ibBack], "2026-09-01", "2026-09-23", () => "2026-09-12"),
+    "out with back since 12 Sept", "out since the day it stopped her, not the day it started");
 
   // ── Closing prompts ───────────────────────────────────────────────────────
   const openBack = injury({ id: "bk", body_area: "Back", side: "n/a", occurred_on: "2026-09-12" });

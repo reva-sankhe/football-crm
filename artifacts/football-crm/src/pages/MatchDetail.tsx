@@ -81,8 +81,8 @@ function emptyStat(playerId: string): MatchStatInput {
 
 /**
  * Flagged injured before injuries were their own table: a note, no record.
- * These wait for the held migration, so the grid shows them read-only rather
- * than let an edit here race it.
+ * The migration linked the ones the coaches wanted logged; the rest stay as
+ * read-only notes.
  */
 function isLegacyInjury(row: MatchStatInput, newDraft: InjuryDraft | undefined): boolean {
   return row.injured && row.injury_id == null && newDraft == null;
@@ -729,7 +729,7 @@ export default function MatchDetail() {
                         onClick={() => toggleInjured(p.id)}
                         disabled={legacy}
                         title={legacy
-                          ? "Recorded before injury tracking — this row is converted by the injury migration"
+                          ? "Recorded before injury tracking — kept as a note"
                           : row.injured ? "Mark as not injured" : "Mark as injured"}
                         className={cn(
                           "w-7 h-7 rounded-lg border flex items-center justify-center transition-colors shrink-0",
@@ -747,7 +747,7 @@ export default function MatchDetail() {
                     {/* Spans the whole row, so it tracks the column count */}
                     {legacy && (
                       <p className={cn("w-full mt-1 text-[11px] text-muted-foreground", rolling ? "sm:col-span-7" : "sm:col-span-10")}>
-                        Noted before injury tracking: “{row.injury_note ?? "no note"}” — converted by the injury migration.
+                        Noted before injury tracking: “{row.injury_note ?? "no note"}”.
                       </p>
                     )}
                     {row.injured && !legacy && (

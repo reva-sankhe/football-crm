@@ -215,8 +215,10 @@ CREATE TRIGGER injuries_guard
 
 -- ── Derived status ────────────────────────────────────────────────────────────
 -- current_stage is the latest stage row; the injury is resolved exactly when
--- that is match_fit. days_lost is only set once resolved — a running count for
--- an open injury depends on "today", which the app computes in local time.
+-- that is match_fit. days_lost runs from withdrew_on (the first stage before
+-- match fit) to match fit, per Fuller, and is only set once resolved — a
+-- running count for an open injury depends on "today", which the app computes
+-- in local time (daysLost in lib/injuries.ts).
 -- `i.*` is expanded when the view is created: re-run this statement after
 -- adding a column to injuries.
 CREATE OR REPLACE VIEW public.v_injury_status
@@ -226,7 +228,13 @@ SELECT
   cur.stage                                              AS current_stage,
   CASE WHEN cur.stage = 'match_fit' THEN 'resolved' ELSE 'open' END AS status,
   fit.effective_on                                       AS returned_on,
-  fit.effective_on - i.occurred_on                       AS days_lost
+  -- From withdrawing (the first stage before match fit), not from occurred_on:
+  -- a player can carry an injury for weeks before it stops them. Played on
+  -- (no stage before match fit) is 0.
+  CASE WHEN fit.effective_on IS NOT NULL
+       THEN fit.effective_on - COALESCE(wd.effective_on, fit.effective_on)
+  END                                                    AS days_lost,
+  wd.effective_on                                        AS withdrew_on
 FROM public.injuries i
 LEFT JOIN LATERAL (
   SELECT s.stage FROM public.injury_stages s
@@ -237,7 +245,11 @@ LEFT JOIN LATERAL (
 LEFT JOIN LATERAL (
   SELECT s.effective_on FROM public.injury_stages s
   WHERE s.injury_id = i.id AND s.stage = 'match_fit'
-) fit ON true;
+) fit ON true
+LEFT JOIN LATERAL (
+  SELECT min(s.effective_on) AS effective_on FROM public.injury_stages s
+  WHERE s.injury_id = i.id AND s.stage <> 'match_fit'
+) wd ON true;
 
 -- ── Access ────────────────────────────────────────────────────────────────────
 -- Matches the rule every other table uses (see supabase_migration_rls_baseline.sql)

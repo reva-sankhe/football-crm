@@ -12,7 +12,7 @@ export function AvailabilityBadge({ availability, className }: { availability: P
   const lead = availability.injuries[0];
   const title = [
     `${STAGE_CFG[availability.stage].label} — ${STAGE_CFG[availability.stage].description.toLowerCase()}`,
-    `Since ${formatDateShort(lead.occurred_on)}`,
+    `Since ${formatDateShort(availability.since[lead.id] ?? lead.occurred_on)}`,
     lead.expected_return_on ? `expected back ${formatDateShort(lead.expected_return_on)}` : null,
   ].filter(Boolean).join(" · ");
   return (

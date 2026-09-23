@@ -3,11 +3,11 @@ import { createPortal } from "react-dom";
 import { Link2, RefreshCw } from "lucide-react";
 import { cn, getErrorMessage, playerLabel } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
-import { formatDateShort, todayISO } from "@/lib/attendance";
+import { countsAsAttended, formatDateShort, todayISO } from "@/lib/attendance";
 import {
   STAGE_CFG, emptyInjuryDraft, injuryDraftProblems, injuryLabel, injuryRowFromDraft, openOn, type InjuryDraft,
 } from "@/lib/injuries";
-import { createInjury, fetchInjuriesForPlayer, fetchMatchIdForSession } from "@/lib/queries";
+import { createInjury, fetchAttendanceByPlayer, fetchInjuriesForPlayer, fetchMatchIdForSession } from "@/lib/queries";
 import { InjuryFields } from "./InjuryFields";
 import type { Injury, InjuryContext, InjuryWithStatus, Player, TrainingSession } from "@/lib/types";
 
@@ -63,7 +63,11 @@ export function ReportInjuryDialog({
   const { toast } = useToast();
 
   const [playerId, setPlayerId] = useState(fixedPlayer?.id ?? "");
-  const [date, setDate] = useState(session?.date ?? todayISO());
+  // Empty unless a session fixes it: a date left at today by default is how a
+  // 6 Sep injury got recorded on the 23rd. The picks below make choosing quick.
+  const [date, setDate] = useState(session?.date ?? "");
+  /** Dates of the training and match days this player attended, newest first. */
+  const [attendedDates, setAttendedDates] = useState<string[] | null>(null);
   const defaultContext: InjuryContext | "" = session ? (session.session_type === "Match" ? "match" : "training") : "";
   const [draft, setDraft] = useState<InjuryDraft>(() => emptyInjuryDraft(defaultContext));
   const [history, setHistory] = useState<InjuryWithStatus[]>([]);
@@ -75,6 +79,21 @@ export function ReportInjuryDialog({
   const [saving, setSaving] = useState(false);
 
   const player = fixedPlayer ?? players.find((p) => p.id === playerId);
+
+  // Only needed where the date is picked
+  useEffect(() => {
+    if (session || !playerId) { setAttendedDates(null); return; }
+    let cancelled = false;
+    fetchAttendanceByPlayer(playerId)
+      .then((rows) => {
+        if (cancelled) return;
+        setAttendedDates(rows
+          .filter((r) => countsAsAttended(r.status) && (r.sessions?.session_type === "Training" || r.sessions?.session_type === "Match"))
+          .map((r) => r.sessions.date));
+      })
+      .catch(() => { if (!cancelled) setAttendedDates([]); });
+    return () => { cancelled = true; };
+  }, [playerId, session]);
 
   useEffect(() => {
     if (!playerId) { setHistory([]); setHistoryLoaded(false); return; }
@@ -117,6 +136,35 @@ export function ReportInjuryDialog({
       note: `${onDay.length} ${kind === "Match" ? "matches" : "sessions"} that day — saved without a link. To tie it to one fixture, report it from that match's grid.`,
     };
   }, [session, sessions, draft.context, date]);
+
+  /**
+   * One-tap dates: the last few training and match days this player attended
+   * (a day with several fixtures is one pick), or the team's when they have
+   * none recently — a player out for weeks has no attendance to go on.
+   */
+  const picks = useMemo(() => {
+    if (session) return { own: true, days: [] as { date: string; kind: "Training" | "Match"; count: number }[] };
+    const today = todayISO();
+    const mine = attendedDates ? new Set(attendedDates) : null;
+    const byDay = new Map<string, { date: string; kind: "Training" | "Match"; count: number }>();
+    const candidates = sessions.filter((x) => (x.session_type === "Training" || x.session_type === "Match") && x.date <= today);
+    const own = !!mine && candidates.some((x) => mine.has(x.date));
+    for (const x of candidates) {
+      if (own && !mine!.has(x.date)) continue;
+      const kind = x.session_type as "Training" | "Match";
+      const prev = byDay.get(x.date);
+      // A match day outranks a training session on the same date
+      if (!prev || (kind === "Match" && prev.kind !== "Match")) byDay.set(x.date, { date: x.date, kind, count: 1 });
+      else if (kind === prev.kind) prev.count += 1;
+    }
+    const days = [...byDay.values()].sort((a, b) => b.date.localeCompare(a.date)).slice(0, 5);
+    return { own, days };
+  }, [session, sessions, attendedDates]);
+
+  const pickDate = (d: string, kind?: "Training" | "Match") => {
+    setDate(d);
+    if (kind && !draft.context) setDraft({ ...draft, context: kind === "Match" ? "match" : "training" });
+  };
 
   const problems = choice === "new" ? injuryDraftProblems(draft, date) : {};
   const formProblems: Record<string, string> = { ...problems };
@@ -215,6 +263,31 @@ export function ReportInjuryDialog({
             </div>
           )}
 
+          {!session && (
+            <div className="space-y-1.5 -mt-1">
+              {date ? (
+                <p className="text-xs text-foreground" data-testid="text-injury-date-echo">{dateInWords(date)}</p>
+              ) : (
+                <p className="text-xs text-muted-foreground">When did it happen? Pick a day, or set the date above.</p>
+              )}
+              {(playerId || !fixedPlayer) && (
+                <div className="flex flex-wrap gap-1.5" data-testid="injury-date-picks">
+                  {picks.days.map((d) => (
+                    <DatePick key={d.date} selected={date === d.date} onClick={() => pickDate(d.date, d.kind)}>
+                      {weekdayShort(d.date)} {formatDateShort(d.date)} · {d.kind === "Match" ? (d.count > 1 ? `${d.count} matches` : "Match") : "Training"}
+                    </DatePick>
+                  ))}
+                  {!picks.days.some((d) => d.date === todayISO()) && (
+                    <DatePick selected={date === todayISO()} onClick={() => pickDate(todayISO())}>Today</DatePick>
+                  )}
+                </div>
+              )}
+              {playerId && attendedDates && !picks.own && picks.days.length > 0 && (
+                <p className="text-[10px] text-muted-foreground">No recent attendance for this player — showing the team's recent sessions.</p>
+              )}
+            </div>
+          )}
+
           {/* A player already out: most of the time this is that injury */}
           {open.length > 0 && (
             <div className="space-y-1.5">
@@ -283,4 +356,33 @@ function ChoiceRow({ selected, onSelect, children }: { selected: boolean; onSele
       <span className="min-w-0">{children}</span>
     </button>
   );
+}
+
+function DatePick({ selected, onClick, children }: { selected: boolean; onClick: () => void; children: React.ReactNode }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={selected}
+      className={cn(
+        "px-2.5 py-1 rounded-lg border text-xs transition-colors whitespace-nowrap",
+        selected ? "border-indigo-500/40 bg-indigo-500/10 text-foreground" : "border-border text-muted-foreground hover:text-foreground hover:bg-muted/40",
+      )}
+    >
+      {children}
+    </button>
+  );
+}
+
+function weekdayShort(iso: string): string {
+  return new Date(iso + "T00:00:00").toLocaleDateString("en-GB", { weekday: "short" });
+}
+
+/** "Saturday 6 September · 17 days ago" — the date read back, so a wrong one shows. */
+function dateInWords(iso: string): string {
+  const d = new Date(iso + "T00:00:00");
+  const long = d.toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long", year: d.getFullYear() !== new Date().getFullYear() ? "numeric" : undefined });
+  const ago = Math.round((new Date(todayISO() + "T00:00:00").getTime() - d.getTime()) / 86_400_000);
+  const rel = ago === 0 ? "today" : ago === 1 ? "yesterday" : ago > 1 ? `${ago} days ago` : "in the future";
+  return `${long} · ${rel}`;
 }

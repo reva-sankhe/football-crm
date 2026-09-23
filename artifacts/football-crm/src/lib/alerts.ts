@@ -225,7 +225,8 @@ export function computeAlerts({
         for (const date of [...loggedMonthSessions.map((s) => s.date), today]) {
           for (const i of availability.on(player.id, date)?.injuries ?? []) injuries.set(i.id, i);
         }
-        const note = injuryAttendanceNote([...injuries.values()], monthStart, today);
+        const note = injuryAttendanceNote([...injuries.values()], monthStart, today,
+          (i) => availability.withdrewOn(i.id) ?? i.occurred_on);
         items.push({ id: `att-${player.id}`, severity: isDanger ? "danger" : "warning", category: "attendance", player,
           headline: `${Math.round(pct * 100)}% attendance this month (${attended} of ${loggedMonthSessions.length} sessions)${note ? `, ${note}` : ""}`,
           detail: isDanger

@@ -3,10 +3,10 @@ import { Link } from "wouter";
 import { useTheme } from "@/context/ThemeContext";
 import { HIGHLIGHT, STATUS, ink, type Mode } from "@/lib/viz";
 import { todayISO } from "@/lib/attendance";
-import { STAGE_CFG, daysBetween } from "@/lib/injuries";
+import { STAGE_CFG, daysBetween, daysLost, withdrewOn } from "@/lib/injuries";
 import { fetchInjuryHistory } from "@/lib/queries";
 import { MiniTable, OverviewCard } from "@/components/OverviewCard";
-import type { InjuryStageName, InjuryWithStatus, Player } from "@/lib/types";
+import type { InjuryStage, InjuryStageName, InjuryWithStatus, Player } from "@/lib/types";
 
 /** A resolved injury stays on the chart, greyed, this long after the player is back. */
 const RESOLVED_VISIBLE_DAYS = 30;
@@ -17,6 +17,8 @@ interface Row {
   /** null once resolved. */
   stage: InjuryStageName | null;
   start: string;
+  /** When it stopped them. After `start` if they played through it first. */
+  out: string;
   /** Where the bar ends: the expected return, the return itself, or today when neither is known. */
   end: string;
   daysOut: number;
@@ -25,7 +27,9 @@ interface Row {
 /**
  * Who is out and until when: one bar per injured player, from the injury to
  * the expected return, on a date axis with today marked. The part up to today
- * is solid — days already lost — and the part still to come is faded.
+ * is solid — days already lost — and the part still to come is faded. A
+ * stretch played through before the injury stopped them is a hairline: the
+ * injury existed, but no days were lost to it.
  *
  * Stage is carried by colour *and* by the word beside each name: amber and the
  * resolved grey sit under 3:1 on the light surface, so the label and the table
@@ -38,16 +42,17 @@ export function AvailabilityTimeline({ players }: { players: Player[] }) {
   const today = todayISO();
 
   const [injuries, setInjuries] = useState<InjuryWithStatus[] | null>(null);
+  const [stages, setStages] = useState<InjuryStage[]>([]);
   const [failed, setFailed] = useState(false);
   useEffect(() => {
     let cancelled = false;
     fetchInjuryHistory()
-      .then((h) => { if (!cancelled) setInjuries(h.injuries); })
+      .then((h) => { if (!cancelled) { setStages(h.stages); setInjuries(h.injuries); } })
       .catch(() => { if (!cancelled) setFailed(true); });
     return () => { cancelled = true; };
   }, []);
 
-  const rows = useMemo(() => buildRows(injuries ?? [], players, today), [injuries, players, today]);
+  const rows = useMemo(() => buildRows(injuries ?? [], stages, players, today), [injuries, stages, players, today]);
 
   // Axis: a few days either side of the bars and today, ticks on the 1st of each month
   const plotRef = useRef<HTMLDivElement>(null);
@@ -103,12 +108,12 @@ export function AvailabilityTimeline({ players }: { players: Player[] }) {
       interpretation={interpretation}
       table={
         <MiniTable
-          head={["Player", "Injury", "Stage", "Since", "Expected back", "Days out"]}
+          head={["Player", "Injury", "Stage", "Out since", "Expected back", "Days out"]}
           rows={rows.map((r) => [
             r.player.name,
             areaLabel(r.injury),
             r.stage ? STAGE_CFG[r.stage].label : "Resolved",
-            shortDate(r.injury.occurred_on),
+            shortDate(r.out),
             r.stage ? (r.injury.expected_return_on ? shortDate(r.injury.expected_return_on) : "—") : `back ${shortDate(r.injury.returned_on!)}`,
             String(r.daysOut),
           ])}
@@ -134,6 +139,11 @@ export function AvailabilityTimeline({ players }: { players: Player[] }) {
             <span className="flex items-center gap-1.5">
               <span className="inline-block w-5 h-2 rounded-[4px]" style={{ background: INK.muted, opacity: 0.35 }} /> Still to come
             </span>
+            {rows.some((r) => r.out > r.start) && (
+              <span className="flex items-center gap-1.5">
+                <span className="inline-block w-5 h-px" style={{ background: INK.secondary }} /> Played through
+              </span>
+            )}
           </div>
 
           <div className="grid grid-cols-[minmax(0,7.5rem)_minmax(0,1fr)] sm:grid-cols-[minmax(0,10rem)_minmax(0,1fr)] gap-x-3">
@@ -147,7 +157,8 @@ export function AvailabilityTimeline({ players }: { players: Player[] }) {
 
             {rows.map((r, i) => {
               const color = colorFor(r);
-              const s = axis.x(r.start);
+              const s0 = axis.x(r.start);
+              const s = axis.x(r.out);
               const t = axis.x(today < r.end ? today : r.end);
               const e = axis.x(r.end);
               return (
@@ -168,7 +179,13 @@ export function AvailabilityTimeline({ players }: { players: Player[] }) {
                     onClick={(ev) => showTip(r, ev)}
                     data-testid={`timeline-row-${r.player.id}`}
                   >
-                    {/* Days already out: solid. Still to come: faded. 2px gap between them. */}
+                    {/* Played through: a hairline. Days already out: solid. Still to come: faded. */}
+                    {s > s0 && (
+                      <div
+                        className="absolute top-1/2 -translate-y-1/2 h-px"
+                        style={{ left: `${s0}%`, width: `${s - s0}%`, background: color }}
+                      />
+                    )}
                     <div
                       className="absolute top-1/2 -translate-y-1/2 h-2.5 rounded-[4px]"
                       style={{ left: `${s}%`, width: `max(${t - s}%, 4px)`, background: color }}
@@ -227,7 +244,9 @@ export function AvailabilityTimeline({ players }: { players: Player[] }) {
  * they're back. Open rows by expected return, soonest first (none set: last);
  * recently resolved ones after them, greyed.
  */
-function buildRows(injuries: InjuryWithStatus[], players: Player[], today: string): Row[] {
+function buildRows(injuries: InjuryWithStatus[], stages: InjuryStage[], players: Player[], today: string): Row[] {
+  const stagesOf = new Map<string, InjuryStage[]>();
+  for (const st of stages) stagesOf.set(st.injury_id, [...(stagesOf.get(st.injury_id) ?? []), st]);
   const byId = new Map(players.map((p) => [p.id, p]));
   const rank: Record<InjuryStageName, number> = { out: 3, modified: 2, full_training: 1, match_fit: 0 };
   const best = new Map<string, InjuryWithStatus>();
@@ -256,8 +275,10 @@ function buildRows(injuries: InjuryWithStatus[], players: Player[], today: strin
     rows.push({
       player, injury: i,
       stage: open ? i.current_stage : null,
-      start: i.occurred_on, end,
-      daysOut: Math.max(0, daysBetween(i.occurred_on, open ? today : i.returned_on!)),
+      start: i.occurred_on,
+      out: withdrewOn(stagesOf.get(i.id) ?? []) ?? i.occurred_on,
+      end,
+      daysOut: daysLost(i, stagesOf.get(i.id) ?? [], today),
     });
   }
   return rows.sort((a, b) => {

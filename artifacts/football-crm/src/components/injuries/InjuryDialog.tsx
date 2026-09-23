@@ -123,7 +123,7 @@ export function InjuryDialog({
             <p className="text-xs text-muted-foreground">
               {formatDateShort(injury.occurred_on)}{summary && ` · ${summary}`}
             </p>
-            <p className="text-xs text-muted-foreground">{describeSeverity(injury, todayISO())}</p>
+            {loaded && <p className="text-xs text-muted-foreground">{describeSeverity(injury, stages, todayISO())}</p>}
             {injury.notes && <p className="text-xs text-foreground mt-1">{injury.notes}</p>}
           </div>
           <button onClick={onClose} aria-label="Close" className="text-muted-foreground hover:text-foreground transition-colors text-xl leading-none">&times;</button>

@@ -165,7 +165,7 @@ export interface InjuryWithStatus extends Injury {
   status: "open" | "resolved";
   /** Date the player was match fit; null while open. */
   returned_on: string | null;
-  /** returned_on − occurred_on; null while open (see daysLostSoFar). */
+  /** From the view. The app counts days lost itself with `daysLost` (from withdrawal, not occurred_on). */
   days_lost: number | null;
 }
 

@@ -139,7 +139,7 @@ export function InjuriesCard({
                   <span className="min-w-0 flex-1">
                     <span className="text-sm text-foreground">{injuryLabel(i)}</span>
                     {recurs && <span className="text-xs text-muted-foreground"> · recurrence of {formatDateShort(recurs.occurred_on)}</span>}
-                    <span className="block text-xs text-muted-foreground truncate">{describeSeverity(i, today)}</span>
+                    <span className="block text-xs text-muted-foreground truncate">{describeSeverity(i, stages.filter((st) => st.injury_id === i.id), today)}</span>
                   </span>
                   <span
                     className={cn(
