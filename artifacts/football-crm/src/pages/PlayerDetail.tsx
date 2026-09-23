@@ -46,14 +46,6 @@ const USUAL_RANGE_BASELINE_DAYS = 56;
 const LOAD_HISTORY_DAYS = LOAD_WINDOW_DAYS + USUAL_RANGE_BASELINE_DAYS;
 
 /**
- * Above this share of estimated load, the figure stops being a footnote on the
- * status card and becomes a line of its own. Past half, the numbers beside it
- * are mostly fills rather than ratings, which changes how much weight a coach
- * should put on them — that is not something to learn from small grey text.
- */
-const MOSTLY_ESTIMATED = 0.5;
-
-/**
  * The turnout window on the status card: how far back "sessions logged" counts.
  * Three weeks is the shortest span that still holds several of a Wed/Fri/Sun
  * schedule's sessions, so one missed week moves the number visibly.
@@ -365,11 +357,6 @@ export default function PlayerDetail() {
       baseline: shareBetween(iso(baselineStart), iso(baselineEnd)),
     };
   }, [historyRows]);
-
-  /** True when either side of the ratio is mostly fills — see MOSTLY_ESTIMATED. */
-  const mostlyEstimated =
-    (estimatedSplit.acute !== null && estimatedSplit.acute > MOSTLY_ESTIMATED) ||
-    (estimatedSplit.baseline !== null && estimatedSplit.baseline > MOSTLY_ESTIMATED);
 
   /** The Load Trend band — usual session day, from the history behind the plotted window. */
   const usualSessionRange = useMemo(
@@ -797,7 +784,7 @@ export default function PlayerDetail() {
                       </span>
                     </div>
                   )}
-                  {!mostlyEstimated && (estimatedSplit.acute !== null || estimatedSplit.baseline !== null) && (
+                  {(estimatedSplit.acute !== null || estimatedSplit.baseline !== null) && (
                     <div data-testid="text-load-estimated">
                       Estimated{" "}
                       <span className="text-foreground font-time font-bold">{pctOrDash(estimatedSplit.acute)}</span>
@@ -808,31 +795,6 @@ export default function PlayerDetail() {
                   )}
                 </div>
               </div>
-
-              {/* Past MOSTLY_ESTIMATED this is the first thing worth knowing
-                  about every other number on the card, so it gets its own
-                  line. Prominence is weight and position, not colour — the
-                  one accent stays reserved for Spike. */}
-              {mostlyEstimated && (
-                <div
-                  className="rounded-lg border border-border bg-muted px-3 py-2 mb-3"
-                  data-testid="text-load-estimated"
-                >
-                  <div className="flex flex-wrap items-baseline gap-x-4 gap-y-0.5">
-                    <span className="text-xs text-foreground font-semibold">Mostly estimated load</span>
-                    <span className="text-[11px] text-muted-foreground">
-                      last 7 days{" "}
-                      <span className="text-foreground font-time font-bold text-sm">{pctOrDash(estimatedSplit.acute)}</span>
-                      {" · 3-week baseline "}
-                      <span className="text-foreground font-time font-bold text-sm">{pctOrDash(estimatedSplit.baseline)}</span>
-                    </span>
-                  </div>
-                  <div className="text-[11px] text-muted-foreground mt-0.5">
-                    Filled in from team medians or an RPE {MATCH_RPE} match estimate, not rated by the player —
-                    the side of the comparison with the higher figure is the softer one.
-                  </div>
-                </div>
-              )}
 
               {/* Turnout, so a light week can be told from an absent player. */}
               <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1 text-[11px] text-muted-foreground mb-3">
