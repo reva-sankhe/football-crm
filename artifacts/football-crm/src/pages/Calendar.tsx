@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Calendar as CalendarIcon, Check, ChevronLeft, ChevronRight, Copy, ExternalLink, HelpCircle, Pencil, Plus, Repeat, Trash2 } from "lucide-react";
+import { Calendar as CalendarIcon, Check, ChevronLeft, ChevronRight, Copy, ExternalLink, HelpCircle, Pencil, Plus, Repeat, Smartphone, Trash2 } from "lucide-react";
 import { EmptyState } from "@/components/EmptyState";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { TableSkeleton } from "@/components/Skeleton";
@@ -553,6 +553,9 @@ function SubscribePanel() {
   const [copied, setCopied] = useState(false);
   if (!FEED_TOKEN) return null;
   const feedUrl = `${window.location.origin}/api/calendar/${FEED_TOKEN}.ics`;
+  // The same feed as webcal:// — what an iPhone or Mac opens as "Subscribe to
+  // calendar", with the link filled in. Apple fetches it over HTTPS.
+  const webcalUrl = feedUrl.replace(/^https?:\/\//, "webcal://");
 
   const copy = async () => {
     try {
@@ -568,7 +571,7 @@ function SubscribePanel() {
     <div className="bg-card border border-border rounded-xl p-3 flex items-center gap-2 flex-wrap">
       <div className="flex items-center gap-1.5 text-xs font-medium text-foreground shrink-0">
         <CalendarIcon size={13} className="text-muted-foreground" />
-        Add to Google Calendar:
+        Subscribe:
       </div>
       <input
         readOnly
@@ -586,6 +589,14 @@ function SubscribePanel() {
       >
         {copied ? <Check size={12} className="text-emerald-500" /> : <Copy size={12} />}
       </button>
+      <a
+        href={webcalUrl}
+        data-testid="link-add-to-iphone-calendar"
+        className="h-6 px-2 flex items-center gap-1 rounded-md border border-border text-[11px] font-medium text-muted-foreground hover:text-foreground transition-colors shrink-0"
+        title="Opens the iPhone or Mac Calendar's subscribe screen with this link filled in"
+      >
+        <Smartphone size={12} /> Add to iPhone
+      </a>
       <Popover>
         <PopoverTrigger asChild>
           <button
@@ -597,7 +608,15 @@ function SubscribePanel() {
         </PopoverTrigger>
         <PopoverContent className="w-80 text-xs" data-testid="popover-how-to-subscribe">
           <div>
-            <p className="font-medium text-foreground mb-1.5">On a computer</p>
+            <p className="font-medium text-foreground mb-1.5">iPhone or Mac (Apple Calendar)</p>
+            <p className="text-muted-foreground">
+              Tap <span className="text-foreground">Add to iPhone</span> on the phone itself, then{" "}
+              <span className="text-foreground">Subscribe</span>. Or paste the link in Settings → Calendar → Accounts →
+              Add Account → Other → Add Subscribed Calendar.
+            </p>
+          </div>
+          <div className="mt-3">
+            <p className="font-medium text-foreground mb-1.5">Google Calendar, on a computer</p>
             <ol className="list-decimal list-inside space-y-1 text-muted-foreground">
               <li>Copy the link above</li>
               <li>Go to <span className="text-foreground">calendar.google.com</span></li>
@@ -606,7 +625,7 @@ function SubscribePanel() {
             </ol>
           </div>
           <div className="mt-3">
-            <p className="font-medium text-foreground mb-1.5">On your phone</p>
+            <p className="font-medium text-foreground mb-1.5">Google Calendar app</p>
             <p className="text-muted-foreground">
               The Google Calendar app can't add a calendar by URL directly. Do the steps above once on a
               computer (or in your phone's browser at calendar.google.com) — it'll then show up
