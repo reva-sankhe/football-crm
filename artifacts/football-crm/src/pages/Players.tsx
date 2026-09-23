@@ -599,10 +599,19 @@ function AllPlayersTab({
           <FileText size={15} />
         </IconButton>
 
+        {/* Labelled, not icon-only: a hover tooltip doesn't exist on a tablet */}
         {isAdmin && (
-          <IconButton label="Report injury" onClick={() => setReportingInjury(true)} data-testid="button-report-injury">
+          <button
+            type="button"
+            onClick={() => setReportingInjury(true)}
+            className="h-9 px-3 flex items-center gap-1.5 rounded-lg border border-border text-sm text-muted-foreground hover:text-foreground whitespace-nowrap transition-colors shrink-0"
+            aria-label="Report injury"
+            data-testid="button-report-injury"
+          >
             <Activity size={15} />
-          </IconButton>
+            <span className="sm:hidden">Injury</span>
+            <span className="hidden sm:inline">Report injury</span>
+          </button>
         )}
 
         <AddButton label="Add player" onClick={() => setShowAdd(true)} data-testid="button-add-player" />

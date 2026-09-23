@@ -41,18 +41,20 @@ const DECISIONS = {
       returned: "Back on a date the coaches give (set `returnedOn`)",
       other: "Knock only; she stopped coming for another reason — match fit 2 Aug",
     },
-    answer: null, // e.g. "open", or { key: "returned", returnedOn: "2026-08-20" }
+    // Coaches, 23 Sep: ACL tear, out 8 months, a single injury
+    answer: { key: "open", expectedReturn: "2027-04-02", notes: "ACL tear" },
   },
   ibreez: {
     question: "Ibreez — back: 30 Aug, 6 Sep, 12 Sep (+ Injured 16 Sep). One ongoing problem, or separate knocks?",
     options: {
-      chain: "Three injuries: 30 Aug and 6 Sep played through (slight), 12 Sep a recurrence she is still out with",
-      single: "One injury from 30 Aug, full training while playing through, out from 12 Sep",
+      single: "One back injury from 15 Aug (coaches' date — before any note), played through, out from the 12 Sep substitution",
     },
-    answer: null,
+    // Coaches, 23 Sep: one injury, 15 Aug, back 1 Oct; supersedes the chain of three
+    answer: { key: "single", occurred: "2026-08-15", expectedReturn: "2026-10-01" },
   },
   atiriya: {
-    question: "Atiriya — hand (12 Sep, off at 61'). Were the 16 and 18 Sep absences because of it?",
+    // Coaches, 23 Sep: "resolved, she is fine now" — true of both options, so still open
+    question: "Atiriya — hand (12 Sep, off at 61', resolved). Were the 16 and 18 Sep absences because of it?",
     options: {
       yes: "Out 12 Sep, match fit 21 Sep (her next session)",
       no: "Played on — match fit 12 Sep",
@@ -76,7 +78,7 @@ const DECISIONS = {
     answer: null,
   },
   april: {
-    question: "The six CSV-imported rows (5 and 20 Apr) — the sheet's column meant 'injured/unavailable'. Injuries, or plain Absent?",
+    question: "The six CSV-imported rows — Fatima, Hansika, Isabelle, Reva on 5 Apr; Hansika and Gabrielle on 20 Apr. Injuries, or plain Absent?",
     options: {
       absent: "Plain Absent, no injury",
       injuries: "Unspecified injuries, match fit at each player's next session",
@@ -84,14 +86,16 @@ const DECISIONS = {
     answer: null,
   },
   mechanism: {
-    question: "Contact or non-contact for Hiba (ACL), Zarastyn (knee), Atiriya (hand), Ibreez (back)?",
+    question: "Contact or non-contact for Zarastyn (knee), Atiriya (hand), Ibreez (back)? (Hiba: contact.)",
     options: {},
-    answer: null, // { hiba: "contact" | "non_contact", zarastyn: …, atiriya: …, ibreez: … }
+    // Partial: Hiba's came with her record. The rest are still with the coaches.
+    answer: { hiba: "contact" }, // zarastyn, atiriya, ibreez: "contact" | "non_contact"
   },
   hiba: {
     question: "Hiba — ACL: which knee, and an expected return date? (Her 6 Sep minutes are also blank.)",
     options: {},
-    answer: null, // { side: "left" | "right", expectedReturn: "2027-06-01" }
+    // Entered through the app and corrected to 6 Sep — the migration links to it
+    answer: { side: "right", expectedReturn: "2027-03-01" },
   },
 };
 
@@ -172,6 +176,7 @@ const resolvedAt = (name, occurred, fallback = null) => firstActivityAfter(playe
   const base = { player: "Zarastyn", occurred: "2026-08-02", area: "Knee", side: null, context: "match", onset: "acute",
     mechanismKey: "zarastyn", sources: rows.map((r) => `match ${matchById.get(r.match_id)?.stage} "${r.injury_note}" (${r.minutes_played}')`) };
   const z = DECISIONS.zarastyn.answer;
+  if (z) { base.expectedReturn = z.expectedReturn ?? null; base.notes = z.notes; base.sideNote = "side not given"; }
   propose("zarastyn", { ...base, decision: "zarastyn", variants: {
     open: { stages: [["out", "2026-08-02"]] },
     returned: { stages: [["out", "2026-08-02"], ["match_fit", z?.returnedOn ?? "<date from coaches>"]] },
@@ -187,38 +192,33 @@ const resolvedAt = (name, occurred, fallback = null) => firstActivityAfter(playe
     stages: [["out", "2026-08-01"], ["match_fit", resolvedAt("Ibreez", "2026-08-01")]] });
 }
 
-// Ibreez — back
+// Ibreez — back: one injury (coaches, 23 Sep), dated before any note. She
+// played through it — 35', 15', 69' — so no stage covers that stretch: she
+// was available, and a not-fit stage there would badge the lineups she played
+// in. Out from the 12 Sep substitution (off at 69', "back"); 16 Sep was the
+// next session, so starting at 16 Sep instead would change only the length.
 {
   const r30 = statRows("Ibreez", "2026-08-30");
   const r06 = statRows("Ibreez", "2026-09-06");
   const r12 = statRows("Ibreez", "2026-09-12");
   const a16 = attRows("Ibreez", ["2026-09-16"]);
-  const src = (rows) => rows.map((r) => `match "${r.injury_note}" (${r.minutes_played}')`);
-  const back = { player: "Ibreez", area: "Back", side: "n/a", context: "match", mechanismKey: "ibreez" };
-  const ans = pick(DECISIONS.ibreez);
-  if (ans !== "single") {
-    propose("ibreez-back-30aug", { ...back, occurred: "2026-08-30", onset: "acute", sources: src(r30),
-      stages: [["match_fit", "2026-08-30"]], decision: ans ? undefined : "ibreez", variantNote: "chain (proposed)" });
-    propose("ibreez-back-6sep", { ...back, occurred: "2026-09-06", onset: "acute", recurrenceOf: "ibreez-back-30aug", sources: src(r06),
-      stages: [["match_fit", "2026-09-06"]] });
-    propose("ibreez-back-12sep", { ...back, occurred: "2026-09-12", onset: "acute", recurrenceOf: "ibreez-back-6sep",
-      sources: [...src(r12), ...a16.map(() => "attendance Injured 16 Sep")], stages: [["out", "2026-09-12"]] });
-  }
-  if (ans !== "chain") {
-    propose("ibreez-back-single", { ...back, occurred: "2026-08-30", onset: "overuse",
-      sources: [...src(r30), ...src(r06), ...src(r12), ...a16.map(() => "attendance Injured 16 Sep")],
-      stages: [["full_training", "2026-08-30"], ["out", "2026-09-12"]], variantNote: "single (alternative)" });
-  }
+  const src = (rows) => rows.map((r) => `match ${dateOfMatch(r.match_id).slice(5)} "${r.injury_note}" (${r.minutes_played}')`);
+  const ans = DECISIONS.ibreez.answer;
+  propose("ibreez-back", { player: "Ibreez", area: "Back", side: "n/a", context: null, onset: null, mechanismKey: "ibreez",
+    occurred: ans.occurred, expectedReturn: ans.expectedReturn,
+    sources: [...src(r30), ...src(r06), ...src(r12), ...a16.map(() => "attendance Injured 16 Sep")],
+    stages: [["out", "2026-09-12"]] });
 }
 
-// Hiba — ACL, 6 Sep
+// Hiba — ACL, 6 Sep. Already on record (entered through the app, corrected to
+// 6 Sep): the migration creates nothing, only links her 6 Sep grid row to it.
 {
   const rows = statRows("Hiba", "2026-09-06");
   const h = DECISIONS.hiba.answer;
   propose("hiba-acl", { player: "Hiba", occurred: "2026-09-06", area: "Knee", side: h?.side ?? null, context: "match",
     onset: "acute", mechanismKey: "hiba", notes: "ACL tear", expectedReturn: h?.expectedReturn ?? null,
     sources: rows.map((r) => `match "${r.injury_note}" (${r.minutes_played}' — minutes never entered)`),
-    stages: [["out", "2026-09-06"]] });
+    stages: [["out", "2026-09-06"]], linkExisting: true });
 }
 
 // Atiriya — hand, 12 Sep
@@ -304,35 +304,95 @@ const unplanned = [
 line(unplanned.length ? `!! Not covered by the plan: ${unplanned.join(", ")}` : "Every legacy row is covered by the plan.");
 line();
 
+const LATERAL = new Set(["Shoulder", "Arm/elbow", "Wrist/hand", "Hip/groin", "Hamstring", "Quadriceps", "Knee", "Calf/shin", "Achilles", "Ankle", "Foot/toe"]);
+const STAGE_WORD = { out: "Out", modified: "Modified", full_training: "Full" };
+const short = (d) => new Date(d + "T00:00:00").toLocaleDateString("en-GB", { day: "numeric", month: "short" });
+const monthStart = TODAY.slice(0, 7) + "-01";
+
 function describe(entry, stages) {
   const p = playerByName(entry.player);
-  const mech = entry.mechanismKey ? (DECISIONS.mechanism.answer?.[entry.mechanismKey] ?? "<mechanism?>") : null;
+  const mech = entry.mechanismKey ? DECISIONS.mechanism.answer?.[entry.mechanismKey] ?? null : null;
   const last = stages[stages.length - 1];
   const open = last[0] !== "match_fit";
   const returned = open ? null : last[1];
   const placeholder = returned?.startsWith("<");
   const n = returned && !placeholder ? days(entry.occurred, returned) : null;
   const lostTxt = n != null
-    ? `${band(n)}, ${n} day${n === 1 ? "" : "s"} (approx.)`
-    : open ? `open — at least ${band(days(entry.occurred, TODAY))} so far${firstActivityAfter(p.id, entry.occurred) ? "" : ", no activity since"}`
+    ? `${band(n)}, ${n} day${n === 1 ? "" : "s"}${entry.linkExisting ? "" : " (approx.)"}`
+    : open ? `open — ${days(entry.occurred, TODAY)} days so far${entry.expectedReturn ? `, ${days(entry.occurred, entry.expectedReturn)} at the expected return (${band(days(entry.occurred, entry.expectedReturn))})` : ""}`
     : "severity once the date is given";
-  line(`      stages: ${stages.map(([s, d]) => `${s} ${d.startsWith("<") ? d : d.slice(5)}`).join(" → ")}   [${lostTxt}]`);
-  if (mech) line(`      mechanism: ${mech}`);
+
+  // ── What gets written ──
+  const matchRows = entry.sources.filter((x) => x.startsWith("match")).length;
+  const attRowsN = entry.sources.filter((x) => x.startsWith("attendance")).length;
+  if (entry.linkExisting) line(`      writes: nothing new — the injury is already on record`);
+  else line(`      writes: 1 injury (migrated) + ${stages.length} stage${stages.length === 1 ? "" : "s"}: ${stages.map(([st, d]) => `${st} ${d.startsWith("<") ? d : d.slice(5)}`).join(" → ")}`);
+  const links = [
+    matchRows && `${matchRows} match row${matchRows === 1 ? "" : "s"} linked (injury_id)`,
+    attRowsN && `${attRowsN} Injured attendance row${attRowsN === 1 ? "" : "s"} → Absent (no % change)`,
+  ].filter(Boolean);
+  if (links.length) line(`              ${links.join("; ")}`);
+  line(`      length: ${lostTxt}`);
+
+  // ── What the app shows once it's in ──
+  const windows = [];
+  for (let i = 0; i < stages.length; i++) {
+    const [st, from] = stages[i];
+    if (st === "match_fit") continue;
+    const to = stages[i + 1]?.[1];
+    windows.push(`${STAGE_WORD[st]} ${short(from)}–${to ? (to.startsWith("<") ? "?" : short(to)) : "now"}`);
+  }
+  if (windows.length) {
+    line(`      in the app: lineup badge ${windows.join(", ")}; load alerts ${stages.some(([st]) => st === "out") ? "off while out" : "labelled returning"}`);
+  } else {
+    line(`      in the app: no badge (no time lost)`);
+  }
+  // The alert names an injury in effect on one of this month's session days, or today
+  const inEffect = (d) => stages.some(([st, from], i) => st !== "match_fit" && d >= from
+    && (!stages[i + 1] || stages[i + 1][1].startsWith("<") || d < stages[i + 1][1]));
+  const noted = [...sessions.filter((x) => x.date >= monthStart && x.date <= TODAY).map((x) => x.date), TODAY].some(inEffect);
+  const label = `${entry.area === "Unspecified" ? "unspecified" : entry.area.toLowerCase()}${entry.side && entry.side !== "n/a" ? ` (${entry.side})` : ""}`;
+  if (open && noted) line(`                  attendance alert note (if an alert fires): "out with ${label} since ${short(entry.occurred)}"`);
+  // An injury with no time lost is never "in effect", so it adds no note
+  else if (noted && !placeholder) line(`                  attendance alert note (if an alert fires): "was out with ${label} ${short(entry.occurred)}–${short(returned)}"`);
+  if (open) {
+    const lastChange = stages[stages.length - 1][1];
+    const evidence = firstActivityAfter(p.id, lastChange);
+    const prompt = evidence ? `"activity on ${short(evidence)} while ${STAGE_WORD[last[0]].toLowerCase()} — back?"`
+      : entry.expectedReturn && entry.expectedReturn > TODAY ? `none until the expected return (${short(entry.expectedReturn)})`
+      : entry.expectedReturn ? `"expected back ${short(entry.expectedReturn)} — where do they stand?"`
+      : days(lastChange, TODAY) >= 14 ? `"no update for ${days(lastChange, TODAY)} days — still out?" (straight away)`
+      : "none yet";
+    line(`                  closing prompt: ${prompt}`);
+  }
+
+  // ── Still missing ──
+  const missing = [];
+  if (entry.area !== "Unspecified" && LATERAL.has(entry.area) && !entry.side) missing.push("side");
+  if (entry.area !== "Unspecified" && entry.mechanismKey !== undefined && !mech) missing.push("mechanism");
+  if (entry.area !== "Unspecified" && !entry.onset) missing.push("onset");
+  if (!entry.context) missing.push("context");
+  if (entry.area === "Unspecified") missing.push("body area");
+  if (missing.length) line(`      missing: ${missing.join(", ")}${entry.linkExisting ? "" : " — saved empty if still unknown at apply"}`);
 }
 
 for (const e of plan) {
   const tag = e.variantNote ? `  [${e.variantNote}]` : "";
-  line(`• ${e.player} — ${e.area}${e.side ? ` (${e.side})` : ""}, ${e.occurred}${e.context ? `, ${e.context}` : ""}${e.onset ? `, ${e.onset}` : ""}${tag}`);
-  if (e.recurrenceOf) line(`      recurrence of: ${e.recurrenceOf}`);
+  line(`• ${e.player} — ${e.area}${e.side && e.side !== "n/a" ? ` (${e.side})` : ""}, ${e.occurred}${e.context ? `, ${e.context}` : ""}${e.onset ? `, ${e.onset}` : ""}${tag}`);
   if (e.notes) line(`      notes: ${e.notes}`);
   if (e.expectedReturn !== undefined) line(`      expected return: ${e.expectedReturn ?? "<from coaches>"}`);
   line(`      from: ${e.sources.join("; ") || "(none)"}`);
   // Entered through the app since injuries went live — converting the legacy
   // row as well would record the same injury twice
-  const onRecord = existing.filter((i) => !i.migrated && i.player_id === playerByName(e.player).id
-    && (e.area === "Unspecified" || i.body_area === e.area));
-  for (const i of onRecord) {
-    line(`      !! already on record: ${i.body_area ?? "illness"}${i.side && i.side !== "n/a" ? ` (${i.side})` : ""} from ${i.occurred_on}${i.notes ? ` "${i.notes}"` : ""} — likely the same injury; converting would duplicate it`);
+  if (!e.linkExisting) {
+    const onRecord = existing.filter((i) => !i.migrated && i.player_id === playerByName(e.player).id
+      && (e.area === "Unspecified" || i.body_area === e.area));
+    for (const i of onRecord) {
+      line(`      !! already on record: ${i.body_area ?? "illness"}${i.side && i.side !== "n/a" ? ` (${i.side})` : ""} from ${i.occurred_on}${i.notes ? ` "${i.notes}"` : ""} — likely the same injury; converting would duplicate it`);
+    }
+  } else {
+    const rec = existing.find((i) => !i.migrated && i.player_id === playerByName(e.player).id && i.body_area === e.area && i.occurred_on === e.occurred);
+    line(rec ? `      links to: the record entered through the app (${rec.occurred_on}, "${rec.notes}")` : `      !! expected an existing record on ${e.occurred} — none found; an apply must not proceed`);
   }
   if (e.variants) {
     const chosen = pick(DECISIONS[e.decision]);
@@ -352,6 +412,8 @@ line("Also on apply: each legacy Injured attendance row becomes Absent — no at
 line("Injured mark already counts as a missed session — and each flagged match row gets injury_id set;");
 line("its note is kept.");
 line();
-const pending = Object.entries(DECISIONS).filter(([, d]) => d.answer == null);
+const MECHANISM_FOR = ["hiba", "zarastyn", "atiriya", "ibreez"];
+const isPending = ([k, d]) => d.answer == null || (k === "mechanism" && MECHANISM_FOR.some((p) => !d.answer[p]));
+const pending = Object.entries(DECISIONS).filter(isPending);
 line(pending.length ? `Waiting on ${pending.length} decision(s) — no apply until all are answered:` : "All decisions answered.");
 for (const [k, d] of pending) line(`  [${k}] ${d.question}`);
