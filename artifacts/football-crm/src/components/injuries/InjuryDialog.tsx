@@ -1,23 +1,25 @@
 import { useCallback, useEffect, useState } from "react";
 import { createPortal } from "react-dom";
-import { RefreshCw, Trash2, Undo2 } from "lucide-react";
+import { Pencil, RefreshCw, Trash2, Undo2 } from "lucide-react";
 import { cn, getErrorMessage } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
+import { useAuth } from "@/context/AuthContext";
 import { formatDateShort, todayISO } from "@/lib/attendance";
 import {
-  CONTEXTS, MECHANISMS, ONSETS, STAGE_CFG, STAGE_ORDER, describeSeverity, injuryLabel,
-  stageInsertProblem, undoProblem, type ClosingPrompt,
+  CONTEXTS, MECHANISMS, ONSETS, STAGE_CFG, STAGE_ORDER, describeSeverity, draftFromInjury, injuryEditProblems,
+  injuryLabel, injuryRowFromDraft, stageInsertProblem, undoProblem, type ClosingPrompt, type InjuryDraft,
 } from "@/lib/injuries";
+import { InjuryFields } from "./InjuryFields";
 import {
-  addInjuryStage, countRecurrencesOf, deleteInjury, fetchInjuriesByIds, fetchInjuryStages,
+  addInjuryStage, countRecurrencesOf, deleteInjury, fetchInjuriesByIds, fetchInjuriesForPlayer, fetchInjuryStages,
   undoLastInjuryStage, updateInjury,
 } from "@/lib/queries";
 import type { InjuryStage, InjuryStageName, InjuryWithStatus, Player } from "@/lib/types";
 
 /**
- * One injury, and everything a coach does with it after entry: move it to the
- * next stage, answer "still out", set when they're expected back, undo the
- * latest stage, or delete it. Opened from a closing prompt (which pre-fills
+ * One injury, and everything a coach does with it after entry: correct any of
+ * its details, move it to the next stage, answer "still out", set when they're
+ * expected back, undo the latest stage, or delete it. Opened from a closing prompt (which pre-fills
  * the stage and date it suggests), the player page, and Mark Attendance.
  *
  * Stages are append-only. The only correction is undoing the latest one —
@@ -45,6 +47,38 @@ export function InjuryDialog({
   const [loaded, setLoaded] = useState(false);
   const [busy, setBusy] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const { isAdmin } = useAuth();
+
+  // ── Editing the details ──
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState<InjuryDraft>(() => draftFromInjury(initial));
+  const [occurredDraft, setOccurredDraft] = useState(initial.occurred_on);
+  /** The player's other injuries — for the recurrence picker and setback warning, never this one. */
+  const [others, setOthers] = useState<InjuryWithStatus[]>([]);
+  const startEditing = () => {
+    setDraft(draftFromInjury(injury));
+    setOccurredDraft(injury.occurred_on);
+    setEditing(true);
+    fetchInjuriesForPlayer(injury.player_id)
+      .then((rows) => setOthers(rows.filter((r) => r.id !== injury.id)))
+      .catch(() => setOthers([]));
+  };
+  const editProblems = injuryEditProblems(draft, occurredDraft, stages, todayISO());
+  const saveDetails = () => run(
+    `${injuryLabel({ ...injury, ...draft, body_area: draft.body_area || null, side: draft.side || null })}: details saved`,
+    async () => {
+      // A new date no longer matches the session or match it was linked to
+      const moved = occurredDraft !== injury.occurred_on;
+      const { player_id: _, ...updates } = injuryRowFromDraft(draft, {
+        player_id: injury.player_id,
+        occurred_on: occurredDraft,
+        session_id: moved ? null : injury.session_id,
+        match_id: moved ? null : injury.match_id,
+      });
+      await updateInjury(injury.id, updates);
+      setEditing(false);
+    },
+  );
 
   const [nextStage, setNextStage] = useState<InjuryStageName | "">(prompt?.suggestStage ?? "");
   const [nextDate, setNextDate] = useState(prompt?.suggestDate ?? todayISO());
@@ -125,6 +159,17 @@ export function InjuryDialog({
             </p>
             {loaded && <p className="text-xs text-muted-foreground">{describeSeverity(injury, stages, todayISO())}</p>}
             {injury.notes && <p className="text-xs text-foreground mt-1">{injury.notes}</p>}
+            {isAdmin && !editing && (
+              <button
+                type="button"
+                onClick={startEditing}
+                disabled={!loaded}
+                className="mt-2 flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground disabled:opacity-40 transition-colors"
+                data-testid="button-edit-injury"
+              >
+                <Pencil size={11} /> Edit details
+              </button>
+            )}
           </div>
           <button onClick={onClose} aria-label="Close" className="text-muted-foreground hover:text-foreground transition-colors text-xl leading-none">&times;</button>
         </div>
@@ -132,6 +177,51 @@ export function InjuryDialog({
         <div className="px-5 py-4 space-y-5">
           {prompt && (
             <p className="text-xs rounded-lg border border-status-warn bg-status-warn px-3 py-2 text-foreground">{prompt.message}</p>
+          )}
+
+          {/* ── Details — every field but the stages, which are a dated history below ── */}
+          {editing && (
+            <div className="space-y-4 rounded-xl border border-border p-4" data-testid="form-edit-injury">
+              <div>
+                <label className="block text-xs text-muted-foreground mb-1">Occurred</label>
+                <input
+                  type="date"
+                  value={occurredDraft}
+                  max={todayISO()}
+                  onChange={(e) => setOccurredDraft(e.target.value)}
+                  className={cn(inputCls, editProblems.occurred_on && "border-status-bad")}
+                  data-testid="input-edit-occurred"
+                />
+                {editProblems.occurred_on ? (
+                  <p className="text-[11px] text-status-bad mt-1">{editProblems.occurred_on}</p>
+                ) : occurredDraft !== injury.occurred_on && (injury.session_id || injury.match_id) ? (
+                  <p className="text-[11px] text-muted-foreground mt-1">A new date unlinks it from the {formatDateShort(injury.occurred_on)} session.</p>
+                ) : null}
+              </div>
+              <InjuryFields
+                draft={draft}
+                onChange={setDraft}
+                occurredOn={occurredDraft}
+                problems={editProblems}
+                history={others}
+                editing
+              />
+              <div className="flex items-center justify-end gap-2">
+                <button type="button" onClick={() => setEditing(false)} className="px-3 py-2 rounded-lg text-sm text-muted-foreground hover:text-foreground transition-colors">
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={saveDetails}
+                  disabled={busy || Object.keys(editProblems).length > 0}
+                  className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-semibold bg-indigo-600 text-white hover:bg-indigo-500 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                  data-testid="button-save-injury-details"
+                >
+                  {busy && <RefreshCw size={13} className="animate-spin" />}
+                  Save details
+                </button>
+              </div>
+            </div>
           )}
 
           {/* ── History ─────────────────────────────────────────────────── */}

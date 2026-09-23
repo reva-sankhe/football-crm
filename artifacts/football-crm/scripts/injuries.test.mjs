@@ -140,6 +140,25 @@ try {
 
   assert.deepEqual(inj.injuryDraftProblems(inj.emptyInjuryDraft(""), "2026-09-06").context !== undefined, true);
 
+  // ── Editing an existing injury ────────────────────────────────────────────
+  // Only what the database refuses blocks an edit; unknowns may stay empty
+  const migratedKnee = injury({ occurred_on: "2026-08-02", side: null, mechanism: null, context: "match", migrated: true });
+  const kneeStages = [stage("out", "2026-08-02")];
+  const d0 = inj.draftFromInjury(migratedKnee);
+  assert.equal(d0.mechanism, "", "a missing mechanism comes through as empty");
+  assert.deepEqual(inj.injuryEditProblems({ ...d0, notes: "ACL tear" }, "2026-08-02", kneeStages, "2026-09-23"), {},
+    "notes can be edited while mechanism and side are still unknown");
+  assert.ok(inj.injuryEditProblems(d0, "2026-08-03", kneeStages, "2026-09-23").occurred_on,
+    "the injury date can't move after its first stage (the trigger refuses it too)");
+  assert.deepEqual(inj.injuryEditProblems(d0, "2026-08-01", kneeStages, "2026-09-23"), {}, "earlier is fine");
+  assert.ok(inj.injuryEditProblems(d0, "2026-09-24", [], "2026-09-23").occurred_on, "not in the future");
+  assert.ok(inj.injuryEditProblems({ ...d0, onset: "overuse", mechanism: "contact" }, "2026-08-02", kneeStages, "2026-09-23").mechanism);
+  assert.ok(inj.injuryEditProblems({ ...d0, body_area: "" }, "2026-08-02", kneeStages, "2026-09-23").body_area);
+  assert.ok(inj.injuryEditProblems({ ...d0, expected_return_on: "2026-07-01" }, "2026-08-02", kneeStages, "2026-09-23").expected_return_on);
+  const asIllness = inj.injuryRowFromDraft({ ...d0, category: "illness" }, { player_id: "p", occurred_on: "2026-08-02" });
+  assert.deepEqual([asIllness.body_area, asIllness.side, asIllness.mechanism, asIllness.onset], [null, null, null, null],
+    "switching to illness clears the anatomy, as the CHECK requires");
+
   // ── Availability ──────────────────────────────────────────────────────────
   // Hiba-shaped: ACL on 6 Sep, out, modified from 1 Oct. Plus an old hamstring
   // that ended on 9 Aug, and an illness on 10 Sep, full training from the 12th.

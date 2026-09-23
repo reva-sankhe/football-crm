@@ -961,7 +961,8 @@ export async function undoLastInjuryStage(injuryId: string): Promise<void> {
 /** The fields editable after entry. The rest describes the moment it happened. */
 export async function updateInjury(
   id: string,
-  updates: Partial<Pick<Injury, "expected_return_on" | "reviewed_on" | "notes">>,
+  /** Any column but the player and the record's own bookkeeping; stages have their own calls. */
+  updates: Partial<Omit<Injury, "id" | "player_id" | "created_at" | "migrated">>,
 ): Promise<void> {
   const { error } = await supabase.from("injuries").update(updates).eq("id", id);
   if (error) throw error;

@@ -20,6 +20,7 @@ export function InjuryFields({
   history,
   showContext = true,
   compact = false,
+  editing = false,
 }: {
   draft: InjuryDraft;
   onChange: (next: InjuryDraft) => void;
@@ -32,6 +33,11 @@ export function InjuryFields({
   /** Hidden where the entry point already fixes it (the match grid is always "match"). */
   showContext?: boolean;
   compact?: boolean;
+  /**
+   * Editing an existing injury: no "Status now" (stages are a dated history,
+   * changed below it in the dialog) and expected back always shown.
+   */
+  editing?: boolean;
 }) {
   const set = <K extends keyof InjuryDraft>(key: K, value: InjuryDraft[K]) =>
     onChange({ ...draft, [key]: value });
@@ -104,6 +110,7 @@ export function InjuryFields({
         </Field>
       )}
 
+      {!editing && (
       <Field label="Status now" problem={problems.stage}>
         <select
           value={draft.stage}
@@ -113,8 +120,9 @@ export function InjuryFields({
           {INITIAL_STAGES.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
         </select>
       </Field>
+      )}
 
-      {draft.stage !== "match_fit" && (
+      {(editing || draft.stage !== "match_fit") && (
         <Field label="Expected back" optional problem={problems.expected_return_on}>
           <input
             type="date"

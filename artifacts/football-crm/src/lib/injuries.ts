@@ -305,6 +305,51 @@ export function injuryDraftProblems(d: InjuryDraft, occurredOn: string): Record<
   return p;
 }
 
+/** An existing injury as a draft, for editing its details. `stage` is unused there. */
+export function draftFromInjury(i: InjuryWithStatus): InjuryDraft {
+  return {
+    category: i.category,
+    body_area: i.body_area ?? "",
+    side: i.side ?? "",
+    context: i.context ?? "",
+    mechanism: i.mechanism ?? "",
+    onset: i.onset ?? "",
+    stage: i.current_stage ?? "out",
+    expected_return_on: i.expected_return_on ?? "",
+    recurrence_of: i.recurrence_of ?? "",
+    notes: i.notes ?? "",
+  };
+}
+
+/**
+ * What stops an edit — only what the database would refuse, or a date that
+ * contradicts the stages. Unlike a new entry, unknowns stay allowed: a
+ * migrated injury's mechanism is filled in when the coaches know it, not
+ * before, and editing its notes mustn't wait for that.
+ */
+export function injuryEditProblems(
+  d: InjuryDraft,
+  occurredOn: string,
+  stages: InjuryStage[],
+  today: string,
+): Record<string, string> {
+  const p: Record<string, string> = {};
+  if (d.category === "injury" && !d.body_area) p.body_area = "An injury needs a body area";
+  if (d.category === "injury" && d.onset === "overuse" && d.mechanism === "contact") {
+    p.mechanism = "An overuse injury has no single contact to attribute it to";
+  }
+  if (!occurredOn) p.occurred_on = "Pick a date";
+  else if (occurredOn > today) p.occurred_on = "An injury can't be in the future";
+  else {
+    const first = byDate(stages)[0]?.effective_on;
+    if (first && occurredOn > first) p.occurred_on = `Can't be after its first stage (${formatDateShort(first)})`;
+  }
+  if (d.expected_return_on && occurredOn && d.expected_return_on < occurredOn) {
+    p.expected_return_on = "Expected return is before the injury date";
+  }
+  return p;
+}
+
 /** The insert payload for `injuries`, from a draft that has passed injuryDraftProblems. */
 export function injuryRowFromDraft(
   d: InjuryDraft,
