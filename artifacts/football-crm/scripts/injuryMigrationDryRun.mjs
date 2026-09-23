@@ -2,15 +2,14 @@
 // Injury migration — DRY RUN. Reads live data, prints what converting the
 // legacy injury records would write and what it would change. Writes nothing.
 //
-// The legacy records are the 13 `session_attendance` rows with status
-// Injured and the 8 `match_player_stats` rows flagged `injured` with a note.
-// Each becomes (part of) one row in `injuries`, marked `migrated`, with a
-// stage history inferred from the data: out from the day it happened, match
-// fit at the first sign of activity afterwards (a rated session or match
-// minutes), or still open.
+// Only four injuries are migrated, the ones the coaches answered for:
+// Zarastyn, Hiba, Ibreez (back) and Atiriya. Every other legacy record — the
+// Injured attendance marks and Ibreez's 1 Aug hamstring note — is left exactly
+// as it is: nobody needs those logged, and an Injured mark already counts as a
+// missed session, so leaving it changes no figure.
 //
-// The plan is written out by hand below — 21 rows are few enough to review
-// one by one, and a heuristic would hide the judgement calls. Every call that
+// The plan is written out by hand below, and a heuristic would hide the
+// judgement calls. Every call that
 // needs a coach's answer is a named DECISION with its options; the script
 // prints the consequence of each option, and uses `answer` once it is filled
 // in. Nothing here applies anything: the apply step is written after every
@@ -58,30 +57,6 @@ const DECISIONS = {
     options: {
       yes: "Out 12 Sep, match fit 21 Sep (her next session)",
       no: "Played on — match fit 12 Sep",
-    },
-    answer: null,
-  },
-  hansika: {
-    question: "Hansika — Injured 9 and 11 Sep, absent from every session since. Still out? Body area?",
-    options: {
-      open: "Still out since 9 Sep (set `bodyArea`)",
-      returned: "Back on a date the coaches give (set `returnedOn`, `bodyArea`)",
-    },
-    answer: null,
-  },
-  kirti: {
-    question: "Kirti — Injured 16 Sep, absent since. Still out? Body area?",
-    options: {
-      open: "Still out since 16 Sep (set `bodyArea`)",
-      returned: "Back on a date the coaches give (set `returnedOn`, `bodyArea`)",
-    },
-    answer: null,
-  },
-  april: {
-    question: "The six CSV-imported rows — Fatima, Hansika, Isabelle, Reva on 5 Apr; Hansika and Gabrielle on 20 Apr. Injuries, or plain Absent?",
-    options: {
-      absent: "Plain Absent, no injury",
-      injuries: "Unspecified injuries, match fit at each player's next session",
     },
     answer: null,
   },
@@ -184,14 +159,6 @@ const resolvedAt = (name, occurred, fallback = null) => firstActivityAfter(playe
   } });
 }
 
-// Ibreez — hamstring, 1 Aug
-{
-  const rows = statRows("Ibreez", "2026-08-01");
-  propose("ibreez-hamstring", { player: "Ibreez", occurred: "2026-08-01", area: "Hamstring", side: null, context: "match",
-    onset: "acute", sources: rows.map((r) => `match "${r.injury_note}" (${r.minutes_played}')`),
-    stages: [["out", "2026-08-01"], ["match_fit", resolvedAt("Ibreez", "2026-08-01")]] });
-}
-
 // Ibreez — back: one injury (coaches, 23 Sep), dated before any note. She
 // played through it — 35', 15', 69' — so no stage covers that stretch: she
 // was available, and a not-fit stage there would badge the lineups she played
@@ -233,61 +200,6 @@ const resolvedAt = (name, occurred, fallback = null) => firstActivityAfter(playe
     } });
 }
 
-// Hansika — 26 Aug (one day), then 9 + 11 Sep
-{
-  const a26 = attRows("Hansika", ["2026-08-26"]);
-  propose("hansika-26aug", { player: "Hansika", occurred: "2026-08-26", area: "Unspecified", side: null, context: "training",
-    sources: a26.map(() => "attendance Injured 26 Aug"), stages: [["out", "2026-08-26"], ["match_fit", resolvedAt("Hansika", "2026-08-26")]] });
-  const a09 = attRows("Hansika", ["2026-09-09", "2026-09-11"]);
-  const h = DECISIONS.hansika.answer;
-  propose("hansika-9sep", { player: "Hansika", occurred: "2026-09-09", area: h?.bodyArea ?? "Unspecified", side: null,
-    context: "training", decision: "hansika", sources: a09.map((a) => `attendance Injured ${sessionById.get(a.session_id).date.slice(5)}`),
-    variants: {
-      open: { stages: [["out", "2026-09-09"]] },
-      returned: { stages: [["out", "2026-09-09"], ["match_fit", h?.returnedOn ?? "<date from coaches>"]] },
-    } });
-}
-
-// Kirti — 16 Sep
-{
-  const a = attRows("Kirti", ["2026-09-16"]);
-  const k = DECISIONS.kirti.answer;
-  propose("kirti-16sep", { player: "Kirti", occurred: "2026-09-16", area: k?.bodyArea ?? "Unspecified", side: null,
-    context: "training", decision: "kirti", sources: a.map(() => "attendance Injured 16 Sep"),
-    variants: {
-      open: { stages: [["out", "2026-09-16"]] },
-      returned: { stages: [["out", "2026-09-16"], ["match_fit", k?.returnedOn ?? "<date from coaches>"]] },
-    } });
-}
-
-// Single days: Kimberly 30 Aug, Gabrielle 4 Sep
-for (const [name, date] of [["Kimberly", "2026-08-30"], ["Gabrielle", "2026-09-04"]]) {
-  const a = attRows(name, [date]);
-  propose(`${name.toLowerCase()}-${date.slice(5)}`, { player: name, occurred: date, area: "Unspecified", side: null,
-    context: "training", sources: a.map(() => `attendance Injured ${date.slice(5)}`),
-    stages: [["out", date], ["match_fit", resolvedAt(name, date)]] });
-}
-
-// April CSV rows
-{
-  const april = legacyAttendance.filter((a) => (sessionById.get(a.session_id)?.date ?? "").startsWith("2026-04"));
-  april.forEach((a) => consumedAtt.add(a.id));
-  for (const a of april) {
-    const p = players.find((x) => x.id === a.player_id);
-    const date = sessionById.get(a.session_id).date;
-    propose(`april-${p.name.split(" ")[0].toLowerCase()}-${date.slice(5)}`, { player: p.name.split(" ")[0], occurred: date,
-      area: "Unspecified", side: null, context: null, decision: "april",
-      sources: [`attendance Injured ${date.slice(5)} (CSV import)`],
-      variants: {
-        absent: { stages: null },
-        // No activity since at all leaves it open — say so rather than invent a return
-        injuries: { stages: resolvedAt(p.name.split(" ")[0], date)
-          ? [["out", date], ["match_fit", resolvedAt(p.name.split(" ")[0], date)]]
-          : [["out", date]] },
-      } });
-  }
-}
-
 // ── Report ───────────────────────────────────────────────────────────────────
 const line = (s = "") => console.log(s);
 const DAY = 86_400_000;
@@ -301,7 +213,20 @@ const unplanned = [
   ...legacyAttendance.filter((a) => !consumedAtt.has(a.id)).map((a) => `attendance ${a.id}`),
   ...legacyStats.filter((s) => !consumedStats.has(s.id)).map((s) => `match row ${s.id}`),
 ];
-line(unplanned.length ? `!! Not covered by the plan: ${unplanned.join(", ")}` : "Every legacy row is covered by the plan.");
+// Deliberately out of scope — listed so it's plain what an apply leaves alone
+const describeLeft = [
+  ...legacyAttendance.filter((a) => !consumedAtt.has(a.id)).map((a) => {
+    const p = players.find((x) => x.id === a.player_id); const d = sessionById.get(a.session_id)?.date;
+    return `${p?.name.split(" ")[0]} Injured mark ${d}`;
+  }),
+  ...legacyStats.filter((r) => !consumedStats.has(r.id)).map((r) => {
+    const p = players.find((x) => x.id === r.player_id);
+    return `${p?.name.split(" ")[0]} match note "${r.injury_note}" ${dateOfMatch(r.match_id)}`;
+  }),
+].sort();
+line(unplanned.length
+  ? `Left as they are (${unplanned.length}): ${describeLeft.join("; ")}`
+  : "Every legacy row is covered by the plan.");
 line();
 
 const LATERAL = new Set(["Shoulder", "Arm/elbow", "Wrist/hand", "Hip/groin", "Hamstring", "Quadriceps", "Knee", "Calf/shin", "Achilles", "Ankle", "Foot/toe"]);
@@ -408,9 +333,8 @@ for (const e of plan) {
   line();
 }
 
-line("Also on apply: each legacy Injured attendance row becomes Absent — no attendance % changes, since an");
-line("Injured mark already counts as a missed session — and each flagged match row gets injury_id set;");
-line("its note is kept.");
+line("Also on apply: each flagged match row above gets injury_id set, its note kept, and Ibreez's 16 Sep");
+line("Injured mark becomes Absent — no attendance % changes, since an Injured mark already counts as missed.");
 line();
 const MECHANISM_FOR = ["hiba", "zarastyn", "atiriya", "ibreez"];
 const isPending = ([k, d]) => d.answer == null || (k === "mechanism" && MECHANISM_FOR.some((p) => !d.answer[p]));

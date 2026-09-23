@@ -332,6 +332,18 @@ export default function PlayerDetail() {
     return <EmptyState icon={Dumbbell} title="Player not found" action={<button onClick={() => setLocation("/players")} className="text-primary text-sm">Back to Players</button>} />;
   }
 
+  const hasOpenInjury = playerInjuries.some((i) => i.status === "open");
+  const injuriesCard = (
+    <InjuriesCard
+      player={player}
+      injuries={playerInjuries}
+      stages={injuryHistory.stages}
+      availability={availability}
+      sessions={allSessions}
+      onChanged={loadInjuries}
+    />
+  );
+
   return (
     <div className="space-y-6">
       <button onClick={() => setLocation("/players")} className="flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground transition-colors" data-testid="button-back">
@@ -452,14 +464,8 @@ export default function PlayerDetail() {
       {/* ── Availability ───────────────────────────────────────────────────── */}
       <section className="space-y-2">
         <SectionLabel>Availability</SectionLabel>
-        <InjuriesCard
-          player={player}
-          injuries={playerInjuries}
-          stages={injuryHistory.stages}
-          availability={availability}
-          sessions={allSessions}
-          onChanged={loadInjuries}
-        />
+        {/* An open injury leads the page; otherwise the history sits at the end */}
+        {hasOpenInjury && injuriesCard}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 items-stretch">
           <AttendanceCard monthly={monthlyAttendance} />
           <LastSessionsCard
@@ -695,6 +701,14 @@ export default function PlayerDetail() {
               </div>
             )}
           </div>
+        </section>
+      )}
+
+      {/* ── Injuries, when none is open ────────────────────────────────────── */}
+      {!hasOpenInjury && (isAdmin || playerInjuries.length > 0) && (
+        <section className="space-y-2">
+          <SectionLabel>Injuries</SectionLabel>
+          {injuriesCard}
         </section>
       )}
     </div>

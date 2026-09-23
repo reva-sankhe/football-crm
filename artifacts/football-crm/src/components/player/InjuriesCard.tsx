@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
-import { Activity, Plus } from "lucide-react";
+import { Activity, ChevronDown, Plus } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/context/AuthContext";
 import { formatDateShort, todayISO } from "@/lib/attendance";
 import {
-  STAGE_CFG, availabilityLabel, buildEvidence, closingPrompts, describeSeverity, injuryLabel,
+  STAGE_CFG, buildEvidence, closingPrompts, describeSeverity, injuryLabel,
   type Availability, type ClosingPrompt,
 } from "@/lib/injuries";
 import { fetchPlayerActivitySince } from "@/lib/queries";
@@ -14,10 +14,10 @@ import { ClosingPrompts } from "@/components/injuries/ClosingPrompts";
 import type { InjuryStage, InjuryWithStatus, Player, TrainingSession } from "@/lib/types";
 
 /**
- * Why a player stopped training, on their own page: a banner while they are
- * not match fit, the question to answer about it if there is one, and every
- * injury on record. The page passes its own injury fetch in, since the same
- * data drives its closing prompts.
+ * Why a player stopped training, on their own page: a box with the key facts
+ * while they are not match fit, the question to answer about it if there is
+ * one, and the injury history — collapsed until asked for. The page passes its
+ * own injury fetch in, since the same data drives its closing prompts.
  */
 export function InjuriesCard({
   player,
@@ -40,6 +40,7 @@ export function InjuriesCard({
   const [opened, setOpened] = useState<InjuryWithStatus | null>(null);
   const [reporting, setReporting] = useState(false);
   const [prompts, setPrompts] = useState<ClosingPrompt[]>([]);
+  const [historyOpen, setHistoryOpen] = useState(false);
 
   const today = todayISO();
   const now = availability.on(player.id, today);
@@ -66,34 +67,52 @@ export function InjuriesCard({
 
   return (
     <div className="bg-card border border-border rounded-2xl overflow-hidden" data-testid="card-injuries">
+      {/* Key facts only, one row per injury keeping them out — the detail is
+          a click away in the history */}
       {now && (
         <div
           className={cn(
-            "px-5 py-3 border-b flex items-start gap-3",
+            "px-5 py-3 border-b space-y-2",
             now.stage === "out" ? "border-status-bad bg-status-bad" : "border-status-warn bg-status-warn",
           )}
           data-testid="banner-availability"
         >
-          <Activity size={16} className={cn("mt-0.5 shrink-0", now.stage === "out" ? "text-status-bad" : "text-status-warn")} />
-          <div className="min-w-0 text-sm text-foreground">
-            <div className="font-semibold">
-              {STAGE_CFG[now.stage].label} since {formatDateShort(now.injuries[0].occurred_on)} — {availabilityLabel(now).split(" · ").slice(1).join(" · ")}
-            </div>
-            <div className="text-xs text-muted-foreground">
-              {[
-                now.injuries[0].notes,
-                describeSeverity(now.injuries[0], today),
-                now.injuries[0].expected_return_on && `expected back ${formatDateShort(now.injuries[0].expected_return_on)}`,
-              ].filter(Boolean).join(" · ")}
-            </div>
-          </div>
+          {now.injuries.map((i) => (
+            <dl key={i.id} className="grid grid-cols-2 sm:grid-cols-5 gap-x-4 gap-y-2 text-sm">
+              <Fact label="Body area">{i.category === "illness" ? "Illness" : i.body_area ?? "—"}</Fact>
+              <Fact label="Side">{i.side && i.side !== "n/a" ? i.side.charAt(0).toUpperCase() + i.side.slice(1) : "—"}</Fact>
+              <Fact label="Occurred">{formatDateYear(i.occurred_on)}</Fact>
+              <Fact label="Expected return">{i.expected_return_on ? formatDateYear(i.expected_return_on) : "—"}</Fact>
+              <Fact label="Stage">
+                <span className="inline-flex items-center gap-1.5">
+                  <Activity size={13} className={i.current_stage === "out" ? "text-status-bad" : "text-status-warn"} />
+                  {i.current_stage ? STAGE_CFG[i.current_stage].label : "—"}
+                </span>
+              </Fact>
+            </dl>
+          ))}
         </div>
       )}
 
       <ClosingPrompts prompts={prompts} players={[player]} onChanged={onChanged} showPlayer={false} />
 
       <div className={cn("px-5 py-3 flex items-center justify-between gap-2", prompts.length > 0 && "border-t border-border")}>
-        <h3 className="text-sm font-semibold text-foreground">Injuries</h3>
+        {injuries.length === 0 ? (
+          <h3 className="text-sm font-semibold text-foreground">
+            Injury history <span className="font-normal text-muted-foreground">· none on record</span>
+          </h3>
+        ) : (
+          <button
+            type="button"
+            onClick={() => setHistoryOpen((o) => !o)}
+            aria-expanded={historyOpen}
+            className="flex items-center gap-1.5 text-sm font-semibold text-foreground"
+            data-testid="button-injury-history"
+          >
+            <ChevronDown size={14} className={cn("text-muted-foreground transition-transform", !historyOpen && "-rotate-90")} />
+            Injury history <span className="font-normal text-muted-foreground">({injuries.length})</span>
+          </button>
+        )}
         {isAdmin && (
           <button
             onClick={() => setReporting(true)}
@@ -105,9 +124,7 @@ export function InjuriesCard({
         )}
       </div>
 
-      {injuries.length === 0 ? (
-        <p className="px-5 pb-4 text-xs text-muted-foreground">None on record.</p>
-      ) : (
+      {historyOpen && injuries.length > 0 && (
         <ul className="pb-2">
           {injuries.map((i) => {
             const recurs = i.recurrence_of ? byId.get(i.recurrence_of) : null;
@@ -153,4 +170,18 @@ export function InjuriesCard({
       )}
     </div>
   );
+}
+
+function Fact({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div className="min-w-0">
+      <dt className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">{label}</dt>
+      <dd className="text-foreground font-medium truncate">{children}</dd>
+    </div>
+  );
+}
+
+/** "6 Sep 2026" — the year matters here: an ACL's return is next year. */
+function formatDateYear(iso: string): string {
+  return new Date(iso + "T00:00:00").toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
 }

@@ -13,7 +13,7 @@ import {
 } from "@/lib/utils";
 import { PosBadge } from "@/components/PosBadge";
 import { DEFAULT_TEAM, type Player, type TrainingSession } from "@/lib/types";
-import { Users, Check, FileText, X, Pencil, SlidersHorizontal, Activity } from "lucide-react";
+import { Users, Check, FileText, X, Pencil, SlidersHorizontal, Cross } from "lucide-react";
 import { ReportInjuryDialog } from "@/components/injuries/ReportInjuryDialog";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/context/AuthContext";
@@ -599,19 +599,10 @@ function AllPlayersTab({
           <FileText size={15} />
         </IconButton>
 
-        {/* Labelled, not icon-only: a hover tooltip doesn't exist on a tablet */}
         {isAdmin && (
-          <button
-            type="button"
-            onClick={() => setReportingInjury(true)}
-            className="h-9 px-3 flex items-center gap-1.5 rounded-lg border border-border text-sm text-muted-foreground hover:text-foreground whitespace-nowrap transition-colors shrink-0"
-            aria-label="Report injury"
-            data-testid="button-report-injury"
-          >
-            <Activity size={15} />
-            <span className="sm:hidden">Injury</span>
-            <span className="hidden sm:inline">Report injury</span>
-          </button>
+          <IconButton label="Report injury" onClick={() => setReportingInjury(true)} data-testid="button-report-injury">
+            <Cross size={15} />
+          </IconButton>
         )}
 
         <AddButton label="Add player" onClick={() => setShowAdd(true)} data-testid="button-add-player" />

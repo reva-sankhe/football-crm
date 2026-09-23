@@ -9,6 +9,7 @@ import {
   buildSquadOverview, interpretAge, interpretPositions, interpretSize,
 } from "@/lib/squad";
 import { MiniTable, OverviewCard, tooltipStyle } from "@/components/OverviewCard";
+import { AvailabilityTimeline } from "./AvailabilityTimeline";
 import type { Player } from "@/lib/types";
 
 export function SquadOverview({ players, loading }: { players: Player[]; loading: boolean }) {
@@ -207,6 +208,9 @@ export function SquadOverview({ players, loading }: { players: Player[]; loading
           )}
         </div>
       </OverviewCard>
+
+      {/* 4 ── Who is out, and until when */}
+      <AvailabilityTimeline players={players} />
     </div>
   );
 }
