@@ -128,6 +128,12 @@ export default function TournamentDetail() {
     [matches, otherMatches],
   );
 
+  /** Our place in the table, 1-based; null until we've played a league match. */
+  const ourPosition = useMemo(() => {
+    const i = standings.findIndex((r) => r.opponentId === null);
+    return i === -1 ? null : i + 1;
+  }, [standings]);
+
   /** Scheduled, not yet played, today or later — soonest first. */
   const upcomingMatches = useMemo(() => {
     const today = todayISO();
@@ -227,11 +233,18 @@ export default function TournamentDetail() {
           <span>{tournament.default_match_mins} min default</span>
         </div>
 
-        {/* Record strip */}
-        <div className="grid grid-cols-3 gap-4 pt-4 mt-4 border-t border-border">
+        {/* Record strip — a league leads with where we stand in the table */}
+        <div className={cn("grid gap-4 pt-4 mt-4 border-t border-border", isLeague ? "grid-cols-2 sm:grid-cols-4" : "grid-cols-3")}>
+          {isLeague && (
+            <StatTile
+              label="Position"
+              value={ourPosition ?? "—"}
+              valueNote={ourPosition != null ? `/${standings.length}` : undefined}
+            />
+          )}
           <StatTile label="Played" value={record.played} />
           <StatTile label="W / D / L" value={`${record.won}/${record.drawn}/${record.lost}`} />
-          <StatTile label="Goals" value={`${record.goalsFor}–${record.goalsAgainst}`} />
+          <StatTile label="Goal difference" value={signed(record.goalsFor - record.goalsAgainst)} />
         </div>
       </div>
 
@@ -662,4 +675,9 @@ function NewSquadModal({
       </div>
     </div>
   );
+}
+
+/** "+13", "−8", "0" — a real minus sign, so it lines up with the plus. */
+function signed(n: number): string {
+  return n > 0 ? `+${n}` : n < 0 ? `\u2212${-n}` : "0";
 }
