@@ -18,6 +18,7 @@
     "test:pinned-anchor": "node scripts/pinnedWeeklyAnchor.test.mjs",
     "test:training-analytics": "node scripts/trainingAnalytics.test.mjs",
     "test:attendance": "node scripts/attendance.test.mjs",
+    "test:injuries": "node scripts/injuries.test.mjs",
     "audit:workload": "node scripts/workloadAudit.mjs",
     "audit:completeness": "node scripts/dataCompletenessAudit.mjs",
     "audit:ewma-comparison": "node scripts/ewmaComparisonAudit.mjs"

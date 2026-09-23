@@ -15,6 +15,8 @@ import { useAuth } from "@/context/AuthContext";
 import { useToast } from "@/hooks/use-toast";
 import { bulkUpsertAttendance, fetchAttendanceBySession } from "@/lib/queries";
 import { ATTENDANCE_CFG, ATTENDANCE_STATUSES, resolveAutoMarked } from "@/lib/attendance";
+import { injuryLabel } from "@/lib/injuries";
+import { ReportInjuryDialog } from "@/components/injuries/ReportInjuryDialog";
 import type { AttendanceStatus, Player, TrainingSession } from "@/lib/types";
 import {
   DropdownMenu,
@@ -94,6 +96,8 @@ export function MarkAttendance({
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [search, setSearch] = useState("");
+  /** The player whose "Injured" pick is being reported. */
+  const [reporting, setReporting] = useState<Player | null>(null);
 
   // ── Load attendance for the selected session ───────────────────────────────
   useEffect(() => {
@@ -178,6 +182,16 @@ export function MarkAttendance({
       [playerId]: d[playerId] === "Present" ? "Absent" : "Present",
     }));
     setTouched((t) => new Set(t).add(playerId));
+  };
+
+  /**
+   * Injured is not set directly: it opens the report form, so every Injured
+   * mark is backed by an injury on record — a new one, or one the player is
+   * still out with. The mark itself still needs "Save attendance".
+   */
+  const pickStatus = (player: Player, status: AttendanceStatus) => {
+    if (status === "Injured") setReporting(player);
+    else setStatus(player.id, status);
   };
 
   const setAll = (status: AttendanceStatus) => {
@@ -413,11 +427,11 @@ export function MarkAttendance({
                           return (
                             <DropdownMenuItem
                               key={s}
-                              onSelect={() => setStatus(player.id, s)}
+                              onSelect={() => pickStatus(player, s)}
                               className={cn("gap-2 text-xs", status === s && "font-semibold")}
                             >
                               <Icon size={12} className={c.activeColor} />
-                              {c.label}
+                              {s === "Injured" ? "Injured…" : c.label}
                             </DropdownMenuItem>
                           );
                         })}
@@ -430,6 +444,26 @@ export function MarkAttendance({
             );
           })}
         </div>
+      )}
+
+      {reporting && (
+        <ReportInjuryDialog
+          player={reporting}
+          session={session}
+          matchesOnDay={matchesOnDay}
+          offerStillOut
+          onClose={() => setReporting(null)}
+          onRecorded={(result) => {
+            setStatus(reporting.id, "Injured");
+            if (result.kind === "existing") {
+              toast({
+                title: `${reporting.name} marked Injured`,
+                description: `${injuryLabel(result.injury)} — save attendance to keep it`,
+              });
+            }
+            setReporting(null);
+          }}
+        />
       )}
 
       {/* ── Sticky save bar ─────────────────────────────────────────────────── */}

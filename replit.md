@@ -297,6 +297,40 @@ A team management CRM for Bombay Gymkhana Women's Football — tracks players, s
   `authenticated` so it isn't callable over the REST API; event triggers fire as their owner,
   so the revoke doesn't affect it.
 
+- **Injuries are their own table, one row per injury — not per missed session.**
+  `supabase_migration_injuries.sql` holds `injuries`, its stage history `injury_stages`
+  (out → modified → full training → match fit), and `v_injury_status`, which derives
+  `status`, `returned_on` and `days_lost` from the stages. None of the three is stored.
+  Definitions follow the football consensus (Fuller et al. 2006): an injury is over when
+  the player is **match fit**, which sets both the return date and the severity
+  (`SEVERITY_BANDS` in `lib/injuries.ts`: slight 0 days, minimal 1–3, mild 4–7,
+  moderate 8–28, severe >28). A setback before that is a new stage on the same injury;
+  breaking down after it is a new injury with `recurrence_of` pointing back. The composite
+  FK `(recurrence_of, player_id)` keeps a recurrence on the same player.
+- **Stage rows are append-only.** A wrong stage — a mistaken match fit included — is
+  corrected by deleting the latest row ("undo last stage") and adding the right one, never
+  by editing. `injury_stages_guard` enforces this, along with date order and "match fit is
+  final until undone". It also refuses to reopen an injury that a later recurrence depends
+  on. `stageInsertProblem`/`undoProblem` in `lib/injuries.ts` mirror the rules so a form can
+  explain a refusal before it round-trips.
+- **Three entry points, one set of fields** (`components/injuries/InjuryFields.tsx`): the
+  match grid's Injury toggle (`MatchInjuryPanel`, saved by the page's one Save), Mark
+  Attendance's "Injured…" pick, and Dashboard → Report injury (the last two go through
+  `ReportInjuryDialog`). A player who is already out is asked whether this is the same
+  injury before a new one is created. Match-grid rows flagged before injuries existed
+  (`injured` with no `injury_id`) are read-only until the injury migration converts them.
+
+## Roadmap
+
+Noted, not scheduled — don't build without being asked.
+
+- **Injury rate per 1000 hours of exposure, split by training and match.** Numerator:
+  injuries by `context`. Exposure: match minutes, plus `duration_mins` of training sessions
+  a player attended. Exclude or flag `migrated` injuries — their dates are inferred.
+- **Body heat map of injury locations on the player page.** Reads `body_area` + `side`
+  (added for this reason — side can't be filled in reliably afterwards).
+- **Daily soreness check on the tablet**, tied to the parked wellness check.
+
 ## Product
 
 - **Dashboard** — squad overview: size, position breakdown, age groups, benchmark stats

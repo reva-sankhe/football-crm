@@ -8,6 +8,7 @@ import type {
   MatchPenaltyKick, MatchPenaltyKickInput,
   LeagueOtherMatch, LeagueOtherMatchWithOpponents,
   CalendarEvent,
+  Injury, InjuryStage, InjuryStageName, InjuryWithStatus,
 } from "./types";
 
 /**
@@ -848,6 +849,120 @@ export async function bulkUpsertMatchStats(matchId: string, sessionId: string, r
   // Named in the lineup at all — even at 0 minutes, an unused sub was still
   // there — is evidence of attendance the same way an RPE submission is.
   await autoMarkPresentIfMissing(sessionId, payload.map((r) => r.player_id));
+}
+
+// ── Injuries ──────────────────────────────────────────────────────────────────
+// Reads go through v_injury_status, which derives status, return date and days
+// lost from the stage history; writes go to the two tables underneath.
+
+export async function fetchInjuriesForPlayer(playerId: string): Promise<InjuryWithStatus[]> {
+  const { data, error } = await supabase
+    .from("v_injury_status")
+    .select("*")
+    .eq("player_id", playerId)
+    .order("occurred_on", { ascending: false });
+  if (error) throw error;
+  return (data ?? []) as InjuryWithStatus[];
+}
+
+/** Every injury not yet match fit, squad-wide. Small by nature — no paging. */
+export async function fetchOpenInjuries(): Promise<InjuryWithStatus[]> {
+  const { data, error } = await supabase
+    .from("v_injury_status")
+    .select("*")
+    .eq("status", "open")
+    .order("occurred_on", { ascending: false });
+  if (error) throw error;
+  return (data ?? []) as InjuryWithStatus[];
+}
+
+export async function fetchInjuriesByIds(ids: string[]): Promise<InjuryWithStatus[]> {
+  if (ids.length === 0) return [];
+  const { data, error } = await supabase.from("v_injury_status").select("*").in("id", ids);
+  if (error) throw error;
+  return (data ?? []) as InjuryWithStatus[];
+}
+
+export async function fetchInjuryStages(injuryId: string): Promise<InjuryStage[]> {
+  const { data, error } = await supabase
+    .from("injury_stages")
+    .select("*")
+    .eq("injury_id", injuryId)
+    .order("effective_on");
+  if (error) throw error;
+  return (data ?? []) as InjuryStage[];
+}
+
+/**
+ * Records an injury and its first stage, dated the day it happened. Two
+ * requests, so if the stage insert fails the injury is deleted again rather
+ * than left with no stage — which the view would read as open with nothing
+ * to say where the player stands.
+ */
+export async function createInjury(
+  row: Omit<Injury, "id" | "created_at" | "reviewed_on" | "migrated">,
+  initialStage: InjuryStageName,
+): Promise<Injury> {
+  const { data, error } = await supabase.from("injuries").insert(row).select().single();
+  if (error) throw error;
+  const injury = data as Injury;
+  const { error: stageError } = await supabase
+    .from("injury_stages")
+    .insert({ injury_id: injury.id, stage: initialStage, effective_on: injury.occurred_on });
+  if (stageError) {
+    await supabase.from("injuries").delete().eq("id", injury.id);
+    throw stageError;
+  }
+  return injury;
+}
+
+export async function addInjuryStage(
+  injuryId: string,
+  stage: InjuryStageName,
+  effectiveOn: string,
+): Promise<InjuryStage> {
+  const { data, error } = await supabase
+    .from("injury_stages")
+    .insert({ injury_id: injuryId, stage, effective_on: effectiveOn })
+    .select()
+    .single();
+  if (error) throw error;
+  return data as InjuryStage;
+}
+
+/**
+ * The only way to correct a stage — rows are never edited in place. Undoing a
+ * mistaken match fit is how an injury is reopened. The database refuses it
+ * for the last remaining stage, and for a match fit a later recurrence
+ * depends on (see `undoProblem` for the same rules client-side).
+ */
+export async function undoLastInjuryStage(injuryId: string): Promise<void> {
+  const stages = await fetchInjuryStages(injuryId);
+  const latest = stages[stages.length - 1];
+  if (!latest) return;
+  const { error } = await supabase.from("injury_stages").delete().eq("id", latest.id);
+  if (error) throw error;
+}
+
+export async function deleteInjury(id: string): Promise<void> {
+  const { error } = await supabase.from("injuries").delete().eq("id", id);
+  if (error) throw error;
+}
+
+/** The match played on a session, if any — to link an injury reported from outside the grid. */
+export async function fetchMatchIdForSession(sessionId: string): Promise<string | null> {
+  const { data, error } = await supabase.from("matches").select("id").eq("session_id", sessionId).maybeSingle();
+  if (error) throw error;
+  return data?.id ?? null;
+}
+
+/** Match-grid rows linked to an injury, optionally ignoring one match. */
+export async function countStatRowsForInjury(injuryId: string, exceptMatchId?: string): Promise<number> {
+  let q = supabase.from("match_player_stats").select("id", { count: "exact", head: true }).eq("injury_id", injuryId);
+  if (exceptMatchId) q = q.neq("match_id", exceptMatchId);
+  const { count, error } = await q;
+  if (error) throw error;
+  return count ?? 0;
 }
 
 // ── Penalty shootouts ─────────────────────────────────────────────────────────

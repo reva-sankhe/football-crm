@@ -14,13 +14,17 @@ import { cn } from "@/lib/utils";
 import { PosBadge } from "@/components/PosBadge";
 import { SessionTypeBadge } from "@/components/Badges";
 import { type Player, type TestResult, type TestSession, type TrainingSession } from "@/lib/types";
-import { AlertTriangle, CheckCircle2, ChevronDown, ChevronRight } from "lucide-react";
+import { Activity, AlertTriangle, CheckCircle2, ChevronDown, ChevronRight } from "lucide-react";
+import { useAuth } from "@/context/AuthContext";
+import { ReportInjuryDialog } from "@/components/injuries/ReportInjuryDialog";
 
 // ── Constants ────────────────────────────────────────────────────────────────
 const BENCHMARK_MINS = 5 + 6 / 60;
 
 // ── Main ─────────────────────────────────────────────────────────────────────
 export default function Dashboard() {
+  const { isAdmin } = useAuth();
+  const [reportingInjury, setReportingInjury] = useState(false);
 
   const [players,          setPlayers]          = useState<Player[]>([]);
   const [latestData,       setLatestData]        = useState<{ session: TestSession | null; results: (TestResult & { players: Pick<Player, "name" | "code" | "team"> })[] } | null>(null);
@@ -119,7 +123,26 @@ export default function Dashboard() {
       {/* Header */}
       <div className="flex items-center justify-between flex-wrap gap-3">
         <p className="text-sm text-muted-foreground">{active.length} active · {inactive.length} inactive · {monthName}</p>
+        {/* For injuries that don't come up while taking attendance or filling in a match */}
+        {isAdmin && !loading && (
+          <button
+            onClick={() => setReportingInjury(true)}
+            className="flex items-center gap-1.5 h-9 px-3 rounded-lg border border-border text-xs font-medium text-muted-foreground hover:text-foreground transition-colors"
+            data-testid="button-report-injury"
+          >
+            <Activity size={13} /> Report injury
+          </button>
+        )}
       </div>
+
+      {reportingInjury && (
+        <ReportInjuryDialog
+          players={active}
+          sessions={trainingSessions}
+          onClose={() => setReportingInjury(false)}
+          onRecorded={() => setReportingInjury(false)}
+        />
+      )}
 
       {/* Stat strip */}
       <div className="grid grid-cols-2 sm:grid-cols-4 border border-border rounded-2xl overflow-hidden divide-x divide-y sm:divide-y-0 divide-border bg-card">

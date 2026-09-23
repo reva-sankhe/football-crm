@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useCallback } from "react";
+import { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import { useLocation } from "wouter";
 import { TableSkeleton } from "@/components/Skeleton";
 import { EmptyState } from "@/components/EmptyState";
@@ -12,8 +12,9 @@ import {
   JERSEY_MAX, JERSEY_MIN, calcAgeRange, cn, jerseyClash, parseJersey, playerLabel,
 } from "@/lib/utils";
 import { PosBadge } from "@/components/PosBadge";
-import { DEFAULT_TEAM, type Player } from "@/lib/types";
-import { Users, Check, FileText, X, Pencil, SlidersHorizontal } from "lucide-react";
+import { DEFAULT_TEAM, type Player, type TrainingSession } from "@/lib/types";
+import { Users, Check, FileText, X, Pencil, SlidersHorizontal, Activity } from "lucide-react";
+import { ReportInjuryDialog } from "@/components/injuries/ReportInjuryDialog";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/context/AuthContext";
 
@@ -454,15 +455,18 @@ function AllPlayersTab({
   const [showFilters, setShowFilters] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [showReport, setShowReport] = useState(false);
-  const [sessionDates, setSessionDates] = useState<Date[]>([]);
+  const [sessions, setSessions] = useState<TrainingSession[]>([]);
+  const [reportingInjury, setReportingInjury] = useState(false);
   const filterRef = useRef<HTMLDivElement>(null);
 
-  // Only used to underline days that have data in the report range picker
+  // Underlines days with data in the report range picker, and lets a reported
+  // injury link to that day's session
   useEffect(() => {
     fetchTrainingSessions()
-      .then((ss) => setSessionDates(ss.map((s) => new Date(s.date + "T00:00:00"))))
-      .catch(() => {/* the picker just shows no underlines */});
+      .then(setSessions)
+      .catch(() => {/* the picker shows no underlines; an injury saves unlinked */});
   }, []);
+  const sessionDates = useMemo(() => sessions.map((s) => new Date(s.date + "T00:00:00")), [sessions]);
 
   // Dismiss the filter popover on an outside click or Escape
   useEffect(() => {
@@ -594,6 +598,12 @@ function AllPlayersTab({
         >
           <FileText size={15} />
         </IconButton>
+
+        {isAdmin && (
+          <IconButton label="Report injury" onClick={() => setReportingInjury(true)} data-testid="button-report-injury">
+            <Activity size={15} />
+          </IconButton>
+        )}
 
         <AddButton label="Add player" onClick={() => setShowAdd(true)} data-testid="button-add-player" />
 
@@ -732,6 +742,15 @@ function AllPlayersTab({
           onClose={() => setEditPlayer(null)}
           // Patch in place so the row updates without refetching the roster
           onSaved={(updated) => setPlayers((prev) => prev.map((p) => (p.id === updated.id ? updated : p)))}
+        />
+      )}
+
+      {reportingInjury && (
+        <ReportInjuryDialog
+          players={players.filter((p) => p.is_active)}
+          sessions={sessions}
+          onClose={() => setReportingInjury(false)}
+          onRecorded={() => setReportingInjury(false)}
         />
       )}
 

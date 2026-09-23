@@ -7,9 +7,16 @@ import { useAuth } from "@/context/AuthContext";
 import { useToast } from "@/hooks/use-toast";
 import {
   bulkUpsertMatchStats,
+  countStatRowsForInjury,
+  createInjury,
+  deleteInjury,
+  fetchInjuriesByIds,
+  fetchInjuriesForPlayer,
+  fetchInjuryStages,
   fetchMatch,
   fetchMatchPlayerStats,
   fetchPenaltyKicks,
+  fetchOpenInjuries,
   fetchPlayers,
   fetchSquadsForTournament,
   fetchTournament,
@@ -26,9 +33,13 @@ import { formatDateLong } from "@/lib/attendance";
 import { PosBadge } from "@/components/PosBadge";
 import { StageBadge } from "@/components/Badges";
 import { ShootoutPanel } from "@/components/tournaments/ShootoutPanel";
+import { MatchInjuryPanel } from "@/components/injuries/MatchInjuryPanel";
+import {
+  emptyInjuryDraft, injuryDraftProblems, injuryLabel, injuryRowFromDraft, type InjuryDraft,
+} from "@/lib/injuries";
 import { MatchFormModal } from "@/components/tournaments/MatchFormModal";
 import type {
-  MatchPenaltyKickInput, MatchStatInput, MatchWithSession, Player,
+  InjuryWithStatus, MatchPenaltyKickInput, MatchStatInput, MatchWithSession, Player,
   SquadWithPlayers, SubPolicy, Tournament,
 } from "@/lib/types";
 
@@ -62,7 +73,17 @@ function emptyStat(playerId: string): MatchStatInput {
     red_cards: 0,
     injured: false,
     injury_note: null,
+    injury_id: null,
   };
+}
+
+/**
+ * Flagged injured before injuries were their own table: a note, no record.
+ * These wait for the held migration, so the grid shows them read-only rather
+ * than let an edit here race it.
+ */
+function isLegacyInjury(row: MatchStatInput, newDraft: InjuryDraft | undefined): boolean {
+  return row.injured && row.injury_id == null && newDraft == null;
 }
 
 function sameDraft(a: Draft, b: Draft): boolean {
@@ -83,7 +104,8 @@ function sameDraft(a: Draft, b: Draft): boolean {
       && x.yellow_cards === y.yellow_cards
       && x.red_cards === y.red_cards
       && x.injured === y.injured
-      && (x.injury_note ?? "") === (y.injury_note ?? "");
+      && (x.injury_note ?? "") === (y.injury_note ?? "")
+      && x.injury_id === y.injury_id;
   });
 }
 
@@ -113,6 +135,14 @@ export default function MatchDetail() {
   const [saving, setSaving] = useState(false);
   const [showEdit, setShowEdit] = useState(false);
 
+  // Injuries. `injuryDrafts` holds a new injury per player until "Save match"
+  // creates it; `injuriesById` is every injury a row links or could link to.
+  const [injuryDrafts, setInjuryDrafts] = useState<Record<string, InjuryDraft>>({});
+  const [injuriesById, setInjuriesById] = useState<Record<string, InjuryWithStatus>>({});
+  /** Full history per player, fetched when a new injury is started — for the recurrence picker. */
+  const [histories, setHistories] = useState<Record<string, InjuryWithStatus[]>>({});
+  const [injuryAttempted, setInjuryAttempted] = useState(false);
+
   // Score is edited inline on the header
   const [goalsFor, setGoalsFor] = useState<string>("");
   const [goalsAgainst, setGoalsAgainst] = useState<string>("");
@@ -137,13 +167,22 @@ export default function MatchDetail() {
       // The squad defines who can appear; with no squad, fall back to the roster.
       // A standalone match belongs to no tournament, so it has no squads to load.
       // The tournament is still needed for the sub policy it may supply.
-      const [squadRows, allPlayers, stats, kickRows, tourn] = await Promise.all([
+      const [squadRows, allPlayers, stats, kickRows, tourn, openInjuries] = await Promise.all([
         m.tournament_id ? fetchSquadsForTournament(m.tournament_id) : Promise.resolve([]),
         fetchPlayers(),
         fetchMatchPlayerStats(m.id),
         fetchPenaltyKicks(m.id),
         m.tournament_id ? fetchTournament(m.tournament_id) : Promise.resolve(null),
+        fetchOpenInjuries(),
       ]);
+      // Rows can link to an injury that has since ended, which the open list lacks
+      const linkedIds = stats.map((s) => s.injury_id).filter((x): x is string => x != null);
+      const linkedInjuries = await fetchInjuriesByIds(linkedIds.filter((x) => !openInjuries.some((i) => i.id === x)));
+      const byId: Record<string, InjuryWithStatus> = {};
+      for (const i of [...openInjuries, ...linkedInjuries]) byId[i.id] = i;
+      setInjuriesById(byId);
+      setInjuryDrafts({});
+      setInjuryAttempted(false);
       setTournament(tourn);
       setSquads(squadRows);
 
@@ -179,6 +218,7 @@ export default function MatchDetail() {
           red_cards: s.red_cards,
           injured: s.injured,
           injury_note: s.injury_note,
+          injury_id: s.injury_id,
         };
       }
       setDraft(next);
@@ -195,8 +235,8 @@ export default function MatchDetail() {
   // Three independent sets of edits, one save button — so "unsaved changes" has
   // to mean any of them, and the save has to persist all of them.
   const statsDirty = useMemo(
-    () => !sameDraft(draft, saved) || !sameKicks(kicks, savedKicks),
-    [draft, saved, kicks, savedKicks],
+    () => !sameDraft(draft, saved) || !sameKicks(kicks, savedKicks) || Object.keys(injuryDrafts).length > 0,
+    [draft, saved, kicks, savedKicks, injuryDrafts],
   );
 
   const scoreDirty = useMemo(
@@ -279,6 +319,39 @@ export default function MatchDetail() {
   const addGoal = (playerId: string, method: GoalMethod, delta: number) =>
     setDraft((d) => ({ ...d, [playerId]: { ...d[playerId], ...applyGoal(d[playerId], method, delta) } }));
 
+  const matchDate = match?.sessions?.date ?? "";
+
+  /** Turning the Injury toggle on starts a new injury unless the player is already out. */
+  const toggleInjured = (playerId: string) => {
+    const row = draft[playerId];
+    if (row.injured) {
+      patch(playerId, { injured: false, injury_id: null, injury_note: null });
+      setInjuryDrafts(({ [playerId]: _, ...rest }) => rest);
+      return;
+    }
+    patch(playerId, { injured: true, injury_id: null, injury_note: null });
+    if (openInjuriesFor(playerId).length === 0) startNewInjury(playerId);
+  };
+
+  const startNewInjury = (playerId: string) => {
+    patch(playerId, { injury_id: null });
+    setInjuryDrafts((d) => ({ ...d, [playerId]: d[playerId] ?? emptyInjuryDraft("match") }));
+    if (!histories[playerId]) {
+      fetchInjuriesForPlayer(playerId)
+        .then((rows) => setHistories((h) => ({ ...h, [playerId]: rows })))
+        .catch(() => setHistories((h) => ({ ...h, [playerId]: [] })));
+    }
+  };
+
+  const linkInjury = (playerId: string, injuryId: string) => {
+    patch(playerId, { injury_id: injuryId, injury_note: injuryLabel(injuriesById[injuryId]) });
+    setInjuryDrafts(({ [playerId]: _, ...rest }) => rest);
+  };
+
+  function openInjuriesFor(playerId: string): InjuryWithStatus[] {
+    return Object.values(injuriesById).filter((i) => i.player_id === playerId && i.status === "open");
+  }
+
   /** Only what still has a use: the save toast, and the over-cap warning. */
   const totals = useMemo(() => {
     const rows = Object.values(draft);
@@ -297,10 +370,41 @@ export default function MatchDetail() {
    */
   const handleSave = async () => {
     if (!match) return;
+
+    // New injuries must be complete before anything is written
+    const pending = Object.entries(injuryDrafts).filter(([pid]) => draft[pid]?.injured);
+    const incomplete = pending.filter(([, d]) => Object.keys(injuryDraftProblems(d, matchDate)).length > 0);
+    // Toggled on but never told which injury — saving it would make a new
+    // note-only row, the very thing the migration is clearing up.
+    const undecided = Object.entries(draft)
+      .filter(([pid, r]) => r.injured && r.injury_id == null && !injuryDrafts[pid] && !(saved[pid]?.injured && saved[pid]?.injury_id == null))
+      .map(([pid]) => roster.find((p) => p.id === pid)?.name ?? "a player");
+    if (undecided.length > 0) {
+      toast({ title: "Which injury?", description: `Pick the injury for ${undecided.join(", ")} — the one they're already out with, or a new one.`, variant: "destructive" });
+      return;
+    }
+    if (incomplete.length > 0) {
+      setInjuryAttempted(true);
+      const names = incomplete.map(([pid]) => roster.find((p) => p.id === pid)?.name ?? "a player");
+      toast({ title: "Injury details missing", description: `Finish the injury for ${names.join(", ")} before saving.`, variant: "destructive" });
+      return;
+    }
+
     setSaving(true);
-    const snapshot = draft;
+    let snapshot = draft;
     const kickSnapshot = kicks;
+    /** Created by this save — deleted again if the rest of it fails. */
+    const created: string[] = [];
     try {
+      for (const [pid, d] of pending) {
+        const injury = await createInjury(
+          injuryRowFromDraft(d, { player_id: pid, occurred_on: matchDate, session_id: match.session_id, match_id: match.id }),
+          d.stage,
+        );
+        created.push(injury.id);
+        snapshot = { ...snapshot, [pid]: { ...snapshot[pid], injury_id: injury.id, injury_note: injuryLabel(injury) } };
+      }
+
       if (scoreDirty || shootoutDirty) {
         const updated = await updateMatch(match.id, {
           goals_for: goalsFor === "" ? null : Math.max(0, parseInt(goalsFor) || 0),
@@ -314,15 +418,51 @@ export default function MatchDetail() {
       }
       await replacePenaltyKicks(match.id, kickSnapshot);
       await bulkUpsertMatchStats(match.id, match.session_id, Object.values(snapshot));
+
+      // An injury this match created and this save unlinked was a mistaken
+      // toggle: remove it — unless it has since gained a history of its own.
+      const kept = await removeUnlinkedInjuries(saved, snapshot);
+
+      if (created.length > 0) {
+        const fresh = await fetchInjuriesByIds(created);
+        setInjuriesById((m) => { const n = { ...m }; for (const i of fresh) n[i.id] = i; return n; });
+      }
+      setDraft(snapshot);
       setSaved(snapshot);
       setSavedKicks(kickSnapshot);
-      toast({ title: "Match saved", description: `${totals.played} players, ${totals.goals} goals` });
+      setInjuryDrafts({});
+      setInjuryAttempted(false);
+      toast({
+        title: "Match saved",
+        description: [
+          `${totals.played} players, ${totals.goals} goals`,
+          created.length > 0 && `${created.length} injur${created.length === 1 ? "y" : "ies"} recorded`,
+          kept.length > 0 && `kept ${kept.join(", ")} — it has stages logged since`,
+        ].filter(Boolean).join(" · "),
+      });
     } catch (err) {
+      await Promise.allSettled(created.map((id) => deleteInjury(id)));
       toast({ title: "Failed to save match", description: String(err), variant: "destructive" });
     } finally {
       setSaving(false);
     }
   };
+
+  /** Returns the labels of unlinked injuries left in place. */
+  async function removeUnlinkedInjuries(before: Draft, after: Draft): Promise<string[]> {
+    const kept: string[] = [];
+    for (const [pid, row] of Object.entries(before)) {
+      const id = row.injury_id;
+      if (!id || after[pid]?.injury_id === id) continue;
+      const injury = injuriesById[id];
+      if (!injury || injury.match_id !== match!.id) continue;
+      const [others, stages] = await Promise.all([countStatRowsForInjury(id, match!.id), fetchInjuryStages(id)]);
+      if (others > 0) continue;
+      if (stages.length > 1) { kept.push(injuryLabel(injury)); continue; }
+      await deleteInjury(id);
+    }
+    return kept;
+  }
 
   /** Overrides the sub policy for this match alone, switching which grid renders. */
   const handleSavePolicy = async (policy: SubPolicy) => {
@@ -514,6 +654,7 @@ export default function MatchDetail() {
             <div className="divide-y divide-border/40">
               {roster.map((p) => {
                 const row = draft[p.id] ?? emptyStat(p.id);
+                const legacy = isLegacyInjury(row, injuryDrafts[p.id]) && saved[p.id]?.injured === true && saved[p.id]?.injury_id == null;
                 return (
                   <div key={p.id} className={cn("px-4 py-2.5 sm:grid", rolling ? COLS_ROLLING_SM : COLS_LIMITED_SM, "sm:gap-2 sm:items-center flex flex-wrap gap-2")}>
                     <div className="flex items-center gap-2 min-w-0 w-full sm:w-auto">
@@ -574,13 +715,17 @@ export default function MatchDetail() {
                     <div className="flex items-center gap-1.5 sm:justify-center">
                       <button
                         type="button"
-                        onClick={() => patch(p.id, { injured: !row.injured, injury_note: row.injured ? null : row.injury_note })}
-                        title={row.injured ? "Mark as not injured" : "Mark as injured"}
+                        onClick={() => toggleInjured(p.id)}
+                        disabled={legacy}
+                        title={legacy
+                          ? "Recorded before injury tracking — this row is converted by the injury migration"
+                          : row.injured ? "Mark as not injured" : "Mark as injured"}
                         className={cn(
                           "w-7 h-7 rounded-lg border flex items-center justify-center transition-colors shrink-0",
                           row.injured
                             ? "bg-status-warn border-status-warn text-status-warn"
                             : isDark ? "border-white/10 text-slate-600 hover:text-slate-400" : "border-slate-200 text-slate-400 hover:text-slate-600",
+                          legacy && "cursor-not-allowed",
                         )}
                       >
                         <Activity size={13} />
@@ -588,16 +733,24 @@ export default function MatchDetail() {
                       <span className="sm:hidden text-[11px] text-muted-foreground">Injured</span>
                     </div>
 
-                    {row.injured && (
-                      <input
-                        value={row.injury_note ?? ""}
-                        onChange={(e) => patch(p.id, { injury_note: e.target.value || null })}
-                        placeholder="Injury note — e.g. hamstring, 62'"
-                        className={cn(
-                          "w-full mt-1 bg-muted border border-status-warn rounded-lg px-2.5 py-1.5 text-xs text-foreground placeholder:text-muted-foreground/40 focus:outline-none focus:ring-1 focus:ring-orange-500/40",
-                          // Spans the whole row, so it tracks the column count
-                          rolling ? "sm:col-span-7" : "sm:col-span-10",
-                        )}
+                    {/* Spans the whole row, so it tracks the column count */}
+                    {legacy && (
+                      <p className={cn("w-full mt-1 text-[11px] text-muted-foreground", rolling ? "sm:col-span-7" : "sm:col-span-10")}>
+                        Noted before injury tracking: “{row.injury_note ?? "no note"}” — converted by the injury migration.
+                      </p>
+                    )}
+                    {row.injured && !legacy && (
+                      <MatchInjuryPanel
+                        className={rolling ? "sm:col-span-7" : "sm:col-span-10"}
+                        linked={row.injury_id ? injuriesById[row.injury_id] ?? null : null}
+                        openInjuries={openInjuriesFor(p.id).filter((i) => i.id !== row.injury_id)}
+                        newDraft={injuryDrafts[p.id]}
+                        history={histories[p.id] ?? []}
+                        occurredOn={matchDate}
+                        problems={injuryAttempted && injuryDrafts[p.id] ? injuryDraftProblems(injuryDrafts[p.id], matchDate) : {}}
+                        onLink={(id) => linkInjury(p.id, id)}
+                        onStartNew={() => startNewInjury(p.id)}
+                        onDraftChange={(d) => setInjuryDrafts((m) => ({ ...m, [p.id]: d }))}
                       />
                     )}
                   </div>

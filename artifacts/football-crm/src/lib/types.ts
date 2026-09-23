@@ -118,6 +118,57 @@ export interface SessionAttendance {
   created_at: string;
 }
 
+// ── Injury types ──────────────────────────────────────────────────────────────
+// Row shapes only; the vocabulary, labels and derivations live in lib/injuries.ts.
+export type InjuryCategory = "injury" | "illness";
+export type InjuryContext = "training" | "match" | "outside";
+export type InjuryMechanism = "contact" | "non_contact";
+export type InjuryOnset = "acute" | "overuse";
+export type InjurySide = "left" | "right" | "both" | "n/a";
+export type InjuryStageName = "out" | "modified" | "full_training" | "match_fit";
+
+export interface Injury {
+  id: string;
+  player_id: string;
+  occurred_on: string;
+  category: InjuryCategory;
+  /** One of BODY_AREAS; null only for an illness. */
+  body_area: string | null;
+  side: InjurySide | null;
+  /** Nullable for migrated rows; the entry forms always set it. */
+  context: InjuryContext | null;
+  mechanism: InjuryMechanism | null;
+  onset: InjuryOnset | null;
+  /** An earlier, already-ended injury of the same player this one recurs from. */
+  recurrence_of: string | null;
+  expected_return_on: string | null;
+  reviewed_on: string | null;
+  session_id: string | null;
+  match_id: string | null;
+  notes: string | null;
+  migrated: boolean;
+  created_at: string;
+}
+
+/** One dated step on the way back. Append-only: correct by undoing the latest. */
+export interface InjuryStage {
+  id: string;
+  injury_id: string;
+  stage: InjuryStageName;
+  effective_on: string;
+  created_at: string;
+}
+
+/** A row of `v_injury_status` — the injury plus what its stage history implies. */
+export interface InjuryWithStatus extends Injury {
+  current_stage: InjuryStageName | null;
+  status: "open" | "resolved";
+  /** Date the player was match fit; null while open. */
+  returned_on: string | null;
+  /** returned_on − occurred_on; null while open (see daysLostSoFar). */
+  days_lost: number | null;
+}
+
 // ── Session & RPE types ───────────────────────────────────────────────────────
 export type SessionType = "Training" | "Match" | "Lecture";
 
@@ -306,7 +357,14 @@ export interface MatchPlayerStat {
   yellow_cards: number;
   red_cards: number;
   injured: boolean;
+  /**
+   * Free-text note from before injuries were their own table. Rows linked to
+   * an injury carry its one-line description here too, so the readers that
+   * still use it keep working until they move to `injury_id`.
+   */
   injury_note: string | null;
+  /** The injury this row recorded or aggravated — see `injuries`. */
+  injury_id: string | null;
   notes: string | null;
   created_at: string;
 }
@@ -316,7 +374,7 @@ export type MatchStatInput = Pick<
   MatchPlayerStat,
   "player_id" | "minutes_played" | "minutes_overridden" | "started" | "on_minute"
   | "off_minute" | "goals" | "goals_free_kick" | "goals_penalty" | "assists"
-  | "yellow_cards" | "red_cards" | "injured" | "injury_note"
+  | "yellow_cards" | "red_cards" | "injured" | "injury_note" | "injury_id"
 >;
 
 /** One shootout kick. Shootout kicks are never counted as goals. */
