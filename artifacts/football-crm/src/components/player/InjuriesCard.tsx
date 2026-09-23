@@ -17,7 +17,7 @@ import type { InjuryStage, InjuryWithStatus, Player, TrainingSession } from "@/l
  * Why a player stopped training, on their own page: a banner while they are
  * not match fit, the question to answer about it if there is one, and every
  * injury on record. The page passes its own injury fetch in, since the same
- * data excuses the absences in its attendance figures.
+ * data drives its closing prompts.
  */
 export function InjuriesCard({
   player,

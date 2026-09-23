@@ -3,11 +3,10 @@ import { useSearchParams } from "wouter";
 import { ArrowLeft, Printer, RefreshCw } from "lucide-react";
 import {
   fetchAllAttendanceStats, fetchAllMatchStats, fetchAllResults,
-  fetchAllRPEWithSessions, fetchInjuryHistory, fetchPlayers, fetchTournamentFinishes, fetchTrainingSessions,
+  fetchAllRPEWithSessions, fetchPlayers, fetchTournamentFinishes, fetchTrainingSessions,
 } from "@/lib/queries";
 import { buildPlayerReport, type ReportData, type ReportRange } from "@/lib/report";
 import { formatDateLong } from "@/lib/attendance";
-import { buildAvailability } from "@/lib/injuries";
 import { formatDateRange } from "@/lib/tournaments";
 import { ReportPage } from "@/components/report/ReportPage";
 import type { Player } from "@/lib/types";
@@ -55,9 +54,8 @@ export default function PlayerReports() {
       fetchAllRPEWithSessions(),
       fetchAllMatchStats(),
       fetchTournamentFinishes(),
-      fetchInjuryHistory(),
     ])
-      .then(([ps, sessions, attendance, results, rpe, matchStats, finishes, injuryHistory]) => {
+      .then(([ps, sessions, attendance, results, rpe, matchStats, finishes]) => {
         if (cancelled) return;
         setPlayers(ps);
         setData({
@@ -67,7 +65,6 @@ export default function PlayerReports() {
           rpe: rpe as ReportData["rpe"],
           matchStats,
           finishes,
-          availability: buildAvailability(injuryHistory.injuries, injuryHistory.stages),
         });
       })
       .catch((err) => { if (!cancelled) setError(String(err)); })

@@ -2,6 +2,7 @@ import type {
   Injury, InjuryCategory, InjuryContext, InjuryMechanism, InjuryOnset, InjurySide,
   InjuryStage, InjuryStageName, InjuryWithStatus,
 } from "./types";
+import { formatDateShort } from "./attendance";
 
 /**
  * Injuries and illnesses — the vocabulary, and everything derived from a
@@ -223,8 +224,9 @@ export function recurrenceCandidates(
 }
 
 /**
- * Open injuries in the same area that had already begun by `occurredOn` — the
- * form warns that this may be a setback on one. One that started later can't be.
+ * Injuries in the same area that were open on `occurredOn` — the form warns
+ * that this may be a setback on one. One that started later can't be, and one
+ * that has healed since still counts: it was open then.
  */
 export function openInSameArea(
   injuries: InjuryWithStatus[],
@@ -232,8 +234,7 @@ export function openInSameArea(
   occurredOn: string,
 ): InjuryWithStatus[] {
   if (!bodyArea) return [];
-  return injuries.filter((i) => i.status === "open" && i.category === "injury"
-    && i.body_area === bodyArea && i.occurred_on <= occurredOn);
+  return injuries.filter((i) => i.category === "injury" && i.body_area === bodyArea && openOn(i, occurredOn));
 }
 
 // ── Entry ─────────────────────────────────────────────────────────────────────
@@ -307,14 +308,6 @@ export function injuryRowFromDraft(
 /** Not-yet-fit stages, worst first. Match fit means available, so it has no rank. */
 const STAGE_RANK: Record<InjuryStageName, number> = { out: 3, modified: 2, full_training: 1, match_fit: 0 };
 
-/**
- * Stages that excuse an absence. A player cleared for full training is
- * expected to turn up, so from then on a missed session counts again.
- */
-export function stageExcusesAbsence(stage: InjuryStageName | null): boolean {
-  return stage === "out" || stage === "modified";
-}
-
 /** The stage one injury had reached on `date`; null before it began or once match fit. */
 export function stageOfInjuryOn(
   injury: Pick<Injury, "occurred_on">,
@@ -327,6 +320,15 @@ export function stageOfInjuryOn(
     if (s.effective_on <= date && (!current || s.effective_on > current.effective_on)) current = s;
   }
   return current && current.stage !== "match_fit" ? current.stage : null;
+}
+
+/**
+ * Whether an injury was still open on `date`: it had happened, and the player
+ * wasn't match fit yet. `status` answers this for today only — a past session
+ * or match has to ask about its own date.
+ */
+export function openOn(injury: Pick<InjuryWithStatus, "occurred_on" | "returned_on">, date: string): boolean {
+  return injury.occurred_on <= date && (injury.returned_on == null || injury.returned_on > date);
 }
 
 export interface PlayerAvailability {
@@ -392,6 +394,35 @@ export const NO_INJURIES: Availability = buildAvailability([], []);
 /** "Out · Knee (left)" — the short line lineups and rosters show. */
 export function availabilityLabel(a: PlayerAvailability): string {
   return `${STAGE_CFG[a.stage].short} · ${a.injuries.map(injuryLabel).join(", ")}`;
+}
+
+/**
+ * What an attendance alert says about injury: the injuries the player had in
+ * the window, so a coach can tell a commitment problem from an injury —
+ * "out with knee (right) since 2 Aug", or "was out with ankle (left)
+ * 1 Sept–15 Sept" for one that has ended. Empty when there were none.
+ *
+ * It explains the figure and never changes it: an injured player is expected
+ * to come and sit out, so a missed session counts like any other.
+ */
+export function injuryAttendanceNote(injuries: InjuryWithStatus[], from: string, today: string): string {
+  const lower = (i: InjuryWithStatus) => {
+    const label = injuryLabel(i);
+    return label.charAt(0).toLowerCase() + label.slice(1);
+  };
+  return injuries
+    .filter((i) => i.occurred_on <= today && (i.returned_on == null || i.returned_on > from))
+    .sort((a, b) => a.occurred_on.localeCompare(b.occurred_on))
+    .map((i) => {
+      if (i.returned_on != null && i.returned_on <= today) {
+        return `was out with ${lower(i)} ${formatDateShort(i.occurred_on)}–${formatDateShort(i.returned_on)}`;
+      }
+      const lead = i.current_stage === "modified" ? "on modified training with"
+        : i.current_stage === "full_training" ? "back in full training after"
+        : "out with";
+      return `${lead} ${lower(i)} since ${formatDateShort(i.occurred_on)}`;
+    })
+    .join("; ");
 }
 
 // ── Closing prompts ───────────────────────────────────────────────────────────

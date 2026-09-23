@@ -37,9 +37,9 @@ const DECISIONS = {
   zarastyn: {
     question: "Zarastyn — knee (2 Aug). Absent from every session since. Is she still out?",
     options: {
-      open: "Still out since 2 Aug — every absence since is excused",
-      returned: "Back on a date the coaches give (set `returnedOn`) — absences until then excused",
-      other: "Knock only; she stopped coming for another reason — match fit 2 Aug, no absences excused",
+      open: "Still out since 2 Aug",
+      returned: "Back on a date the coaches give (set `returnedOn`)",
+      other: "Knock only; she stopped coming for another reason — match fit 2 Aug",
     },
     answer: null, // e.g. "open", or { key: "returned", returnedOn: "2026-08-20" }
   },
@@ -54,8 +54,8 @@ const DECISIONS = {
   atiriya: {
     question: "Atiriya — hand (12 Sep, off at 61'). Were the 16 and 18 Sep absences because of it?",
     options: {
-      yes: "Out 12 Sep, match fit 21 Sep (her next session) — 16 and 18 Sep excused",
-      no: "Played on — match fit 12 Sep, nothing excused",
+      yes: "Out 12 Sep, match fit 21 Sep (her next session)",
+      no: "Played on — match fit 12 Sep",
     },
     answer: null,
   },
@@ -78,7 +78,7 @@ const DECISIONS = {
   april: {
     question: "The six CSV-imported rows (5 and 20 Apr) — the sheet's column meant 'injured/unavailable'. Injuries, or plain Absent?",
     options: {
-      absent: "Plain Absent, no injury — they count against April attendance again",
+      absent: "Plain Absent, no injury",
       injuries: "Unspecified injuries, match fit at each player's next session",
     },
     answer: null,
@@ -115,7 +115,7 @@ const [players, sessions, attendance, rpe, stats, matches, existing] = await Pro
   all("session_rpe", "id, session_id, player_id, estimated"),
   all("match_player_stats", "id, match_id, player_id, minutes_played, injured, injury_note, injury_id"),
   all("matches", "id, session_id, stage"),
-  all("injuries", "id, player_id, occurred_on, migrated"),
+  all("injuries", "id, player_id, occurred_on, body_area, side, notes, migrated"),
 ]);
 
 const playerByName = (fragment) => {
@@ -137,28 +137,6 @@ function firstActivityAfter(playerId, after) {
     ...stats.filter((s) => s.player_id === playerId && (s.minutes_played ?? 0) > 0).map((s) => dateOfMatch(s.match_id)),
   ].filter((d) => d && d > after).sort();
   return dates[0] ?? null;
-}
-
-/**
- * Absences that `window` would excuse for a player, split into those already
- * excused today (a legacy Injured mark) and those newly excused. Match days
- * count once, however many fixtures they held.
- */
-function excusedBy(playerId, from, to) {
-  const seen = new Set();
-  const newly = [];
-  const already = [];
-  for (const a of attendance) {
-    if (a.player_id !== playerId) continue;
-    const s = sessionById.get(a.session_id);
-    if (!s || s.date < from || (to && s.date >= to)) continue;
-    if (a.status === "Present" || a.status === "Late") continue;
-    const key = s.session_type === "Match" ? `M:${s.date}` : s.id;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    (a.status === "Injured" ? already : newly).push(`${s.date.slice(5)} ${s.session_type[0]}`);
-  }
-  return { newly: newly.sort(), already: already.sort() };
 }
 
 // ── Plan ─────────────────────────────────────────────────────────────────────
@@ -332,9 +310,6 @@ function describe(entry, stages) {
   const last = stages[stages.length - 1];
   const open = last[0] !== "match_fit";
   const returned = open ? null : last[1];
-  const firstOut = stages.find(([s]) => s === "out" || s === "modified");
-  const until = returned && !returned.startsWith("<") ? returned : null;
-  const ex = firstOut ? excusedBy(p.id, firstOut[1], until) : { newly: [], already: [] };
   const placeholder = returned?.startsWith("<");
   const n = returned && !placeholder ? days(entry.occurred, returned) : null;
   const lostTxt = n != null
@@ -342,7 +317,6 @@ function describe(entry, stages) {
     : open ? `open — at least ${band(days(entry.occurred, TODAY))} so far${firstActivityAfter(p.id, entry.occurred) ? "" : ", no activity since"}`
     : "severity once the date is given";
   line(`      stages: ${stages.map(([s, d]) => `${s} ${d.startsWith("<") ? d : d.slice(5)}`).join(" → ")}   [${lostTxt}]`);
-  line(`      excuses${placeholder ? " (up to the return date; shown through today)" : ""}: ${ex.newly.length ? ex.newly.join(", ") : "nothing new"}${ex.already.length ? `   (already excused by their Injured mark: ${ex.already.join(", ")})` : ""}`);
   if (mech) line(`      mechanism: ${mech}`);
 }
 
@@ -353,13 +327,20 @@ for (const e of plan) {
   if (e.notes) line(`      notes: ${e.notes}`);
   if (e.expectedReturn !== undefined) line(`      expected return: ${e.expectedReturn ?? "<from coaches>"}`);
   line(`      from: ${e.sources.join("; ") || "(none)"}`);
+  // Entered through the app since injuries went live — converting the legacy
+  // row as well would record the same injury twice
+  const onRecord = existing.filter((i) => !i.migrated && i.player_id === playerByName(e.player).id
+    && (e.area === "Unspecified" || i.body_area === e.area));
+  for (const i of onRecord) {
+    line(`      !! already on record: ${i.body_area ?? "illness"}${i.side && i.side !== "n/a" ? ` (${i.side})` : ""} from ${i.occurred_on}${i.notes ? ` "${i.notes}"` : ""} — likely the same injury; converting would duplicate it`);
+  }
   if (e.variants) {
     const chosen = pick(DECISIONS[e.decision]);
     for (const [k, v] of Object.entries(e.variants)) {
       if (chosen && chosen !== k) continue;
       line(`    ${chosen ? "→" : "?"} ${k}: ${DECISIONS[e.decision].options[k]}`);
       if (v.stages) describe(e, v.stages);
-      else line(`      no injury; the row becomes Absent and counts against attendance`);
+      else line(`      no injury; the row becomes Absent — it already counts as missed`);
     }
   } else {
     describe(e, e.stages);
@@ -367,8 +348,9 @@ for (const e of plan) {
   line();
 }
 
-line("Also on apply: each legacy Injured attendance row becomes Absent (its injury is what excuses it now),");
-line("and each flagged match row gets injury_id set; its note is kept.");
+line("Also on apply: each legacy Injured attendance row becomes Absent — no attendance % changes, since an");
+line("Injured mark already counts as a missed session — and each flagged match row gets injury_id set;");
+line("its note is kept.");
 line();
 const pending = Object.entries(DECISIONS).filter(([, d]) => d.answer == null);
 line(pending.length ? `Waiting on ${pending.length} decision(s) — no apply until all are answered:` : "All decisions answered.");

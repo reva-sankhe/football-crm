@@ -91,6 +91,16 @@ try {
   assert.deepEqual(inj.openInSameArea(all, "Back", "2026-09-20").map((i) => i.id), ["b"]);
   assert.deepEqual(inj.openInSameArea(all, "Back", "2026-09-10").map((i) => i.id), [],
     "an injury that began after the new date can't be what this is a setback on");
+  assert.deepEqual(inj.openInSameArea(all, "Knee", "2026-08-10").map((i) => i.id), ["k"],
+    "healed since, but open on the new date — still a possible setback");
+
+  // ── Open on a date, not today ─────────────────────────────────────────────
+  // What a past session or match offers as "still out with" / "same as"
+  assert.equal(inj.openOn(knee, "2026-08-10"), true, "open then, though resolved now");
+  assert.equal(inj.openOn(knee, "2026-08-20"), false, "match fit that day");
+  assert.equal(inj.openOn(knee, "2026-08-01"), false, "hadn't happened yet");
+  assert.equal(inj.openOn(backOpen, "2026-09-06"), false, "an open injury from after the date");
+  assert.equal(inj.openOn(backOpen, "2026-09-12"), true, "open from the day it occurred");
 
   // ── Labels ────────────────────────────────────────────────────────────────
   assert.equal(inj.injuryLabel({ category: "injury", body_area: "Knee", side: "left" }), "Knee (left)");
@@ -151,39 +161,34 @@ try {
   assert.equal(overlap.on("hiba", "2026-09-21").stage, "out", "two injuries: the worst stage wins");
   assert.deepEqual(overlap.on("hiba", "2026-09-21").injuries.map((i) => i.id), ["ank", "acl"]);
 
-  assert.equal(inj.stageExcusesAbsence("out"), true);
-  assert.equal(inj.stageExcusesAbsence("modified"), true);
-  assert.equal(inj.stageExcusesAbsence("full_training"), false, "cleared to train fully — absences count again");
-
-  // ── Excused attendance ────────────────────────────────────────────────────
+  // ── Attendance is never adjusted for injury ───────────────────────────────
+  // Injured players are expected to come and sit out: an absence while out
+  // counts like any other, and a legacy Injured mark counts as missed
   const att = await vite.ssrLoadModule("/src/lib/attendance.ts");
-  assert.equal(att.isExcusedAbsence("Absent", av, "hiba", "2026-09-09"), true, "Absent while out is excused");
-  assert.equal(att.isExcusedAbsence("Present", av, "hiba", "2026-09-09"), false, "attending always counts");
-  assert.equal(att.isExcusedAbsence("Absent", av, "hiba", "2026-09-01"), false, "before the injury, an absence is an absence");
-  assert.equal(att.isExcusedAbsence("Absent", av, "kirti", "2026-09-16"), false, "full training: counts again");
-  assert.equal(att.isExcusedAbsence("Injured", inj.NO_INJURIES, "x", "2026-04-05"), true,
-    "a legacy Injured mark is excused even with no injury on record");
-
-  const days = ["2026-09-02", "2026-09-04", "2026-09-09", "2026-09-11", "2026-09-16"];
-  const status = { "2026-09-02": "Present", "2026-09-04": "Absent", "2026-09-09": "Absent", "2026-09-11": "Absent", "2026-09-16": "Absent" };
-  const t = att.tallyAttendance(days, (d) => status[d] === "Present",
-    (d) => att.isExcusedAbsence(status[d], av, "hiba", d));
-  assert.deepEqual(t, { total: 2, attended: 1, excused: 3, pct: 50 },
-    "Hiba's September: 3 post-ACL absences leave the denominator; 4 Sep still counts");
-  assert.equal(att.tallyLine(t), "1 of 2 · 3 excused (injury)");
-  assert.equal(att.tallyAttendance([], () => true).pct, null);
-  assert.deepEqual(att.tallyAttendance(["a"], () => false, () => true), { total: 0, attended: 0, excused: 1, pct: null },
-    "every unit excused: no percentage rather than 0%");
-
+  assert.equal(att.isExcusedAbsence, undefined, "no excused-absence rule");
+  assert.equal(att.countsAsAttended("Injured"), false, "a legacy Injured mark is a missed session");
   const msess = (id, date) => ({ id, date, day: "", session_type: "Match", duration_mins: 70, start_time: null,
     planned_rpe: 0, planned_load_au: 0, notes: null, created_at: date });
   const md = att.matchDayAttendance(
     [msess("a", "2026-09-06"), msess("b", "2026-09-12"), msess("c", "2026-09-12"), msess("d", "2026-08-30")],
     (id) => id === "d",
-    (date) => date >= "2026-09-06" && date !== "2026-09-06",
   );
-  assert.deepEqual([md.days, md.daysAttended, md.daysExcused, md.total, md.attended, md.pct], [2, 1, 1, 2, 1, 50],
-    "the excused 12 Sep day (2 fixtures) drops out of both the days and the fixtures");
+  assert.deepEqual([md.days, md.daysAttended, md.total, md.attended, md.pct], [3, 1, 4, 1, 33],
+    "every match day counts, injured or not");
+
+  // ── The injury beside an attendance alert ─────────────────────────────────
+  const zKnee = injury({ id: "zk", player_id: "z", body_area: "Knee", side: "right", occurred_on: "2026-08-02" });
+  assert.equal(inj.injuryAttendanceNote([zKnee], "2026-09-01", "2026-09-23"), "out with knee (right) since 2 Aug");
+  const zMod = { ...zKnee, current_stage: "modified" };
+  assert.equal(inj.injuryAttendanceNote([zMod], "2026-09-01", "2026-09-23"), "on modified training with knee (right) since 2 Aug");
+  const healed = injury({ id: "h", body_area: "Ankle", side: "left", occurred_on: "2026-09-01",
+    status: "resolved", current_stage: "match_fit", returned_on: "2026-09-15", days_lost: 14 });
+  assert.equal(inj.injuryAttendanceNote([healed], "2026-09-01", "2026-09-23"), "was out with ankle (left) 1 Sept–15 Sept");
+  const august = { ...healed, occurred_on: "2026-08-01", returned_on: "2026-08-20" };
+  assert.equal(inj.injuryAttendanceNote([august], "2026-09-01", "2026-09-23"), "", "over before the month began");
+  const ill = injury({ id: "i", category: "illness", body_area: null, side: null, mechanism: null, onset: null, occurred_on: "2026-09-18" });
+  assert.equal(inj.injuryAttendanceNote([zKnee, ill], "2026-09-01", "2026-09-23"),
+    "out with knee (right) since 2 Aug; out with illness since 18 Sept");
 
   // ── Closing prompts ───────────────────────────────────────────────────────
   const openBack = injury({ id: "bk", body_area: "Back", side: "n/a", occurred_on: "2026-09-12" });

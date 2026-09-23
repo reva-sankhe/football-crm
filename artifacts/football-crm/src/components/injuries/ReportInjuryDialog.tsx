@@ -5,7 +5,7 @@ import { cn, getErrorMessage, playerLabel } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
 import { formatDateShort, todayISO } from "@/lib/attendance";
 import {
-  STAGE_CFG, emptyInjuryDraft, injuryDraftProblems, injuryLabel, injuryRowFromDraft, type InjuryDraft,
+  STAGE_CFG, emptyInjuryDraft, injuryDraftProblems, injuryLabel, injuryRowFromDraft, openOn, type InjuryDraft,
 } from "@/lib/injuries";
 import { createInjury, fetchInjuriesForPlayer, fetchMatchIdForSession } from "@/lib/queries";
 import { InjuryFields } from "./InjuryFields";
@@ -20,9 +20,11 @@ export type ReportInjuryResult =
  * The quick "report injury" form. Opened from two places, which fix different
  * things:
  *
- * - **Mark Attendance** passes the `player` and the `session`: the date is the
- *   session's, the injury links to it, and a player already out can be marked
- *   as still out with that injury instead of opening a new one.
+ * - **Mark Attendance** and the matrix pass the `player` and the `session`: the
+ *   date is the session's, the injury links to it, and a player already out is
+ *   shown what they are out with, so the same injury isn't opened twice. The
+ *   attendance status is never touched — an injured player who came to sit
+ *   out is Present, one who didn't is Absent.
  * - **Dashboard** passes `players` and `sessions`: pick who and when, and the
  *   injury links to that day's session if there is exactly one of the kind
  *   picked under Where.
@@ -49,9 +51,10 @@ export function ReportInjuryDialog({
   /** Candidate sessions to link by date, when no `session` is fixed. */
   sessions?: TrainingSession[];
   /**
-   * Offer "still out with …" for each open injury. Only where picking it means
-   * something — marking attendance. Elsewhere the fields' setback warning
-   * covers an open injury in the same area.
+   * Offer "still out with …" for each injury open on the date, ahead of the
+   * fields — from attendance, where a coach reaching for this about a player
+   * already out most likely means that injury. Elsewhere the fields' setback
+   * warning covers an open injury in the same area.
    */
   offerStillOut?: boolean;
   onClose: () => void;
@@ -87,13 +90,15 @@ export function ReportInjuryDialog({
     return () => { cancelled = true; };
   }, [playerId, toast]);
 
+  // Open on the session's date, not today: marking an older session must
+  // neither offer an injury from after it nor miss one that has since healed
   const open = useMemo(
-    () => (offerStillOut ? history.filter((i) => i.status === "open") : []),
-    [history, offerStillOut],
+    () => (offerStillOut && date ? history.filter((i) => openOn(i, date)) : []),
+    [history, offerStillOut, date],
   );
 
-  // A player already out who misses a session is almost always still out with
-  // that injury, so it starts selected; "Something new" is the deliberate pick.
+  // A player already out is almost always still out with that injury, so it
+  // starts selected; "Something new" is the deliberate pick.
   useEffect(() => {
     if (choice !== "new" && !open.some((i) => i.id === choice)) setChoice("new");
     else if (choice === "new" && !choiceTouched && open.length > 0) setChoice(open[0].id);
@@ -210,7 +215,7 @@ export function ReportInjuryDialog({
             </div>
           )}
 
-          {/* A player already out: most of the time that's why they missed this session */}
+          {/* A player already out: most of the time this is that injury */}
           {open.length > 0 && (
             <div className="space-y-1.5">
               {open.map((i) => (
@@ -253,7 +258,7 @@ export function ReportInjuryDialog({
               data-testid="button-save-injury"
             >
               {saving && <RefreshCw size={13} className="animate-spin" />}
-              {choice === "new" ? (saving ? "Saving…" : "Record") : "Mark injured"}
+              {choice === "new" ? (saving ? "Saving…" : "Record") : "Nothing new"}
             </button>
           </div>
         </form>

@@ -1,7 +1,6 @@
 import { CheckCircle2, XCircle, Clock, Activity } from "lucide-react";
 import type { AttendanceStatus, SessionType, TrainingSession } from "./types";
 import { STATUS, STATUS_TEXT } from "./viz";
-import { stageExcusesAbsence, type Availability } from "./injuries";
 
 // ── Session type styling ──────────────────────────────────────────────────────
 export const SESSION_TYPE_CFG: Record<SessionType, { dot: string }> = {
@@ -37,60 +36,6 @@ export const ATTENDED: ReadonlySet<AttendanceStatus> = new Set<AttendanceStatus>
 
 export function countsAsAttended(status: AttendanceStatus | null | undefined): boolean {
   return status != null && ATTENDED.has(status);
-}
-
-// ── Excused absences ──────────────────────────────────────────────────────────
-/**
- * The one rule every attendance percentage uses. A session the player missed
- * while out or on modified training is excused: it leaves the denominator
- * instead of counting against them. So does a legacy "Injured" mark, which
- * predates injury records and would otherwise read as a plain absence.
- * Attending always counts, injured or not.
- */
-export function isExcusedAbsence(
-  status: AttendanceStatus | null | undefined,
-  availability: Availability,
-  playerId: string,
-  date: string,
-): boolean {
-  if (countsAsAttended(status)) return false;
-  if (status === "Injured") return true;
-  return stageExcusesAbsence(availability.on(playerId, date)?.stage ?? null);
-}
-
-export interface AttendanceTally {
-  /** Units that count: attended plus missed-and-not-excused. */
-  total: number;
-  attended: number;
-  /** Missed while injured — out of the denominator, reported alongside it. */
-  excused: number;
-  pct: number | null;
-}
-
-/**
- * Attendance over a set of units (sessions, or collapsed match days). Every
- * percentage in the app goes through this, so a player out injured reads the
- * same on the profile, the printed report, the matrix and the alerts.
- */
-export function tallyAttendance<T>(
-  units: T[],
-  attended: (unit: T) => boolean,
-  excused: (unit: T) => boolean = () => false,
-): AttendanceTally {
-  let a = 0;
-  let ex = 0;
-  for (const u of units) {
-    if (attended(u)) a += 1;
-    else if (excused(u)) ex += 1;
-  }
-  const total = units.length - ex;
-  return { total, attended: a, excused: ex, pct: total > 0 ? Math.round((a / total) * 100) : null };
-}
-
-/** "3 of 4 · 2 excused (injury)" — the tally as a short line. */
-export function tallyLine(t: AttendanceTally): string {
-  const base = `${t.attended} of ${t.total}`;
-  return t.excused > 0 ? `${base} · ${t.excused} excused (injury)` : base;
 }
 
 // ── Auto-Present ───────────────────────────────────────────────────────────
@@ -212,18 +157,14 @@ export interface MatchDayAttendance {
   attended: number;
   /** Day-wise turnout, 0–100. Deliberately not `attended / total`. */
   pct: number | null;
-  /** The days the percentage is computed from — excused days left out. */
+  /** The days the percentage is computed from. */
   days: number;
   daysAttended: number;
-  /** Match days missed while injured; neither in `days` nor in `total`. */
-  daysExcused: number;
 }
 
 export function matchDayAttendance(
   sessions: TrainingSession[],
   attended: (sessionId: string) => boolean,
-  /** A missed match day the player was injured for — see isExcusedAbsence. */
-  excusedDay: (date: string) => boolean = () => false,
 ): MatchDayAttendance {
   const byDay = new Map<string, TrainingSession[]>();
   for (const s of sessions) {
@@ -234,30 +175,25 @@ export function matchDayAttendance(
   }
 
   let daysAttended = 0;
-  let daysExcused = 0;
   let total = 0;
   let attendedMatches = 0;
-  for (const [date, group] of byDay) {
+  for (const group of byDay.values()) {
+    total += group.length;
     // A day's attendance lives on one of its sessions, so any hit means they
     // came — which session holds the row doesn't matter here.
     if (group.some((s) => attended(s.id))) {
       daysAttended += 1;
       attendedMatches += group.length;
-    } else if (excusedDay(date)) {
-      daysExcused += 1;
-      continue;
     }
-    total += group.length;
   }
 
-  const days = byDay.size - daysExcused;
+  const days = byDay.size;
   return {
     total,
     attended: attendedMatches,
     pct: days > 0 ? Math.round((daysAttended / days) * 100) : null,
     days,
     daysAttended,
-    daysExcused,
   };
 }
 

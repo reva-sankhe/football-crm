@@ -1,7 +1,7 @@
 import { buildLoadRows, collapseLoadByDay, computeAcwr, teamSessionDatesFrom } from "./report";
 import { formatBronco } from "./utils";
-import { countsAsAttended, isExcusedAbsence, tallyAttendance } from "./attendance";
-import { NO_INJURIES, STAGE_CFG, availabilityLabel, type Availability } from "./injuries";
+import { NO_INJURIES, STAGE_CFG, availabilityLabel, injuryAttendanceNote, type Availability } from "./injuries";
+import type { InjuryWithStatus } from "./types";
 import { STATUS } from "./viz";
 import type { Player, TestResult, TrainingSession, SessionRPE, SessionAttendance } from "./types";
 import type { PlayerMatchStat } from "./queries";
@@ -215,21 +215,19 @@ export function computeAlerts({
     for (const player of activePlayers) {
       const playerAtt = attendanceData.filter((a) => a.player_id === player.id && loggedMonthSessions.some((s) => s.id === a.session_id));
       if (!playerAtt.length) continue;
-      const statusOf = new Map(playerAtt.map((a) => [a.session_id, a.status]));
-      // The shared rule: sessions missed while injured leave the denominator
-      const tally = tallyAttendance(
-        loggedMonthSessions,
-        (s) => countsAsAttended(statusOf.get(s.id)),
-        (s) => isExcusedAbsence(statusOf.get(s.id), availability, player.id, s.date),
-      );
-      if (tally.pct === null) continue;
-      const { attended } = tally;
-      const pct = tally.pct / 100;
-      const excusedNote = tally.excused > 0 ? `, ${tally.excused} excused for injury` : "";
+      const attended = playerAtt.filter((a) => a.status === "Present" || a.status === "Late").length;
+      const pct = attended / loggedMonthSessions.length;
       if (pct < 0.75) {
         const isDanger = pct < 0.5;
+        // The figure is never adjusted for injury — the note only says why,
+        // from whatever the player was out with on a session day or today
+        const injuries = new Map<string, InjuryWithStatus>();
+        for (const date of [...loggedMonthSessions.map((s) => s.date), today]) {
+          for (const i of availability.on(player.id, date)?.injuries ?? []) injuries.set(i.id, i);
+        }
+        const note = injuryAttendanceNote([...injuries.values()], monthStart, today);
         items.push({ id: `att-${player.id}`, severity: isDanger ? "danger" : "warning", category: "attendance", player,
-          headline: `${Math.round(pct * 100)}% attendance this month (${attended} of ${tally.total} sessions${excusedNote})`,
+          headline: `${Math.round(pct * 100)}% attendance this month (${attended} of ${loggedMonthSessions.length} sessions)${note ? `, ${note}` : ""}`,
           detail: isDanger
             ? `This player has missed more than half of this month's logged sessions. At this level of absence they're falling behind on fitness, missing tactical and set-piece work, and it becomes difficult to justify match selection.`
             : `Below the 75% minimum. Missed sessions add up quickly — one or two more absences this month will make it very difficult to meet the threshold.`,

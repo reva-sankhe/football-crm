@@ -1,8 +1,6 @@
 import {
-  collapseMatchDays, countsAsAttended, isExcusedAbsence, matchDayAttendance, tallyAttendance,
-  type MatchDayAttendance,
+  collapseMatchDays, countsAsAttended, matchDayAttendance, type MatchDayAttendance,
 } from "./attendance";
-import { NO_INJURIES, type Availability } from "./injuries";
 import { STATUS, ordinal, type Mode } from "./viz";
 import { sumStats, type Totals, type TournamentFinish } from "./tournaments";
 import { getBroncoTier, type BroncoTier } from "./types";
@@ -33,25 +31,18 @@ export interface ReportData {
   matchStats: PlayerMatchStat[];
   /** tournament id → where the team finished, derived from the bracket. */
   finishes: Map<string, TournamentFinish>;
-  /** Who was injured when, for excusing absences. Omitted, nobody was. */
-  availability?: Availability;
 }
 
 export interface MonthlyAttendance {
   month: string;
-  /** Sessions that count — those missed while injured are left out. */
   total: number;
   attended: number;
-  /** Missed while injured; see isExcusedAbsence. */
-  excused: number;
   pct: number;
 }
 
 export interface AttendanceSlice {
   total: number;
   attended: number;
-  /** Missed while injured, and so not in `total`. */
-  excused: number;
   /** null when there were no sessions to attend. */
   pct: number | null;
 }
@@ -1121,33 +1112,21 @@ export function buildPlayerReport(
   // contained a tournament.
   const scopedUnits = collapseMatchDays(scopedSessions, (sid) => attendedIds.has(sid)).sessions;
 
-  // Sessions missed while injured leave the denominator — the same rule the
-  // profile, the matrix and the alerts apply (isExcusedAbsence).
-  const availability = data.availability ?? NO_INJURIES;
-  const statusOf = new Map(
-    data.attendance.filter((a) => a.player_id === player.id).map((a) => [a.session_id, a.status]),
-  );
-  const matchDayStatus = new Map<string, SessionAttendance["status"]>();
-  const sessionDate = new Map(data.sessions.map((s) => [s.id, s]));
-  for (const [sid, status] of statusOf) {
-    const s = sessionDate.get(sid);
-    if (s && isMatchSession(s)) matchDayStatus.set(s.date, status);
-  }
-  const isAttended = (s: TrainingSession) => attendedIds.has(s.id);
-  const isExcused = (s: TrainingSession) => isExcusedAbsence(statusOf.get(s.id), availability, player.id, s.date);
-  const excusedMatchDay = (date: string) =>
-    isExcusedAbsence(matchDayStatus.get(date), availability, player.id, date);
-  const overall = tallyAttendance(scopedUnits, isAttended, isExcused);
+  const attended = scopedUnits.filter((s) => attendedIds.has(s.id)).length;
 
-  const byMonth: Record<string, TrainingSession[]> = {};
-  for (const s of scopedUnits) (byMonth[s.date.slice(0, 7)] ??= []).push(s);
+  const byMonth: Record<string, string[]> = {};
+  for (const s of scopedUnits) (byMonth[s.date.slice(0, 7)] ??= []).push(s.id);
   const monthly: MonthlyAttendance[] = Object.entries(byMonth)
-    .map(([month, units]) => ({ month, ...tallyAttendance(units, isAttended, isExcused) }))
-    // A month spent entirely injured has nothing to report a percentage of
-    .filter((m): m is MonthlyAttendance => m.pct !== null)
+    .map(([month, ids]) => {
+      const a = ids.filter((id) => attendedIds.has(id)).length;
+      return { month, total: ids.length, attended: a, pct: Math.round((a / ids.length) * 100) };
+    })
     .sort((x, y) => x.month.localeCompare(y.month));
 
-  const slice = (ss: TrainingSession[]): AttendanceSlice => tallyAttendance(ss, isAttended, isExcused);
+  const slice = (ss: TrainingSession[]): AttendanceSlice => {
+    const a = ss.filter((s) => attendedIds.has(s.id)).length;
+    return { total: ss.length, attended: a, pct: ss.length > 0 ? Math.round((a / ss.length) * 100) : null };
+  };
 
   // Unscoped, for the profile-matching tiles an all-time report leads with —
   // both halves read the current month so they describe the same period.
@@ -1157,7 +1136,7 @@ export function buildPlayerReport(
     month: thisMonthKey,
     ...slice(monthSessions.filter((s) => !isMatchSession(s))),
   };
-  const currentMonthMatch = matchDayAttendance(monthSessions, (sid) => attendedIds.has(sid), excusedMatchDay);
+  const currentMonthMatch = matchDayAttendance(monthSessions, (sid) => attendedIds.has(sid));
 
   // ── Matches ─────────────────────────────────────────────────────────────
   const playerStats = data.matchStats.filter(
@@ -1278,12 +1257,12 @@ export function buildPlayerReport(
     player,
     range,
     attendance: {
-      total: overall.total,
-      attended: overall.attended,
-      pct: overall.pct,
+      total: scopedUnits.length,
+      attended,
+      pct: scopedUnits.length > 0 ? Math.round((attended / scopedUnits.length) * 100) : null,
       monthly,
       training: slice(scopedSessions.filter((s) => !isMatchSession(s))),
-      match: matchDayAttendance(scopedSessions, (sid) => attendedIds.has(sid), excusedMatchDay),
+      match: matchDayAttendance(scopedSessions, (sid) => attendedIds.has(sid)),
       currentMonthTraining,
       currentMonthMatch,
     },

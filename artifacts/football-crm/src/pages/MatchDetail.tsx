@@ -35,7 +35,7 @@ import { StageBadge } from "@/components/Badges";
 import { ShootoutPanel } from "@/components/tournaments/ShootoutPanel";
 import { MatchInjuryPanel } from "@/components/injuries/MatchInjuryPanel";
 import {
-  NO_INJURIES, buildAvailability, emptyInjuryDraft, injuryDraftProblems, injuryLabel, injuryRowFromDraft,
+  NO_INJURIES, buildAvailability, emptyInjuryDraft, injuryDraftProblems, injuryLabel, injuryRowFromDraft, openOn,
   type Availability, type InjuryDraft,
 } from "@/lib/injuries";
 import { AvailabilityBadge } from "@/components/injuries/AvailabilityBadge";
@@ -351,8 +351,10 @@ export default function MatchDetail() {
     setInjuryDrafts(({ [playerId]: _, ...rest }) => rest);
   };
 
+  /** Open on the match date — not today, which would offer injuries from after the match. */
   function openInjuriesFor(playerId: string): InjuryWithStatus[] {
-    return Object.values(injuriesById).filter((i) => i.player_id === playerId && i.status === "open");
+    if (!matchDate) return [];
+    return Object.values(injuriesById).filter((i) => i.player_id === playerId && openOn(i, matchDate));
   }
 
   /** Only what still has a use: the save toast, and the over-cap warning. */

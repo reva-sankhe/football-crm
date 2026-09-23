@@ -6,7 +6,7 @@ import {
   fetchInjuryHistory, type PlayerMatchStat,
 } from "@/lib/queries";
 import { NO_INJURIES, buildAvailability, buildEvidence, closingPrompts, type Availability } from "@/lib/injuries";
-import { isExcusedAbsence, todayISO } from "@/lib/attendance";
+import { todayISO } from "@/lib/attendance";
 import { ClosingPrompts } from "@/components/injuries/ClosingPrompts";
 import { AvailabilityBadge } from "@/components/injuries/AvailabilityBadge";
 import type { InjuryStage, InjuryWithStatus } from "@/lib/types";
@@ -102,13 +102,10 @@ export default function Dashboard() {
     const me  = new Date(now.getFullYear(), now.getMonth() + 1, 0).toISOString().slice(0, 10);
     const logged  = trainingSessions.filter((s) => (s.date ?? "") >= ms && (s.date ?? "") <= me && attendanceData.some((a) => a.session_id === s.id));
     if (!logged.length) return null;
-    const dateOf = new Map(logged.map((s) => [s.id, s.date]));
-    // Absences excused for injury leave the team average, as they do each player's
-    const relevant = attendanceData.filter((a) => dateOf.has(a.session_id)
-      && !isExcusedAbsence(a.status, availability, a.player_id, dateOf.get(a.session_id)!));
+    const relevant = attendanceData.filter((a) => logged.some((s) => s.id === a.session_id));
     const present  = relevant.filter((a) => a.status === "Present" || a.status === "Late").length;
     return relevant.length > 0 ? Math.round((present / relevant.length) * 100) : null;
-  }, [attendanceData, trainingSessions, availability]);
+  }, [attendanceData, trainingSessions]);
 
   // ── Upcoming sessions ─────────────────────────────────────────────────────
   const upcoming = useMemo(() => {

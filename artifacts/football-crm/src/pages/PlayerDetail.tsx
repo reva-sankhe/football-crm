@@ -10,8 +10,7 @@ import {
   JERSEY_MAX, JERSEY_MIN, formatBronco, cn, isValidJersey, jerseyClash, playerLabel,
 } from "@/lib/utils";
 import {
-  attendancePctColor, collapseMatchDays, countsAsAttended, formatDateShort, isExcusedAbsence, isoDaysAgo,
-  matchDayAttendance, tallyAttendance,
+  attendancePctColor, collapseMatchDays, countsAsAttended, formatDateShort, isoDaysAgo, matchDayAttendance,
 } from "@/lib/attendance";
 import { buildAvailability } from "@/lib/injuries";
 import { InjuriesCard } from "@/components/player/InjuriesCard";
@@ -145,7 +144,7 @@ export default function PlayerDetail() {
 
   // ── Injuries ──────────────────────────────────────────────────────────────
   // Squad-wide history (it's small): the card shows this player's, and the
-  // attendance figures below excuse sessions missed while injured.
+  // closing prompts and badges need the stages.
   const [injuryHistory, setInjuryHistory] = useState<{ injuries: InjuryWithStatus[]; stages: InjuryStage[] }>({ injuries: [], stages: [] });
   const loadInjuries = useCallback(async () => {
     try {
@@ -264,47 +263,34 @@ export default function PlayerDetail() {
     [allSessions, attendedIds],
   );
 
-  // Sessions missed while injured leave the denominator — the shared rule
-  // (isExcusedAbsence) the matrix, the printed report and the alerts apply too.
-  const statusOf = useMemo(
-    () => new Map(playerAttendance.map((a) => [a.session_id, a.status])),
-    [playerAttendance],
-  );
-  const matchDayStatus = useMemo(() => {
-    const m = new Map<string, SessionAttendance["status"]>();
-    for (const a of playerAttendance) if (a.sessions?.session_type === "Match") m.set(a.sessions.date, a.status);
-    return m;
-  }, [playerAttendance]);
-  const isExcused = useCallback(
-    (s: TrainingSession) => !!id && isExcusedAbsence(statusOf.get(s.id), availability, id, s.date),
-    [statusOf, availability, id],
-  );
-  const excusedMatchDay = (date: string) => !!id && isExcusedAbsence(matchDayStatus.get(date), availability, id, date);
-
   const monthlyAttendance = useMemo(() => {
     if (!attendanceUnits.sessions.length) return [];
-    const byMonth: Record<string, TrainingSession[]> = {};
+    const byMonth: Record<string, string[]> = {};
     for (const s of attendanceUnits.sessions) {
-      (byMonth[s.date.slice(0, 7)] ??= []).push(s);
+      (byMonth[s.date.slice(0, 7)] ??= []).push(s.id);
     }
     return Object.entries(byMonth)
-      .map(([month, units]) => ({ month, ...tallyAttendance(units, (s) => attendedIds.has(s.id), isExcused) }))
-      // A month spent entirely injured has no percentage to chart
-      .filter((m): m is typeof m & { pct: number } => m.pct !== null)
+      .map(([month, ids]) => {
+        const attended = ids.filter((sid) => attendedIds.has(sid)).length;
+        return { month, total: ids.length, attended, pct: Math.round((attended / ids.length) * 100) };
+      })
       .sort((a, b) => a.month.localeCompare(b.month));
-  }, [attendanceUnits, attendedIds, isExcused]);
+  }, [attendanceUnits, attendedIds]);
 
   // ── Snapshot ──────────────────────────────────────────────────────────────
   // The headline is this month's training turnout; match-day availability is a
   // separate question, so matches are excluded above and reported underneath.
-  const attendanceSlice = (ss: TrainingSession[]) => tallyAttendance(ss, (s) => attendedIds.has(s.id), isExcused);
+  const attendanceSlice = (ss: TrainingSession[]) => {
+    const a = ss.filter((s) => attendedIds.has(s.id)).length;
+    return { total: ss.length, attended: a, pct: ss.length > 0 ? Math.round((a / ss.length) * 100) : null };
+  };
 
   const thisMonth = new Date().toISOString().slice(0, 7);
   const monthLabel = new Date(thisMonth + "-01T00:00:00").toLocaleDateString("en-GB", { month: "short" });
   const monthSessions = allSessions.filter((s) => s.date.slice(0, 7) === thisMonth);
   const currentMonth = attendanceSlice(monthSessions.filter((s) => !isMatchSession(s)));
   // Matches are counted per day rather than per fixture — see matchDayAttendance
-  const matchAttendance = matchDayAttendance(monthSessions, (sid) => attendedIds.has(sid), excusedMatchDay);
+  const matchAttendance = matchDayAttendance(monthSessions, (sid) => attendedIds.has(sid));
 
   // Goals and appearances are labelled "this year", so they are scoped to it
   const thisYear = String(new Date().getFullYear());
@@ -480,8 +466,6 @@ export default function PlayerDetail() {
             sessions={attendanceUnits.sessions}
             matchesOnDay={attendanceUnits.matchesOnDay}
             attendance={playerAttendance}
-            availability={availability}
-            playerId={id}
           />
         </div>
       </section>

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useLocation } from "wouter";
 import {
+  Activity,
   ArrowRight,
   CheckCheck,
   MoreHorizontal,
@@ -15,17 +16,16 @@ import { useAuth } from "@/context/AuthContext";
 import { useToast } from "@/hooks/use-toast";
 import { bulkUpsertAttendance, fetchAttendanceBySession } from "@/lib/queries";
 import {
-  ATTENDANCE_CFG, ATTENDANCE_STATUSES, formatDateShort, isExcusedAbsence, resolveAutoMarked,
+  ATTENDANCE_CFG, ATTENDANCE_STATUSES, resolveAutoMarked,
 } from "@/lib/attendance";
 import { availabilityLabel, injuryLabel, type Availability } from "@/lib/injuries";
 import { ReportInjuryDialog } from "@/components/injuries/ReportInjuryDialog";
-import { InjuryDialog } from "@/components/injuries/InjuryDialog";
-import type { InjuryWithStatus } from "@/lib/types";
 import type { AttendanceStatus, Player, TrainingSession } from "@/lib/types";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 
@@ -69,7 +69,7 @@ interface MarkAttendanceProps {
   /** Matches played on this date, when the day had more than one. */
   matchesOnDay?: number;
   players: Player[];
-  /** Who was injured when — an absence inside an injury shows as Injured. */
+  /** Who was injured when — shown beside the name; never changes the status. */
   availability: Availability;
   /** After the report form records an injury, so `availability` can refetch. */
   onInjuryRecorded: () => void;
@@ -106,10 +106,8 @@ export function MarkAttendance({
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [search, setSearch] = useState("");
-  /** The player whose "Injured" pick is being reported. */
+  /** The player whose injury is being reported. */
   const [reporting, setReporting] = useState<Player | null>(null);
-  /** An out player just marked present — the "back?" question about their injury. */
-  const [returning, setReturning] = useState<{ player: Player; injury: InjuryWithStatus } | null>(null);
 
   // ── Load attendance for the selected session ───────────────────────────────
   useEffect(() => {
@@ -161,22 +159,11 @@ export function MarkAttendance({
   }, [dirty]);
 
   // ── Derived ────────────────────────────────────────────────────────────────
-  /**
-   * Injured is derived, not marked: a player who isn't here while out or on
-   * modified training reads as Injured, whatever the row says underneath
-   * (Absent, or a legacy Injured). The same rule excuses it from their %.
-   */
-  const shownStatus = (playerId: string): AttendanceStatus => {
-    const status = draft[playerId] ?? "Absent";
-    return session && isExcusedAbsence(status, availability, playerId, session.date) ? "Injured" : status;
-  };
-
   const counts = useMemo(() => {
     const c: Record<AttendanceStatus, number> = { Present: 0, Absent: 0, Late: 0, Injured: 0 };
-    for (const p of players) c[shownStatus(p.id)]++;
+    for (const p of players) c[draft[p.id] ?? "Absent"]++;
     return c;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [draft, players, availability, session?.date]);
+  }, [draft, players]);
 
   const visiblePlayers = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -205,18 +192,6 @@ export function MarkAttendance({
       [playerId]: d[playerId] === "Present" ? "Absent" : "Present",
     }));
     setTouched((t) => new Set(t).add(playerId));
-  };
-
-  /**
-   * Injured is not set directly: it opens the report form, so every injured
-   * absence is backed by an injury on record — a new one, or one the player
-   * is still out with. The row itself is saved as Absent; the injury is what
-   * makes it read as Injured, so deleting a mistaken injury can't leave a
-   * stray Injured mark behind. It still needs "Save attendance".
-   */
-  const pickStatus = (player: Player, status: AttendanceStatus) => {
-    if (status === "Injured") setReporting(player);
-    else setStatus(player.id, status);
   };
 
   const setAll = (status: AttendanceStatus) => {
@@ -369,7 +344,7 @@ export function MarkAttendance({
       ) : (
         <div className="grid gap-2 grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
           {visiblePlayers.map((player) => {
-            const status = shownStatus(player.id);
+            const status = draft[player.id] ?? "Absent";
             const injuredNow = session ? availability.on(player.id, session.date) : null;
             const cfg = ATTENDANCE_CFG[status];
             const StatusIcon = cfg.icon;
@@ -422,20 +397,14 @@ export function MarkAttendance({
                   <div className="min-w-0 flex-1">
                     <div className="text-sm font-medium text-foreground truncate leading-tight">{player.name}</div>
                     {isException && (
-                      <div className="text-[11px] text-muted-foreground truncate mt-0.5">
-                        {status === "Injured" && injuredNow ? availabilityLabel(injuredNow) : cfg.label}
-                      </div>
+                      <div className="text-[11px] text-muted-foreground truncate mt-0.5">{cfg.label}</div>
                     )}
-                    {/* Here while out: the moment to ask whether they're back */}
-                    {isAdmin && (isPresent || status === "Late") && injuredNow?.stage === "out" && (
-                      <button
-                        type="button"
-                        onClick={(e) => { e.stopPropagation(); setReturning({ player, injury: injuredNow.injuries[0] }); }}
-                        className="block text-[11px] text-status-warn hover:underline truncate mt-0.5 text-left"
-                        data-testid={`button-back-from-injury-${player.id}`}
-                      >
-                        {availabilityLabel(injuredNow)} — back?
-                      </button>
+                    {/* Beside the status, not instead of it: an injured player
+                        who comes to sit out is Present, one who doesn't is Absent */}
+                    {injuredNow && (
+                      <div className="text-[11px] text-status-warn truncate mt-0.5" data-testid={`text-injury-${player.id}`}>
+                        {availabilityLabel(injuredNow)}
+                      </div>
                     )}
                     {isAuto && (
                       <div
@@ -460,20 +429,27 @@ export function MarkAttendance({
                         </button>
                       </DropdownMenuTrigger>
                       <DropdownMenuContent align="end" className="w-36">
-                        {ATTENDANCE_STATUSES.map((s) => {
+                        {/* Injured isn't an attendance status to pick — old rows
+                            still show it. An injury is reported on its own. */}
+                        {ATTENDANCE_STATUSES.filter((s) => s !== "Injured").map((s) => {
                           const c = ATTENDANCE_CFG[s];
                           const Icon = c.icon;
                           return (
                             <DropdownMenuItem
                               key={s}
-                              onSelect={() => pickStatus(player, s)}
+                              onSelect={() => setStatus(player.id, s)}
                               className={cn("gap-2 text-xs", status === s && "font-semibold")}
                             >
                               <Icon size={12} className={c.activeColor} />
-                              {s === "Injured" ? "Injured…" : c.label}
+                              {c.label}
                             </DropdownMenuItem>
                           );
                         })}
+                        <DropdownMenuSeparator />
+                        <DropdownMenuItem onSelect={() => setReporting(player)} className="gap-2 text-xs">
+                          <Activity size={12} className="text-status-warn" />
+                          Report injury…
+                        </DropdownMenuItem>
                       </DropdownMenuContent>
                     </DropdownMenu>
                   </div>
@@ -493,30 +469,11 @@ export function MarkAttendance({
           offerStillOut
           onClose={() => setReporting(null)}
           onRecorded={(result) => {
-            setStatus(reporting.id, "Absent");
+            // Attendance is left as it is: present to sit out, or absent
             if (result.kind === "created") onInjuryRecorded();
-            else {
-              toast({
-                title: `${reporting.name}: still out`,
-                description: `${injuryLabel(result.injury)} — an excused absence once attendance is saved`,
-              });
-            }
+            else toast({ title: `${reporting.name}: already out`, description: `${injuryLabel(result.injury)} — nothing new recorded` });
             setReporting(null);
           }}
-        />
-      )}
-
-      {returning && session && (
-        <InjuryDialog
-          injury={returning.injury}
-          player={returning.player}
-          prompt={{
-            suggestStage: "modified",
-            suggestDate: session.date,
-            message: `Marked present on ${formatDateShort(session.date)} while out — back in modified training?`,
-          }}
-          onClose={() => setReturning(null)}
-          onChanged={onInjuryRecorded}
         />
       )}
 

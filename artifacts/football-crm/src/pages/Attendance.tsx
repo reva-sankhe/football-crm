@@ -25,8 +25,8 @@ type SummaryMap = Record<string, { total: number; present: number }>;
 export default function Attendance() {
   const { toast } = useToast();
 
-  // Who was injured when — both tabs show a missed session inside an injury as
-  // Injured and excuse it. Refetched whenever either tab records an injury.
+  // Who was injured when — both tabs show it beside the status, never in place
+  // of it. Refetched whenever either tab records an injury.
   const [availability, setAvailability] = useState<Availability>(NO_INJURIES);
   const refreshAvailability = useCallback(async () => {
     try {
